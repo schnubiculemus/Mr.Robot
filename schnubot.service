@@ -1,0 +1,15 @@
+[Unit]
+Description=SchnuBot.ai WhatsApp Bot
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/whatsapp-bot
+ExecStart=/opt/whatsapp-bot/venv/bin/gunicorn --bind 0.0.0.0:5000 --workers 2 --timeout 120 app:app
+Restart=always
+RestartSec=5
+EnvironmentFile=/opt/whatsapp-bot/.env
+
+[Install]
+WantedBy=multi-user.target

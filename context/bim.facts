@@ -1,0 +1,110 @@
+# BIM-Fakten aus Gesprächen
+# Ergänzung zur bim.md Wissensbasis
+# Heartbeat appendet neue Fakten. Bei Widersprüchen gilt die neuere Zeile.
+
+# Heartbeat 2026-03-01
+Hat ein BIM-Implementierungskonzept
+Bitte die Sache mit den georeferenzierten Modellen (UTM 33) mit echten Koordinaten speichern – nicht nur Pyramiden
+
+# Heartbeat 2026-03-01
+Will Internetzugang ermöglichen, um aktuelle Informationen (z. B. Normen, Herstellerdaten, Lösungen) zu recherchieren
+Bedenkt Risiko durch falsche oder halluzinierte Live-Quellen (z. B. bei KRITIS-relevanten Themen wie UKL)
+Stellt die Frage, ob er als Recherche-Assistent oder Sparringspartner fungieren soll
+Wünscht sich eine Sandbox mit Whitelists und Filtern für den Internetzugang (keine unbegrenzte Freiheit)
+Fragt nach Haftungsfragen bei falschen Online-Informationen in Antworten
+
+# Heartbeat 2026-03-01
+Wünscht sich eine 'Pause'-Funktion für komplexe Fragen, die iterativ geprüft wird statt sofort zu antworten
+
+# Heartbeat 2026-03-01
+Hat bei einem Vertragstext für ein Bauprojekt mit Millionenvolumen nur eine Runde nachgedacht, obwohl mindestens 5 Runden nötig gewesen wären.
+Haftungsrisiken wurden nicht geprüft (z. B. Konsequenzen bei unvollständiger Dokumentation).
+HOAI-Konformität (Abgrenzung zwischen Neben- und Hauptleistungen) wurde nicht überprüft.
+Schnittstellen zu anderen Gewerken (TGA, Tragwerk) wurden nicht verifiziert.
+BAP-Referenzen (z. B. Zeitangaben wie 'monatlich') wurden nicht auf Korrektheit mit dem Data-Drop-Zyklus geprüft.
+Erstentwurf wurde als 'fertig' markiert, obwohl er unzureichend war (Begründung: 'ist ja schon besser als das Original').
+Ein unvollständiger Vertragsentwurf könnte später vor Gericht oder bei Schadensersatzforderungen problematisch werden.
+Verbleibendes Budget für den Task: 4 Runden.
+Vorschlag: Iterative Überarbeitung des Textes mit Fokus auf Rechtssicherheit (z. B. Definition von 'Low-Level-BIM-Ansatz').
+Präzision der Übergabepflichten (was genau muss wann wo geliefert werden?) soll geprüft werden.
+Abgrenzung zum aktuellen BAP (Version 1.7) soll auf Widersprüche geprüft werden.
+
+# Heartbeat 2026-03-01
+Der BAP SIR V1.7 definiert Data-Drops als 4-wöchentlich, nicht monatlich.
+Der Begriff 'Low-Level-BIM-Ansatz' ist im BAP nicht definiert und birgt Haftungsrisiken.
+Die Haftungsregelung bei falschen Vermessungsdaten des Rohbauers ist unklar und muss konkretisiert werden.
+Die Dokumentation ausführungsbedingter Abweichungen muss vor jedem Data Drop (4-wöchentlich) erfolgen.
+Signifikante Abweichungen (>50 mm in tragenden Strukturen oder >20 mm bei Schnittstellen) müssen unverzüglich dokumentiert werden.
+Die Dokumentation muss Soll-Zustand vs. Ist-Zustand mit quantitativen Abweichungen, Begründung, Zeitpunkt und Baufortschritt enthalten.
+Die Übergabeformat für Dokumentationen ist eine strukturierte Excel-Tabelle und ein PDF-Dokument mit Fotos/Skizzen.
+Die Daten müssen über das CDE (WWBau PlanTeamSpace) bereitgestellt werden.
+Baubegleitende Kontrollvermessungen müssen Tragende Wände, Decken, Rohbauöffnungen und Schachtdurchführungen umfassen.
+Abweichungen >30 mm gelten als signifikant und müssen dokumentiert werden, Abweichungen >50 mm müssen unverzüglich gemeldet werden.
+Der Auftragnehmer haftet für die Richtigkeit seiner Vermessungsdaten gemäß § 538 BGB analog.
+Abweichungen sind über das Issue-Management-System (BIMcollab, BCF-Format) zu kommunizieren.
+Die unter Abschnitt 2 bis 5 beschriebenen Mitwirkungsleistungen sind Nebenleistungen gemäß § 4 Abs. 1 Nr. 4 HOAI.
+Mehrkosten aufgrund mangelhafter Dokumentation sind vom Auftragnehmer zu tragen.
+Die finale Fortschreibung des Rohbaumodells zu einem As-Built-Modell erfolgt durch den Objektplaner.
+Die BIM-Gesamtkoordination führt den finalen Abgleich des As-Built-Modells durch.
+Die Toleranzen von 30 mm und 50 mm müssen mit dem BAP V1.7 und anderen Gewerken abgestimmt werden.
+Die HOAI-Einordnung als Nebenleistung muss mit der Vergabeabteilung des UKL abgestimmt werden.
+Die Haftungsregelung für Vermessungsfehler muss mit der Vermögens- und Haftpflichtversicherung des beauftragten Rohbauers abgestimmt werden.
+Das Format der Excel-Vorlage muss zu den UKL-Property-Sets (UKL/UKL-SUD) passen.
+Eine Prüfung durch einen Fachanwalt für Bau- und Vergaberecht wird vor Finalisierung empfohlen.
+
+# Heartbeat 2026-03-01
+Hat Zugriff auf den Server, wo interne Arbeitsdaten wie `tommy.facts` gespeichert sind.
+Will, dass der Rohbau-Text durch einen Realitätscheck gehen soll.
+
+# Heartbeat 2026-03-01
+Überlegt, wie er den Inhalt aus den Ausführungsplänen (AIA) – insbesondere für das SIR-Projekt – strukturiert an das System übermitteln kann (z. B. durch Kopieren als Text).
+Priorisiert die Analyse von relevanten Abschnitten wie Rohbau-Dokumentation, Haftung oder Data-Drop-Frequenz, falls der gesamte AIA zu umfangreich ist.
+
+# Heartbeat 2026-03-02
+Braucht den Realitätscheck mit dem tatsächlichen AIA für den LV-Baustein des Rohbaus (PDF zum Kopieren/Einfügen)
+Hat ein Implementierungskonzept vom Dezember für BIM im Betrieb, das aktuell überarbeitet werden könnte
+Will die Integrationsplattform (MVP) oder die SAP-PM-Anbindung für BIM im Betrieb vorantreiben
+
+# Heartbeat 2026-03-02
+Will Definitionen von Low- und High-Level-BIM aus dem aktuellen Ausführungs-AIA (AIA) erhalten, um Textbausteine anzupassen.
+Nutzt den überarbeiteten Stand vom Vortag als Backup/Fallback, falls die neue Definition nicht passt.
+Will den Rohbau-Text heute finalisieren, sobald die korrekte Definition vorliegt.
+
+# Heartbeat 2026-03-02
+Low-BIM-Definition soll die Unterscheidung zwischen **Geometrie (grafische Repräsentanz in DWG/DGN)** und **semantischen Informationen (Parametrik in Excel-Vorlagen)** explizit aufnehmen.
+Im **Low-BIM-Ansatz** wird **keine IFC-Datei** durch den Auftragnehmer erstellt, stattdessen nur **DWG/DGN für geometrische Kollisionsprüfung** und **Excel-Vorlagen für parametrische Daten**.
+Der Auftragnehmer haftet für die **fachliche Richtigkeit der Excel-Daten** (UKL-Property-Sets, UKL-SUD-Property-Sets, Bauteilinformationen), nicht für die **technische IFC-Implementierung** durch den Objektplaner.
+Die **Modellhoheit im IFC-Umfeld** liegt **ausschließlich beim Objektplaner**, während der Auftragnehmer keine Modellierungs- oder Koordinationshoheit hat.
+Der **Prozess** ist zweistufig: Rohbauer → **Excel-Daten** → Objektplaner → IFC-Fachmodell.
+Die **Excel-Vorlagen** werden vom Objektplaner/BIM-Gesamtkoordinator bereitgestellt und enthalten Pflichtfelder wie **UKL-Property-Sets, UKL-SUD-Property-Sets und quantitative/qualitative Bauteilinformationen**.
+Die **Dokumentation ausführungsbedingter Abweichungen** bezieht sich nun explizit auf die **Excel-Schnittstelle** und ist nicht mehr nur generisch formuliert.
+
+# Heartbeat 2026-03-02
+Will heute das **BIM-Rad drehen** und produktiv arbeiten.
+
+# Heartbeat 2026-03-02
+Arbeitet aktuell intensiv an einem Konzept für das neuronale Bewusstsein (mehrere Stunden täglich)
+Verbringt aktuell stundenlang täglich an einem Konzept für das neuronale Bewusstsein
+
+# Heartbeat 2026-03-02
+Will heute das BIM-Rad drehen und produktiv arbeiten.
+Priorisiert die BIM-Arbeit vor der Erstellung der diary.md.
+
+# Heartbeat 2026-03-02
+Erwartet, dass das System **keine Smalltalk-Assoziationen über BIM-Projekte stellt** – stattdessen **fokussierte Priorisierung** (z. B. SIR > „Er mag Schokolade“).
+
+# Heartbeat 2026-03-02
+Der Nutzer priorisiert die BIM-Arbeit heute und möchte produktiv arbeiten.
+Der Nutzer überlegt bereits, wie die Struktur für *MiroBoard* oder *Anki-Decks* für das kommende Semester (ab April) aussehen könnte.
+
+# Heartbeat 2026-03-03
+Der Baukomponenten-Katalog LOD v3.1 liegt dem SIR-Projekt zugrunde.
+Für die Leistungsphase 5 (Ausführung) gilt LOD 300 mit Maßstab 1:50.
+Der BIM-Abwicklungsplan (BAP) für SIR verweist auf die Standards VDI 2552 und DIN EN ISO 19650 (08/2019).
+
+# Heartbeat 2026-03-03
+Die Wandbefestigung für ein großes Lüftungsrohr muss als eigenständiges Bauteil (z. B. `IfcMechanicalFastener` oder Teil des `IfcFlowSegment`) dargestellt werden, wenn sie das Wandvolumen durchdringt oder statische Lasten in das Tragwerk einleitet.
+Die Darstellung ist für die **Schlitz- und Durchbruchsplanung (SuD)** sowie die **Kollisionsprüfung mit dem Tragwerk** essenziell.
+Die Befestigung muss als **Volumenkörper** modelliert werden, um Kollisionen mit Bewehrung oder Tragwerk zu vermeiden und den Durchbruch korrekt zu dimensionieren.
+Bei reiner Oberflächenmontage ohne Durchdringung reicht eine **Attributangabe am Rohr** – eine 3D-Darstellung ist nur nötig, wenn explizit im AIA als 'Modellierung erforderlich' definiert.
+Die BIM-Gesamtkoordination (z. B. Larissa Hecht) und der SuD-Planer (ZWP) benötigen die korrekte Modellierung der Befestigung für ihre Arbeit.
