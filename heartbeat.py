@@ -29,6 +29,7 @@ from core.tasks import get_pending_tasks, save_task, build_iteration_prompt, TAS
 from memory.consolidator import consolidate_turns
 from memory.merge import deduplicate_active
 from memory.memory_store import get_stats
+from proactive import run_proactive
 
 logging.basicConfig(
     level=logging.INFO,
@@ -368,8 +369,18 @@ def run_heartbeat(user_id, context_name):
     except Exception as e:
         logger.warning(f"Deduplizierung fehlgeschlagen: {e}")
 
-    # 3. Proaktive Nachricht
-    maybe_send_message(user_id, context_name, now)
+    # 3. Proaktive Nachrichten (Event-basiert, Phase 5b)
+    try:
+        if should_send_message(user_id, now):
+            sent = run_proactive(user_id, context_name, now)
+            if sent:
+                state = load_state()
+                state[f"{user_id}_message"] = now.isoformat()
+                save_state(state)
+        else:
+            logger.info("Proaktive Nachricht: Cooldown/Zeitfenster nicht erfuellt, skip.")
+    except Exception as e:
+        logger.warning(f"Proaktiv-Engine fehlgeschlagen: {e}")
 
     # State
     state = load_state()
