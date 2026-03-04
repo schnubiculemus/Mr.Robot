@@ -31,6 +31,7 @@ from memory.merge import deduplicate_active
 from memory.memory_store import get_stats
 from proactive import run_proactive
 from autonomy import run_autonomy
+from decay import run_decay
 
 logging.basicConfig(
     level=logging.INFO,
@@ -374,7 +375,15 @@ def run_heartbeat(user_id, context_name):
     except Exception as e:
         logger.warning(f"Deduplizierung fehlgeschlagen: {e}")
 
-    # 3. Proaktive Nachrichten (Event-basiert, Phase 5b)
+    # 3. Decay (Gewichts- und Confidence-Alterung)
+    try:
+        decay_stats = run_decay()
+        if decay_stats["decayed"] > 0 or decay_stats["archived"] > 0:
+            logger.info(f"Decay: {decay_stats['decayed']} angepasst, {decay_stats['archived']} archiviert")
+    except Exception as e:
+        logger.warning(f"Decay fehlgeschlagen: {e}")
+
+    # 4. Proaktive Nachrichten (Event-basiert)
     try:
         if should_send_message(user_id, now):
             sent = run_proactive(user_id, context_name, now)
@@ -387,7 +396,7 @@ def run_heartbeat(user_id, context_name):
     except Exception as e:
         logger.warning(f"Proaktiv-Engine fehlgeschlagen: {e}")
 
-    # 4. Autonomie-Engine (Soul-PR + Tier-2 Selbstmodifikation)
+    # 5. Autonomie-Engine (Soul-PR + Tier-2 Selbstmodifikation)
     try:
         run_autonomy(user_id)
     except Exception as e:

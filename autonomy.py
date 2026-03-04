@@ -98,13 +98,14 @@ def check_soul_proposal(user_id):
     )
 
     try:
-        response = requests.post(
-            f"{OLLAMA_API_URL}/api/chat",
+        from api_utils import api_call_with_retry
+        result = api_call_with_retry(
+            url=f"{OLLAMA_API_URL}/api/chat",
             headers={
                 "Authorization": f"Bearer {OLLAMA_API_KEY}",
                 "Content-Type": "application/json",
             },
-            json={
+            json_payload={
                 "model": OLLAMA_MODEL,
                 "messages": [
                     {"role": "system", "content": f"Du bist {BOT_NAME}. Du reflektierst über deine eigene Verfassung."},
@@ -114,8 +115,11 @@ def check_soul_proposal(user_id):
             },
             timeout=90,
         )
-        response.raise_for_status()
-        reply = response.json().get("message", {}).get("content", "").strip()
+
+        if not result:
+            return None
+
+        reply = result.get("message", {}).get("content", "").strip()
 
         if "SOUL_OK" in reply:
             logger.info("Soul-Review: Keine Änderung nötig")
@@ -199,13 +203,14 @@ def check_arch_update():
     )
 
     try:
-        response = requests.post(
-            f"{OLLAMA_API_URL}/api/chat",
+        from api_utils import api_call_with_retry
+        result = api_call_with_retry(
+            url=f"{OLLAMA_API_URL}/api/chat",
             headers={
                 "Authorization": f"Bearer {OLLAMA_API_KEY}",
                 "Content-Type": "application/json",
             },
-            json={
+            json_payload={
                 "model": OLLAMA_MODEL,
                 "messages": [
                     {"role": "system", "content": f"Du bist {BOT_NAME}. Du prüfst deine eigene Dokumentation."},
@@ -215,8 +220,11 @@ def check_arch_update():
             },
             timeout=90,
         )
-        response.raise_for_status()
-        reply = response.json().get("message", {}).get("content", "").strip()
+
+        if not result:
+            return None
+
+        reply = result.get("message", {}).get("content", "").strip()
 
         if "ARCH_OK" in reply:
             logger.info("Arch-Review: Keine Änderung nötig")

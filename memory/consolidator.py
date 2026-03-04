@@ -664,30 +664,29 @@ def _validate_common_fields(text, chunk_type, source, confidence, epistemic_stat
 # =============================================================================
 
 def _call_consolidation_model(prompt):
-    """Ruft gpt-oss:120b-cloud auf."""
-    try:
-        response = requests.post(
-            f"{OLLAMA_API_URL}/api/chat",
-            headers={
-                "Authorization": f"Bearer {OLLAMA_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": CONSOLIDATION_MODEL,
-                "messages": [
-                    {"role": "system", "content": CONSOLIDATION_SYSTEM_MESSAGE},
-                    {"role": "user", "content": prompt},
-                ],
-                "stream": False,
-            },
-            timeout=120,
-        )
-        response.raise_for_status()
-        return response.json().get("message", {}).get("content", "").strip()
+    """Ruft gpt-oss:120b-cloud auf mit Retry."""
+    from api_utils import api_call_with_retry
 
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Konsolidierer API-Fehler: {e}")
-        return None
+    result = api_call_with_retry(
+        url=f"{OLLAMA_API_URL}/api/chat",
+        headers={
+            "Authorization": f"Bearer {OLLAMA_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        json_payload={
+            "model": CONSOLIDATION_MODEL,
+            "messages": [
+                {"role": "system", "content": CONSOLIDATION_SYSTEM_MESSAGE},
+                {"role": "user", "content": prompt},
+            ],
+            "stream": False,
+        },
+        timeout=120,
+    )
+
+    if result:
+        return result.get("message", {}).get("content", "").strip()
+    return None
 
 
 # =============================================================================
