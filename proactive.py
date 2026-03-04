@@ -76,11 +76,21 @@ def _is_morning_briefing_time(now):
 def _build_morning_context(user_id):
     """
     Baut den Kontext für das Morgen-Briefing:
+    - System-Status (ChromaDB, Fehler, Uptime)
     - Aktuelle working_states
     - Offene Entscheidungen
     - Letzte Selbstreflexion
     """
     context_parts = []
+
+    # System-Status
+    try:
+        from monitor import format_status_for_briefing
+        status = format_status_for_briefing()
+        if status:
+            context_parts.append(f"System-Status:\n{status}")
+    except Exception as e:
+        logger.warning(f"System-Status für Briefing fehlgeschlagen: {e}")
 
     # Working States abrufen
     ws_results = query_active("aktuelle Arbeit Projekt Phase Status", n_results=5)

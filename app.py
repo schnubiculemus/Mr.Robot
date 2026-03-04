@@ -3,7 +3,7 @@ import threading
 from flask import Flask, request, jsonify
 from config import WAHA_API_KEY, BOT_NAME
 from core.database import init_db, get_or_create_user, save_message, get_chat_history
-from core.ollama_client import chat as ollama_chat, extract_memories
+from core.ollama_client import chat as ollama_chat
 from core.whatsapp import send_message, extract_message, init_waha
 from core.tasks import create_task
 from memory.fast_track import process_fast_track
@@ -24,10 +24,11 @@ init_waha(WAHA_API_KEY)
 
 # Memory-System beim Start vorladen (Embedding-Modell + ChromaDB)
 # Verhindert Race Conditions beim ersten Request
-from memory.memory_store import get_embedder, get_active_collection
 logger.info("Lade Memory-System...")
-get_embedder()
-get_active_collection()
+from memory import memory_store
+memory_store.get_embedder()
+logger.info("Embedder geladen, lade Collection...")
+memory_store.get_active_collection()
 logger.info("Memory-System bereit.")
 
 # User-Mapping: WAHA-ID -> Context-Name (= Dateiname in context/ ohne .md)
@@ -80,13 +81,6 @@ def webhook():
     send_message(phone_number, reply + "\n\n[kimi]")
 
     logger.info(f"Antwort an {display_name}: {reply[:100]}")
-
-    # Memory-Extraction im Hintergrund (legacy, bleibt parallel aktiv)
-    threading.Thread(
-        target=extract_memories,
-        args=(phone_number, text, reply),
-        daemon=True,
-    ).start()
 
     return jsonify({"status": "ok"}), 200
 

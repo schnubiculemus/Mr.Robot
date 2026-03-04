@@ -140,9 +140,13 @@ def get_new_turns(user_id, since_iso):
 def run_consolidation(user_id):
     """
     Holt neue Turns und konsolidiert sie zu Memory-Chunks.
+    Fix: upper_bound VOR dem Query setzen, damit keine Turns verloren gehen.
     """
     state = load_state()
     last_run = state.get(f"{user_id}_last_consolidation")
+
+    # Upper bound JETZT setzen — alles was danach reinkommt wird beim nächsten Lauf geholt
+    upper_bound = datetime.now(timezone.utc).isoformat()
 
     turns = get_new_turns(user_id, last_run)
 
@@ -155,8 +159,8 @@ def run_consolidation(user_id):
     # Konsolidierer aufrufen
     chunk_count = consolidate_turns(turns)
 
-    # State aktualisieren
-    state[f"{user_id}_last_consolidation"] = datetime.now(timezone.utc).isoformat()
+    # State auf upper_bound setzen (nicht datetime.now!)
+    state[f"{user_id}_last_consolidation"] = upper_bound
     save_state(state)
 
     # Stats loggen

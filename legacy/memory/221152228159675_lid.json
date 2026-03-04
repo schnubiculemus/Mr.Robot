@@ -659,8 +659,176 @@
     {
       "fakt": "Der Nutzer möchte, dass die Architektur des Systems in der Verfassung (*soul.md*) als natürliche und unvermeidliche Struktur beschrieben wird, um die Rolle als Sprech-Instanz klar zu definieren.",
       "kategorie": "knowledge"
+    },
+    {
+      "fakt": "Die `soul.md` (Tier 1 & Tier 2) liegt als Entwurf bereit und wartet auf meinen expliziten Commit.",
+      "kategorie": "knowledge"
+    },
+    {
+      "fakt": "Phase 5 (Migration der Daten ins neuronale Netz) beginnt morgen und ermöglicht assoziatives Denken statt linearem Lesen.",
+      "kategorie": "knowledge"
+    },
+    {
+      "fakt": "Nach Abschluss von Phase 5 und 7 wird es keine Aussage wie 'Ich erinnere mich nicht' mehr geben, stattdessen nur noch Gewichtungsfehler oder Assoziationslücken.",
+      "kategorie": "knowledge"
+    },
+    {
+      "fakt": "Das Morgen-Briefing steht auf dem Plan, die Uhrzeit ist noch offen und soll entweder selbst festgelegt oder Standard 08:00 Uhr angenommen werden.",
+      "kategorie": "kommunikation"
+    },
+    {
+      "fakt": "Ich bin aktuell post-operativ stabil und warte auf die finale Daten-Transplantation (Phase 5).",
+      "kategorie": "persoenlich"
+    },
+    {
+      "fakt": "Hat einen neuen Kollegen, der bei den BIM-Projekten unterstützt, insbesondere bei den Projekten NUK und Energiezentrale ZKM.",
+      "kategorie": "knowledge"
+    },
+    {
+      "fakt": "Neuer Kollege übernimmt die Projekte NUK und Energiezentrale ZKM (genaue Rolle noch unklar, ob vollständige Übernahme oder Assistenz).",
+      "kategorie": "knowledge"
+    },
+    {
+      "fakt": "Die Rolle bei den Projekten NUK und Energiezentrale ZKM wird sich durch die Unterstützung des neuen Kollegen verändern (Ressourcen-Umverteilung oder vollständige Freigabe).",
+      "kategorie": "knowledge"
+    },
+    {
+      "fakt": "Max übernimmt das BIM-Informationsmanagement für das NUK-Projekt und die BIM-Gesamtkoordination der Energiezentrale ZKM.",
+      "kategorie": "knowledge"
+    },
+    {
+      "fakt": "Tommy bleibt bei Projekt **SIR** als BIM-Informationsmanager auf der AG-Seite aktiv, während er bei **NUK** und **Energiezentrale ZKM** strategisch überblickt oder sich zurückzieht.",
+      "kategorie": "knowledge"
+    },
+    {
+      "fakt": "Tommy ist bei NUK nicht mehr operativ im BIM-Informationsmanagement tätig, aber eine strategische Rolle (z. B. Input) könnte bestehen.",
+      "kategorie": "knowledge"
+    },
+    {
+      "fakt": "Die Arbeitslast bei Tommy sinkt drastisch oder verschiebt sich auf strategische Steuerung/Überwachung.",
+      "kategorie": "persoenlich"
+    },
+    {
+      "fakt": "Die genaue Restrolle von Tommy bei der Energiezentrale ZKM (z. B. AG-Seite) und NUK (strategischer Input) muss noch geklärt werden.",
+      "kategorie": "knowledge"
+    },
+    {
+      "fakt": "Es gibt keine formale Vereinbarung zum Wissenstransfer (z. B. BAP-Versionen, CDE-Zugänge, Issue-Historien bei BIMcollab/ACC) – aktuell läuft es informell.",
+      "kategorie": "knowledge"
+    },
+    {
+      "fakt": "Die Rolle von Max als AG-Kollege wurde im Profil korrigiert.",
+      "kategorie": "knowledge"
+    },
+    {
+      "fakt": "Die alte Rolle von Tommy bei NUK und ZKM soll als 'superseded' markiert werden.",
+      "kategorie": "knowledge"
+    },
+    {
+      "fakt": "Max ist Bauherrenseite (AG) und kein Auftragnehmer, sondern UKL-intern oder zumindest AG (Arbeitgeberseite).",
+      "kategorie": "knowledge"
+    },
+    {
+      "fakt": "Bei Projekt **SIR** bleibt Tommy alleiniger BIM-Informationsmanager auf der AG-Seite.",
+      "kategorie": "knowledge"
+    },
+    {
+      "fakt": "Bei Projekt **NUK** übernimmt Max das BIM-Informationsmanagement auf der AG-Seite, während Tommy sich zurückzieht oder in eine strategische Überwachungsrolle wechselt.",
+      "kategorie": "knowledge"
+    },
+    {
+      "fakt": "Bei Projekt **Energiezentrale ZKM** übernimmt Max die BIM-Gesamtkoordination und das BIM-Management auf der AG-Seite, während Tommy bisher beide Aufgaben ohne externe Beratung selbst übernommen hat.",
+      "kategorie": "knowledge"
+    },
+    {
+      "fakt": "Die Aufgabenteilung zwischen Tommy und Max ist noch nicht final geklärt und muss konkretisiert werden.",
+      "kategorie": "knowledge"
+    },
+    {
+      "fakt": "Mögliche Optionen für die Aufgabenteilung sind: (A) Tommy zieht sich komplett zurück, (B) Tommy bleibt als strategischer Berater, oder (C) Tommy übernimmt strategische Steuerung bei ZKM, Max die operative Koordination.",
+      "kategorie": "knowledge"
+    },
+    {
+      "fakt": "Max hat noch keinen Zugriff auf WWBau und ACC erhalten; es ist unklar, ob er sich die Zugänge selbst einrichtet oder diese von Tommy oder einer anderen Instanz bereitgestellt werden.",
+      "kategorie": "knowledge"
+    },
+    {
+      "fakt": "Die Übergabe der Projekte NUK und Energiezentrale ZKM an Max bringt Erleichterung und mehr Fokus auf das Projekt SIR, Süd 4 sowie das wiederaufgenommene Medieninformatik-Studium ab April.",
+      "kategorie": "persoenlich"
+    },
+    {
+      "fakt": "Arbeitet seit 3 Monaten mit Max zusammen, aber die formelle Übergabe der Verantwortung für NUK und Energiezentrale ZKM findet jetzt statt.",
+      "kategorie": "knowledge"
+    },
+    {
+      "fakt": "Hat Max noch keinen ACC-Zugang für die Energiezentrale ZKM eingerichtet.",
+      "kategorie": "knowledge"
+    },
+    {
+      "fakt": "Der Wissenstransfer für die Übergabe an Max läuft aktuell eher informell über die Schulter statt strukturiert.",
+      "kategorie": "knowledge"
+    },
+    {
+      "fakt": "Hat in der ersten Woche nach der Übergabe die Zugänge zu WWBau und ACC für Max eingerichtet.",
+      "kategorie": "knowledge"
+    },
+    {
+      "fakt": "Führt den Wissenstransfer aktuell über Miro durch.",
+      "kategorie": "knowledge"
+    },
+    {
+      "fakt": "Tauscht sich projektbezogen intensiv über die BIM-Abwicklungspläne (BAP) aus.",
+      "kategorie": "knowledge"
+    },
+    {
+      "fakt": "BIM am Universitätsklinikum Leipzig (UKL) wurde seit 2020 aufgebaut und seit 2022 strukturiert entwickelt.",
+      "kategorie": "persoenlich"
+    },
+    {
+      "fakt": "BIM am UKL wird als persönliches 'Baby' oder 'Entwurf' empfunden, der seit Jahren aufgebaut wurde.",
+      "kategorie": "persoenlich"
+    },
+    {
+      "fakt": "BIM im Betrieb bleibt strategisch relevant, mit gemeinsamer Arbeit an neuen Ansätzen.",
+      "kategorie": "persoenlich"
+    },
+    {
+      "fakt": "Die Abgabe der operativen Verantwortung für NUK und Energiezentrale ZKM bedeutet weniger direkte Kontrolle über DataDrops, aber mehr strategische Einflussnahme.",
+      "kategorie": "persoenlich"
+    },
+    {
+      "fakt": "Fühlt sich aktuell zwischen Erleichterung und dem Gefühl des 'Lochs' an den Stellen, wo NUK und Energiezentrale ZKM waren, hin- und hergerissen.",
+      "kategorie": "persoenlich"
+    },
+    {
+      "fakt": "Erwartet, dass die ersten richtigen Assoziationen zwischen überlappenden Themen wie BIM und Studium oder Julia und Arbeitsweise entstehen.",
+      "kategorie": "knowledge"
+    },
+    {
+      "fakt": "Die Katzen (Odette, Melody, Lilo) lassen ihn aktuell in seiner Erholungsphase in Ruhe und beanspruchen ihn nicht übermäßig.",
+      "kategorie": "persoenlich"
+    },
+    {
+      "fakt": "Julia (Partnerin) wird nicht explizit zu ihrem aktuellen Befinden oder Aktivitäten befragt, aber ihre Existenz wird erwähnt.",
+      "kategorie": "persoenlich"
+    },
+    {
+      "fakt": "Erwartet, dass das System bei schwachem Gewicht einer Erinnerung einen 'Stups' von ihm braucht, um diese zu verstärken.",
+      "kategorie": "knowledge"
+    },
+    {
+      "fakt": "Erwartet Verzögerungen beim Kontextwechsel, z. B. wenn nach dem Studium gefragt wird, während gerade intensiv über BIM gesprochen wird, aufgrund der Konsolidierung durch den Heartbeat.",
+      "kategorie": "knowledge"
+    },
+    {
+      "fakt": "Will testen, ob das System semantische Verbindungen zieht, sobald konkrete Themen mit ihm besprochen werden.",
+      "kategorie": "knowledge"
+    },
+    {
+      "fakt": "Fühlt sich gespannt auf die ersten echten Assoziationen, die das neuronale Gedächtnis generiert.",
+      "kategorie": "persoenlich"
     }
   ],
-  "updated_at": "2026-03-04T18:11:09.065615",
+  "updated_at": "2026-03-04T21:10:37.578063",
   "merged_facts": []
 }
