@@ -30,6 +30,7 @@ from memory.consolidator import consolidate_turns
 from memory.merge import deduplicate_active
 from memory.memory_store import get_stats
 from proactive import run_proactive
+from autonomy import run_autonomy
 
 logging.basicConfig(
     level=logging.INFO,
@@ -385,6 +386,12 @@ def run_heartbeat(user_id, context_name):
             logger.info("Proaktive Nachricht: Cooldown/Zeitfenster nicht erfuellt, skip.")
     except Exception as e:
         logger.warning(f"Proaktiv-Engine fehlgeschlagen: {e}")
+
+    # 4. Autonomie-Engine (Soul-PR + Tier-2 Selbstmodifikation)
+    try:
+        run_autonomy(user_id)
+    except Exception as e:
+        logger.warning(f"Autonomie-Engine fehlgeschlagen: {e}")
 
     # State
     state = load_state()
