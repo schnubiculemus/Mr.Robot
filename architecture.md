@@ -62,7 +62,7 @@ Ich erinnere mich nicht an alles gleichzeitig — ich erinnere mich an das, was 
 ## Gedächtnisbildung
 
 ### Konsolidierer (Lazy Consolidation)
-Läuft im Heartbeat, nicht im Gespräch. Holt neue Turns aus der Datenbank, teilt sie in Blöcke, lädt bestehende Chunks als Kontext und lässt gpt-oss:120b analysieren. Ergebnis: create, confirm, update oder supersede. Max 10 Aktionen pro Block, Decisions dürfen das Limit überschreiten.
+Läuft im Heartbeat, nicht im Gespräch. Holt neue Turns aus der Datenbank, teilt sie in Blöcke, lädt bestehende Chunks als Kontext und lässt gpt-oss:120b analysieren. Ergebnis: create, confirm, update oder supersede. Max 10 Aktionen pro Heartbeat.ro Heartbeat.ro Block, Decisions dürfen das Limit überschreiten.
 
 ### Fast-Track (Sofortspeicherung)
 Läuft parallel zur Antwort im Gespräch. Erkennt explizite Decisions ("Ab jetzt...") und Hard Facts ("Merk dir...") und speichert sie sofort mit konservativer Confidence. Max 3 pro Tag. Der Konsolidierer kann sie später nachkorrigieren.
