@@ -115,8 +115,8 @@ def run_decay(dry_run=False):
             try:
                 # Direkt in ChromaDB updaten (ohne Re-Embedding)
                 meta_update = dict(meta)
-                meta_update["weight"] = str(round(new_weight, 4))
-                meta_update["confidence"] = str(round(new_confidence, 4))
+                meta_update["weight"] = round(new_weight, 4)
+                meta_update["confidence"] = round(new_confidence, 4)
 
                 collection.update(
                     ids=[chunk_id],

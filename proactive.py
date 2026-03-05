@@ -47,6 +47,16 @@ def check_triggers(user_id, now):
                 "prioritaet": 1,
             })
 
+    # --- Abend-Briefing ---
+    if _is_evening_briefing_time(now):
+        evening_context = _build_evening_context(user_id)
+        if evening_context:
+            triggers.append({
+                "typ": "abend-briefing",
+                "kontext": evening_context,
+                "prioritaet": 1,
+            })
+
     # --- Deadline-Check ---
     deadline_chunks = _check_deadlines(now)
     if deadline_chunks:
@@ -69,28 +79,24 @@ def check_triggers(user_id, now):
 
 
 def _is_morning_briefing_time(now):
-    """Morgen-Briefing zwischen 7:00 und 9:00."""
-    return 7 <= now.hour < 9
+    """Morgen-Briefing zwischen 7:00 und 10:00 (inkl. 9:xx fuer 3h-Cronjob-Takt)."""
+    return 7 <= now.hour < 10
+
+
+def _is_evening_briefing_time(now):
+    """Abend-Briefing zwischen 20:00 und 22:00 (21:xx Heartbeat trifft das Fenster)."""
+    return 20 <= now.hour < 22
 
 
 def _build_morning_context(user_id):
     """
     Baut den Kontext für das Morgen-Briefing:
-    - System-Status (ChromaDB, Fehler, Uptime)
     - Aktuelle working_states
     - Offene Entscheidungen
     - Letzte Selbstreflexion
+    (System-Stats sind über /status abrufbar, nicht im Briefing.)
     """
     context_parts = []
-
-    # System-Status
-    try:
-        from monitor import format_status_for_briefing
-        status = format_status_for_briefing()
-        if status:
-            context_parts.append(f"System-Status:\n{status}")
-    except Exception as e:
-        logger.warning(f"System-Status für Briefing fehlgeschlagen: {e}")
 
     # Working States abrufen
     ws_results = query_active("aktuelle Arbeit Projekt Phase Status", n_results=5)
@@ -105,6 +111,39 @@ def _build_morning_context(user_id):
     if decisions:
         dec_texts = [f"- {c['text']}" for c in decisions[:3]]
         context_parts.append("Aktive Entscheidungen:\n" + "\n".join(dec_texts))
+
+    # Letzte Selbstreflexion
+    ref_results = query_active("Selbstreflexion Erkenntnis Verbesserung", n_results=3)
+    reflections = [r for r in ref_results if r.get("chunk_type") == "self_reflection"]
+    if reflections:
+        context_parts.append(f"Letzte Selbstreflexion: {reflections[0]['text']}")
+
+    return "\n\n".join(context_parts) if context_parts else None
+
+
+def _build_evening_context(user_id):
+    """
+    Baut den Kontext für das Abend-Briefing:
+    - Tages-Zusammenfassung: was wurde heute besprochen/entschieden
+    - Offene Arbeitsstände
+    - Letzte Selbstreflexion
+    (System-Stats und Chunk-Zahlen sind über /status abrufbar.)
+    """
+    context_parts = []
+
+    # Heutige Entscheidungen
+    dec_results = query_active("Entscheidung heute festgelegt beschlossen", n_results=5)
+    decisions = [r for r in dec_results if r.get("chunk_type") == "decision"]
+    if decisions:
+        dec_texts = [f"- {c['text']}" for c in decisions[:5]]
+        context_parts.append("Aktive Entscheidungen:\n" + "\n".join(dec_texts))
+
+    # Working States
+    ws_results = query_active("aktuelle Arbeit Projekt Phase Status", n_results=5)
+    working_states = [r for r in ws_results if r.get("chunk_type") == "working_state"]
+    if working_states:
+        ws_texts = [f"- {c['text']}" for c in working_states[:5]]
+        context_parts.append("Aktuelle Arbeitsstände:\n" + "\n".join(ws_texts))
 
     # Letzte Selbstreflexion
     ref_results = query_active("Selbstreflexion Erkenntnis Verbesserung", n_results=3)

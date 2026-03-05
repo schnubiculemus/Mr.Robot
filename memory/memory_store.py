@@ -412,8 +412,8 @@ def _result_to_chunk(result, index):
         "chunk_type": metadata.get("chunk_type"),
         "source": metadata.get("source"),
         "status": metadata.get("status", "active"),
-        "weight": metadata.get("weight", 1.0),
-        "confidence": metadata.get("confidence", 0.5),
+        "weight": _safe_float(metadata.get("weight", 1.0), 1.0),
+        "confidence": _safe_float(metadata.get("confidence", 0.5), 0.5),
         "epistemic_status": metadata.get("epistemic_status", "stated"),
         "created_at": metadata.get("created_at", ""),
         "tags": metadata_to_tags(metadata.get("tags", "")),
@@ -432,11 +432,19 @@ def _result_to_chunk_from_query(results, index):
         "chunk_type": metadata.get("chunk_type"),
         "source": metadata.get("source"),
         "status": metadata.get("status", "active"),
-        "weight": metadata.get("weight", 1.0),
-        "confidence": metadata.get("confidence", 0.5),
+        "weight": _safe_float(metadata.get("weight", 1.0), 1.0),
+        "confidence": _safe_float(metadata.get("confidence", 0.5), 0.5),
         "epistemic_status": metadata.get("epistemic_status", "stated"),
         "created_at": metadata.get("created_at", ""),
         "tags": metadata_to_tags(metadata.get("tags", "")),
         **{k: metadata[k] for k in ("supersedes", "expires_at", "last_confirmed_at")
            if k in metadata},
     }
+
+
+def _safe_float(value, default):
+    """Castet einen Wert sicher zu float. Fängt str-Altlasten aus Decay-Bug ab."""
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return default

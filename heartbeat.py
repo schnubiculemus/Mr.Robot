@@ -176,7 +176,9 @@ def run_consolidation(user_id):
 
 
 # =============================================================================
-# Task 2: Proaktive Nachricht (aus legacy uebernommen)
+# Task 2: Proaktive Nachricht (LEGACY — nicht mehr verwendet)
+# Ersetzt durch run_proactive() aus proactive.py
+# TODO Roadmap: Diesen Block entfernen nach Bestätigung dass run_proactive stabil läuft.
 # =============================================================================
 
 def should_send_message(user_id, now):
@@ -383,13 +385,60 @@ def run_heartbeat(user_id, context_name):
     except Exception as e:
         logger.warning(f"Decay fehlgeschlagen: {e}")
 
+    # 3b. Reflexion (Mr. Robot denkt eigenständig nach)
+    try:
+        state = load_state()
+        last_reflection = state.get(f"{user_id}_last_reflection")
+        do_reflect = True
+
+        if last_reflection:
+            age_hours = (now - datetime.fromisoformat(last_reflection)).total_seconds() / 3600
+            do_reflect = age_hours >= 12  # Max 1 Reflexion pro 12h
+
+        if do_reflect:
+            from reflection import run_reflection
+            chunk_id = run_reflection(user_id)
+            if chunk_id:
+                state = load_state()
+                state[f"{user_id}_last_reflection"] = now.isoformat()
+                save_state(state)
+                logger.info(f"Reflexion erzeugt: {chunk_id[:8]}")
+        else:
+            logger.info("Reflexion: Cooldown nicht erreicht, skip")
+    except Exception as e:
+        logger.warning(f"Reflexion fehlgeschlagen: {e}")
+
     # 4. Proaktive Nachrichten (Event-basiert)
     try:
-        if should_send_message(user_id, now):
+        # Briefing-Fenster dürfen den Stille-Check umgehen — sie sollen kommen
+        # wenn Tommy aktiv war, nicht nur bei langer Stille.
+        # Aber: max 1 Briefing pro Fenster (eigener Cooldown).
+        is_morning = 7 <= now.hour < 10
+        is_evening = 20 <= now.hour < 22
+        is_briefing_window = is_morning or is_evening
+        allow_proactive = False
+
+        if is_briefing_window:
+            state = load_state()
+            cooldown_key = f"{user_id}_last_briefing_morning" if is_morning else f"{user_id}_last_briefing_evening"
+            last_briefing = state.get(cooldown_key)
+            if last_briefing:
+                age_hours = (now - datetime.fromisoformat(last_briefing)).total_seconds() / 3600
+                allow_proactive = age_hours >= 20  # Min 20h zwischen Briefings desselben Typs
+            else:
+                allow_proactive = True
+        else:
+            allow_proactive = should_send_message(user_id, now)
+
+        if allow_proactive:
             sent = run_proactive(user_id, context_name, now)
             if sent:
                 state = load_state()
                 state[f"{user_id}_message"] = now.isoformat()
+                if is_morning:
+                    state[f"{user_id}_last_briefing_morning"] = now.isoformat()
+                elif is_evening:
+                    state[f"{user_id}_last_briefing_evening"] = now.isoformat()
                 save_state(state)
         else:
             logger.info("Proaktive Nachricht: Cooldown/Zeitfenster nicht erfuellt, skip.")

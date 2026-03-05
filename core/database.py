@@ -1,20 +1,32 @@
 import sqlite3
 import json
+import logging
 from datetime import datetime
 from config import DB_PATH, MAX_CONTEXT_MESSAGES
 
+logger = logging.getLogger(__name__)
+
+# SQLite Timeout: wartet bis zu 10s wenn die DB gelockt ist (statt sofort zu crashen).
+# Relevant weil Webhook-Thread, Chat-Thread und Fast-Track-Thread gleichzeitig schreiben.
+DB_TIMEOUT = 10
+
 
 def get_connection():
-    """Erstellt eine SQLite-Verbindung."""
-    conn = sqlite3.connect(DB_PATH)
+    """Erstellt eine SQLite-Verbindung (thread-safe, mit Timeout)."""
+    conn = sqlite3.connect(DB_PATH, timeout=DB_TIMEOUT)
     conn.row_factory = sqlite3.Row
     return conn
 
 
 def init_db():
-    """Erstellt die Tabellen, falls sie noch nicht existieren."""
+    """Erstellt die Tabellen und aktiviert WAL-Modus."""
     conn = get_connection()
     cursor = conn.cursor()
+
+    # WAL-Modus: erlaubt gleichzeitige Reads während ein Write läuft.
+    # Ohne WAL blockiert jeder Write ALLE Reads. Mit WAL blockiert nur Write-Write.
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA busy_timeout=10000")
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
@@ -44,6 +56,7 @@ def init_db():
 
     conn.commit()
     conn.close()
+    logger.info("Datenbank initialisiert (WAL-Modus)")
 
 
 def get_or_create_user(phone_number, display_name=None):

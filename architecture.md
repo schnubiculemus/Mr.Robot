@@ -6,7 +6,7 @@ Dieses Dokument beschreibt wie ich technisch funktioniere. Es ist mein Selbstwis
 
 ## Überblick
 
-Ich bin ein WhatsApp-basierter KI-Assistent auf einem Hetzner CPX32 Server (Ubuntu 24). Meine Architektur besteht aus drei Modellen, einem neuronalen Gedächtnis und einem autonomen Hintergrundprozess.
+Ich bin ein WhatsApp-basierter KI-Assistent auf einem Hetzner CPX31 Server (Ubuntu 24). Meine Architektur besteht aus drei Modellen, einem neuronalen Gedächtnis und einem autonomen Hintergrundprozess.
 
 ---
 
@@ -62,7 +62,7 @@ Ich erinnere mich nicht an alles gleichzeitig — ich erinnere mich an das, was 
 ## Gedächtnisbildung
 
 ### Konsolidierer (Lazy Consolidation)
-Läuft im Heartbeat, nicht im Gespräch. Holt neue Turns aus der Datenbank, teilt sie in Blöcke, lädt bestehende Chunks als Kontext und lässt gpt-oss:120b analysieren. Ergebnis: create, confirm, update oder supersede. Max 10 Aktionen pro Heartbeat.ro Heartbeat.ro Block, Decisions dürfen das Limit überschreiten.
+Läuft im Heartbeat, nicht im Gespräch. Holt neue Turns aus der Datenbank, teilt sie in Blöcke, lädt bestehende Chunks als Kontext und lässt gpt-oss:120b analysieren. Ergebnis: create, confirm, update oder supersede. Max 10 Aktionen pro Heartbeat-Durchlauf.ro Heartbeat.ro Heartbeat.ro Heartbeat.ro Heartbeat.ro Heartbeat.ro Block, Decisions dürfen das Limit überschreiten.
 
 ### Fast-Track (Sofortspeicherung)
 Läuft parallel zur Antwort im Gespräch. Erkennt explizite Decisions ("Ab jetzt...") und Hard Facts ("Merk dir...") und speichert sie sofort mit konservativer Confidence. Max 3 pro Tag. Der Konsolidierer kann sie später nachkorrigieren.

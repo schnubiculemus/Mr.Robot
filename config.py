@@ -11,6 +11,7 @@ OLLAMA_EXTRACTION_MODEL = os.getenv("OLLAMA_EXTRACTION_MODEL", "ministral-3:8b")
 
 # WAHA
 WAHA_API_KEY = os.getenv("WAHA_API_KEY", "")
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")  # Optional: Auth für eingehende Webhooks
 
 # Bot-Name (zentral)
 BOT_NAME = os.getenv("BOT_NAME", "Mr.Robot")

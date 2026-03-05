@@ -213,6 +213,9 @@ def score_and_select(query, n_candidates=60):
     selected, rejected = apply_caps(candidates)
 
     # 4. Fallback (Abschnitt 8.6)
+    # TODO Roadmap: Fallback ignoriert alle Caps und nimmt Top-30 Kandidaten.
+    # Das kann den Prompt mit Low-Score-Noise fluten. Besser: Caps beibehalten,
+    # nur den Score-Threshold senken um FALLBACK_THRESHOLD_REDUCTION.
     fallback_used = False
     if len(selected) < MIN_CHUNKS_IF_AVAILABLE and len(candidates) > len(selected):
         # Threshold senken: niedrigere Scores akzeptieren
