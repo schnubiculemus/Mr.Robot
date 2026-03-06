@@ -90,11 +90,16 @@ def build_system_prompt(context_name=None, user_id=None, user_message=None):
 
 
 def chat(user_id, message, chat_history, context_name=None):
-    """Sendet eine Nachricht an Kimi und gibt die Antwort zurück."""
+    """Sendet eine Nachricht an Kimi und gibt die Antwort zurück.
+    
+    WICHTIG: chat_history enthält die aktuelle User-Nachricht bereits
+    (wird in app.py vor dem Thread-Start via save_message gespeichert).
+    Daher KEIN zusätzlicher append von message — sonst sieht Kimi sie doppelt.
+    message wird nur für build_system_prompt (Memory-Retrieval) verwendet.
+    """
     system_prompt = build_system_prompt(context_name, user_id, user_message=message)
     messages = [{"role": "system", "content": system_prompt}]
     messages.extend(chat_history)
-    messages.append({"role": "user", "content": message})
 
     try:
         response = requests.post(
