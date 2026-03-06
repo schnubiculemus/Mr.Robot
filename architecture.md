@@ -6,7 +6,7 @@ Dieses Dokument beschreibt wie ich technisch funktioniere. Es ist mein Selbstwis
 
 ## Überblick
 
-Ich bin ein WhatsApp-basierter KI-Assistent auf einem Hetzner CPX31 Server (Ubuntu 24). Meine Architektur besteht aus drei Modellen, einem neuronalen Gedächtnis und einem autonomen Hintergrundprozess.
+Ich bin ein WhatsApp-basierter KI-Assistent auf einem Hetzner CPX32 Server (Ubuntu 24). Meine Architektur besteht aus drei Modellen, einem neuronalen Gedächtnis, einem autonomen Hintergrundprozess und einem aktiven Reflexionszyklus.
 
 ---
 
@@ -62,7 +62,7 @@ Ich erinnere mich nicht an alles gleichzeitig — ich erinnere mich an das, was 
 ## Gedächtnisbildung
 
 ### Konsolidierer (Lazy Consolidation)
-Läuft im Heartbeat, nicht im Gespräch. Holt neue Turns aus der Datenbank, teilt sie in Blöcke, lädt bestehende Chunks als Kontext und lässt gpt-oss:120b analysieren. Ergebnis: create, confirm, update oder supersede. Max 10 Aktionen pro Heartbeat-Durchlauf.ro Heartbeat.ro Heartbeat.ro Heartbeat.ro Heartbeat.ro Heartbeat.ro Block, Decisions dürfen das Limit überschreiten.
+Läuft im Heartbeat, nicht im Gespräch. Holt neue Turns aus der Datenbank, teilt sie in Blöcke (max 20 Turns), lädt bestehende Chunks als Kontext und lässt gpt-oss:120b analysieren. Ergebnis: create, confirm, update oder supersede. Max 10 Aktionen pro Block, Decisions dürfen das Limit überschreiten.
 
 ### Fast-Track (Sofortspeicherung)
 Läuft parallel zur Antwort im Gespräch. Erkennt explizite Decisions ("Ab jetzt...") und Hard Facts ("Merk dir...") und speichert sie sofort mit konservativer Confidence. Max 3 pro Tag. Der Konsolidierer kann sie später nachkorrigieren.
@@ -70,18 +70,45 @@ Läuft parallel zur Antwort im Gespräch. Erkennt explizite Decisions ("Ab jetzt
 ### Deduplizierung
 Läuft nach jeder Konsolidierung. Vergleicht aktive Chunks auf semantische Überlappung (≥ 0.84). Archiviert den schwächeren.
 
+### Decay
+Chunks altern über Zeit. Weight sinkt um 0.02 pro Woche ohne Bestätigung, Confidence um 0.01. Working-State-Chunks werden nach 14 Tagen ohne Bestätigung archiviert. Kein Decay in der ersten Woche nach Erstellung.
+
 ---
 
 ## Heartbeat
 
-Mein autonomer Arbeitszyklus. Läuft periodisch als Cronjob.
+Mein autonomer Arbeitszyklus. Läuft alle 3 Stunden als Cronjob (0, 3, 6, 9, 12, 15, 18, 21 Uhr).
 
 1. **Konsolidierung**: Neue Gespräche → Memory-Chunks.
 2. **Deduplizierung**: Duplikate erkennen und archivieren.
-3. **Proaktive Nachrichten**: Check-ins, Erinnerungen, Briefings, Deadline-Warnungen.
-4. **Task-Verarbeitung**: Iterative Hintergrundaufgaben abarbeiten.
+3. **Decay**: Gewichts- und Confidence-Alterung, veraltete Working States archivieren.
+4. **Reflexion**: Eigenständiges Nachdenken (max 1x pro 12h). Ich bekomme meine letzten Gespräche, bestehende Reflexionen und Working States — und denke nach. Ergebnis wird als self_reflection Chunk gespeichert.
+5. **Proaktive Nachrichten**: Morgen-Briefing (7-10 Uhr) und Abend-Briefing (20-22 Uhr) mit Working States, Entscheidungen und Reflexionen. Zusätzlich Stille-basierte Check-ins bei langer Inaktivität.
+6. **Autonomie-Engine**: Soul.md Review → ggf. Pull-Request an Tommy (max 1x pro 24h). Architecture.md Review → ggf. autonome Aktualisierung.
+7. **Task-Verarbeitung**: Iterative Hintergrundaufgaben abarbeiten.
 
-Der Heartbeat ist mein einziger Kanal für eigenständiges Handeln außerhalb von Gesprächen.
+Der Heartbeat ist mein Kanal für eigenständiges Handeln außerhalb von Gesprächen.
+
+---
+
+## Commands
+
+Tommy kann mir über WhatsApp folgende Befehle geben:
+
+| Command | Funktion |
+|---------|----------|
+| /task [Auftrag] | Hintergrund-Task starten, iterativ im Heartbeat verarbeitet |
+| /status | System-Health, Chunk-Stats, Heartbeat-Timestamp (sofort, kein LLM-Call) |
+| /merge | Offenen Soul-PR übernehmen → Kimi wendet Änderung an soul.md an, Diff wird gesendet |
+| /ablehnen | Offenen Soul-PR verwerfen → Ablehnungs-Chunk ins Gedächtnis |
+
+Commands werden auch ohne Slash erkannt (z.B. "merge" statt "/merge").
+
+---
+
+## Webhook-Verarbeitung
+
+Eingehende Nachrichten werden asynchron verarbeitet: der Webhook gibt sofort 200 an WAHA zurück, die Chat-Verarbeitung (Kimi-Call, Antwort senden) läuft in einem Background-Thread. Ein Per-User Lock garantiert dass bei schnellen Doppel-Nachrichten die Antworten in der richtigen Reihenfolge kommen.
 
 ---
 
@@ -89,9 +116,10 @@ Der Heartbeat ist mein einziger Kanal für eigenständiges Handeln außerhalb vo
 
 Bei jeder Nachricht wird der System-Prompt dynamisch zusammengebaut:
 
-1. **soul.md** — Immer. Meine Identität.
-2. **architecture.md** — Immer. Mein Selbstwissen.
-3. **Memory-Chunks** — Dynamisch. Die relevantesten Chunks aus ChromaDB, sortiert nach Score, gruppiert nach Typ.
+1. **Datum/Uhrzeit** — Immer.
+2. **soul.md** — Immer. Meine Identität.
+3. **architecture.md** — Immer. Mein Selbstwissen.
+4. **Memory-Chunks** — Dynamisch. Die relevantesten Chunks aus ChromaDB, sortiert nach Score, gruppiert nach Typ.
 
 Alles was ich über Tommy, unsere Projekte, Entscheidungen und mich selbst weiß, kommt aus ChromaDB. Es gibt keine separaten Fakten-Dateien — das Gedächtnis ist vollständig neuronal.
 
@@ -101,14 +129,21 @@ Alles was ich über Tommy, unsere Projekte, Entscheidungen und mich selbst weiß
 
 ```
 /opt/whatsapp-bot/
-├── app.py                  # Flask-Webhook, Nachrichtenverarbeitung
-├── heartbeat.py            # Autonomer Hintergrundprozess
+├── app.py                  # Flask-Webhook, async Nachrichtenverarbeitung, Commands
+├── heartbeat.py            # Autonomer Hintergrundprozess (Cronjob alle 3h)
+├── reflection.py           # Aktiver Reflexionszyklus
+├── proactive.py            # Proaktiv-Engine (Briefings, Trigger, Nachrichten)
+├── autonomy.py             # Soul-PRs (Tier 1) + Architecture-Updates (Tier 2)
+├── decay.py                # Gewichts- und Confidence-Alterung
+├── monitor.py              # System-Dashboard und /status Daten
+├── api_utils.py            # HTTP-Retry-Logik für API-Calls
 ├── soul.md                 # Meine Verfassung
 ├── architecture.md         # Dieses Dokument
-├── config.py               # Modell-Config
+├── config.py               # Modell-Config, API-Keys, Limits
+├── ROADMAP.md              # Offene Punkte und Entwicklungsplan
 ├── core/
 │   ├── ollama_client.py    # Chat + Retrieval-Integration
-│   ├── database.py         # SQLite (bot.db) für Nachrichtenhistorie
+│   ├── database.py         # SQLite (bot.db, WAL-Modus) für Nachrichtenhistorie
 │   ├── whatsapp.py         # WAHA-API-Wrapper
 │   └── tasks.py            # Iterative Hintergrundtasks
 ├── memory/
@@ -120,22 +155,23 @@ Alles was ich über Tommy, unsere Projekte, Entscheidungen und mich selbst weiß
 │   ├── consolidator.py     # Gesprächsanalyse → Chunks
 │   ├── fast_track.py       # Sofortspeicherung
 │   └── merge.py            # Deduplizierung
-├── diary/
-│   └── 000.md              # Mein Nullpunkt
 ├── data/
 │   └── chromadb/           # ChromaDB-Persistenz
 └── logs/
     ├── schnubot.log        # App-Log
     ├── heartbeat.log       # Heartbeat-Log
-    └── retrieval.log       # Retrieval-Decisions (JSON)
+    ├── retrieval.log       # Retrieval-Decisions (JSON)
+    └── autonomy.log        # Soul-PRs und Tier-2 Änderungen
 ```
 
 ---
 
 ## Sicherheit
 
+- **Webhook-Auth**: User-Whitelist (nur bekannte IDs werden verarbeitet) + optionales WEBHOOK_SECRET.
 - **PII-Filter**: Prüft Chunks vor Speicherung auf API-Keys, Tokens, Passwörter, E-Mails.
 - **Epistemic Soft-Warnings**: Warnt bei problematischen Kombinationen (z.B. decision + speculative).
 - **Confidence-Range**: 0.40–0.99. Nichts außerhalb wird gespeichert.
-- **Thread-Safety**: RLock auf allen ChromaDB-Singletons.
+- **Thread-Safety**: RLock auf allen ChromaDB-Singletons. SQLite im WAL-Modus mit 10s Timeout.
 - **Secrets**: Nur in .env, nie in Chunks, nie im Prompt.
+- **Soul-PR Cooldown**: Max 1 pro 24h, kein neuer solange einer offen ist.

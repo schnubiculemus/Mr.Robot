@@ -213,16 +213,26 @@ def score_and_select(query, n_candidates=60):
     selected, rejected = apply_caps(candidates)
 
     # 4. Fallback (Abschnitt 8.6)
-    # TODO Roadmap: Fallback ignoriert alle Caps und nimmt Top-30 Kandidaten.
-    # Das kann den Prompt mit Low-Score-Noise fluten. Besser: Caps beibehalten,
-    # nur den Score-Threshold senken um FALLBACK_THRESHOLD_REDUCTION.
+    # Wenn zu wenig Chunks selektiert: Score-Threshold senken, aber Caps beibehalten.
     fallback_used = False
     if len(selected) < MIN_CHUNKS_IF_AVAILABLE and len(candidates) > len(selected):
-        # Threshold senken: niedrigere Scores akzeptieren
         fallback_used = True
-        # Alle Kandidaten nochmal ohne Caps, aber mit Global Cap
-        selected = candidates[:GLOBAL_MAX_CHUNKS]
-        rejected = [(c, "below_threshold") for c in candidates[GLOBAL_MAX_CHUNKS:]]
+        # Minimum-Score aus den selektierten Chunks bestimmen
+        if selected:
+            min_score = min(c["_retrieval_score"] for c in selected)
+        else:
+            min_score = 0.5  # Default wenn gar nichts selektiert wurde
+
+        # Threshold senken und nochmal durch Caps laufen lassen
+        lowered_threshold = min_score - FALLBACK_THRESHOLD_REDUCTION
+        fallback_candidates = [
+            c for c in candidates
+            if c["_retrieval_score"] >= lowered_threshold and c not in selected
+        ]
+        # Nochmal Caps anwenden (mit den bereits selektierten Chunks)
+        combined = selected + fallback_candidates
+        combined.sort(key=lambda x: x["_retrieval_score"], reverse=True)
+        selected, rejected = apply_caps(combined)
 
     # 5. Logging
     _log_retrieval(query, candidates, selected, rejected, fallback=fallback_used)

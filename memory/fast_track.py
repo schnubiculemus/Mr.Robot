@@ -124,12 +124,9 @@ def process_fast_track(user_id, user_message):
     chunk_type, matched = result
     logger.info(f"Fast-Track erkannt: [{chunk_type}] Trigger: '{matched}'")
 
-    # Confidence: konservativ (Baseline - Penalty)
-    # TODO Roadmap: max(base, base + 0.05) ist sinnlos, base + 0.05 ist immer größer.
-    # Vermutlich gemeint: base + 0.05 als kleiner Boost, dann minus Penalty.
-    # Fix: confidence = base_confidence + 0.05 - FAST_TRACK_CONFIDENCE_PENALTY
+    # Confidence: Typ-Baseline + kleiner Boost, minus Fast-Track-Penalty (konservativ)
     base_confidence = CONFIDENCE_THRESHOLDS.get(chunk_type, 0.75)
-    confidence = max(base_confidence, base_confidence + 0.05) - FAST_TRACK_CONFIDENCE_PENALTY
+    confidence = base_confidence + 0.05 - FAST_TRACK_CONFIDENCE_PENALTY
 
     # Chunk erzeugen
     # Text ist die ganze Nachricht, verdichtet — bei Fast-Track
