@@ -22,7 +22,7 @@ COLLECTION_ARCHIVE = "memory_archive"
 # =============================================================================
 # Konsolidierungsmodell
 # =============================================================================
-CONSOLIDATION_MODEL = "gpt-oss:120b-cloud"
+CONSOLIDATION_MODEL = "qwen3.5:122b"
 CONSOLIDATION_SPEC_VERSION = "1.1"
 
 # =============================================================================

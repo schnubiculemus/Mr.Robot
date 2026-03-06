@@ -197,6 +197,8 @@ IMPORTANT:
 10. KNOWLEDGE STRICTNESS: Only create knowledge chunks from info explicitly in the block.
 11. DEDUPLICATION: If two extracted chunks have >90% same meaning, keep the more precise one.
 12. Do not store assistant messages unless they are explicit self_reflection.
+13. NO SYSTEM SNAPSHOTS: Never store system status, RAM/CPU/disk usage, chunk counts, monitoring data, or /status output as chunks. These are ephemeral and belong in logs, not in memory.
+14. SUPERSEDE ON INVALIDATION: When Tommy explicitly says something is done, finished, obsolete, or no longer relevant ("ist erledigt", "streich das", "Phasen sind Geschichte", "ist abgeschlossen"), supersede or mark the corresponding existing chunks as outdated. Do not keep old working_states alive when they are explicitly contradicted.
 
 ## OUTPUT FORMAT
 JSON array only. No prose, no markdown backticks.
