@@ -232,13 +232,9 @@ def _is_valid_tag(tag):
 
 
 def chunk_age_days(chunk):
-    """Berechnet das Alter eines Chunks in Tagen."""
-    created = datetime.fromisoformat(chunk["created_at"])
-    now = datetime.now(timezone.utc)
-    # Falls created keinen tzinfo hat, UTC annehmen
-    if created.tzinfo is None:
-        created = created.replace(tzinfo=timezone.utc)
-    return (now - created).days
+    """Berechnet das Alter eines Chunks in Tagen. Safe bei kaputtem Timestamp."""
+    from core.datetime_utils import safe_age_days
+    return safe_age_days(chunk.get("created_at", ""), default=0)
 
 
 def chunk_to_metadata(chunk):

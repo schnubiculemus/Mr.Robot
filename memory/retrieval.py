@@ -9,6 +9,7 @@ Fallback und Logging.
 import logging
 import json
 from datetime import datetime, timezone
+from core.datetime_utils import safe_parse_dt, now_utc
 
 from memory.memory_config import (
     RETRIEVAL_WEIGHTS,
@@ -45,12 +46,13 @@ def compute_recency(created_at):
     """
     Linearer Recency-Faktor (Abschnitt 8.3).
     Gestern = 1.0, nach RECENCY_HORIZON_DAYS = RECENCY_MINIMUM.
+    Safe: gibt RECENCY_MINIMUM bei kaputtem Timestamp zurück.
     """
-    created = datetime.fromisoformat(created_at)
-    if created.tzinfo is None:
-        created = created.replace(tzinfo=timezone.utc)
+    created = safe_parse_dt(created_at)
+    if created is None:
+        return RECENCY_MINIMUM
 
-    age_days = (datetime.now(timezone.utc) - created).total_seconds() / 86400
+    age_days = (now_utc() - created).total_seconds() / 86400
 
     if age_days <= 0:
         return 1.0
@@ -65,6 +67,7 @@ def compute_type_decay(chunk_type, created_at):
     Typspezifische Alterung (Abschnitt 8.5).
     Nur fuer working_state, self_reflection, preference.
     Andere Typen geben 1.0 zurueck.
+    Safe: gibt minimum bei kaputtem Timestamp zurück.
     """
     if chunk_type not in TYPE_DECAY:
         return 1.0
@@ -73,11 +76,11 @@ def compute_type_decay(chunk_type, created_at):
     horizon = decay_config["horizon_days"]
     minimum = decay_config["minimum"]
 
-    created = datetime.fromisoformat(created_at)
-    if created.tzinfo is None:
-        created = created.replace(tzinfo=timezone.utc)
+    created = safe_parse_dt(created_at)
+    if created is None:
+        return minimum
 
-    age_days = (datetime.now(timezone.utc) - created).total_seconds() / 86400
+    age_days = (now_utc() - created).total_seconds() / 86400
 
     if age_days <= 0:
         return 1.0

@@ -23,6 +23,7 @@ sys.path.insert(0, PROJECT_DIR)
 os.chdir(PROJECT_DIR)
 
 from config import OLLAMA_API_URL, OLLAMA_API_KEY, OLLAMA_MODEL, WAHA_API_KEY
+from core.datetime_utils import now_utc, now_berlin, safe_parse_dt, to_iso
 from core.database import get_connection, get_chat_history, save_message
 from core.whatsapp import send_message, init_waha
 from core.tasks import get_pending_tasks, save_task, build_iteration_prompt, TASK_DONE_TOKEN
@@ -85,7 +86,7 @@ def get_last_message_time(user_id):
     )
     row = cursor.fetchone()
     conn.close()
-    return datetime.fromisoformat(row["timestamp"]) if row else None
+    return safe_parse_dt(row["timestamp"]) if row else None
 
 
 # =============================================================================
@@ -194,23 +195,26 @@ def run_consolidation(user_id):
 # =============================================================================
 
 def should_send_message(user_id, now):
-    if now.hour < ACTIVE_HOURS_START or now.hour >= ACTIVE_HOURS_END:
+    berlin = now_berlin()
+    if berlin.hour < ACTIVE_HOURS_START or berlin.hour >= ACTIVE_HOURS_END:
         return False
 
     last_msg = get_last_message_time(user_id)
     if not last_msg:
         return False
 
-    silence = (now - last_msg).total_seconds() / 3600
+    silence = (now_utc() - last_msg).total_seconds() / 3600
     if silence < SILENCE_THRESHOLD_HOURS:
         return False
 
     state = load_state()
     last_hb = state.get(f"{user_id}_message")
     if last_hb:
-        cooldown = (now - datetime.fromisoformat(last_hb)).total_seconds() / 3600
-        if cooldown < HEARTBEAT_COOLDOWN_HOURS:
-            return False
+        last_hb_dt = safe_parse_dt(last_hb)
+        if last_hb_dt:
+            cooldown = (now_utc() - last_hb_dt).total_seconds() / 3600
+            if cooldown < HEARTBEAT_COOLDOWN_HOURS:
+                return False
 
     return True
 
@@ -238,7 +242,7 @@ def maybe_send_message(user_id, context_name, now):
     prompt = f"""{heartbeat_prompt}
 
 ---
-Aktuelle Uhrzeit: {now.strftime('%A, %d. %B %Y, %H:%M Uhr')}
+Aktuelle Uhrzeit: {now_berlin().strftime('%A, %d. %B %Y, %H:%M Uhr')}
 
 Schreib eine kurze Nachricht ODER antworte mit HEARTBEAT_OK."""
 
@@ -267,7 +271,7 @@ Schreib eine kurze Nachricht ODER antworte mit HEARTBEAT_OK."""
             save_message(user_id, "assistant", reply)
 
         state = load_state()
-        state[f"{user_id}_message"] = now.isoformat()
+        state[f"{user_id}_message"] = to_iso()
         save_state(state)
 
     except Exception as e:
@@ -326,7 +330,7 @@ def process_tasks():
             task["iterations"].append({
                 "iteration": iteration + 1,
                 "result": result,
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": to_iso(),
             })
             task["current_iteration"] = iteration + 1
 
@@ -375,7 +379,8 @@ def _deliver_task(task):
 # =============================================================================
 
 def run_heartbeat(user_id, context_name):
-    now = datetime.now()
+    now = now_utc()
+    berlin = now_berlin()
     logger.info(f"--- {context_name} ({user_id}) ---")
 
     # 1. Konsolidierung
@@ -404,15 +409,19 @@ def run_heartbeat(user_id, context_name):
         do_reflect = True
 
         if last_reflection:
-            age_hours = (now - datetime.fromisoformat(last_reflection)).total_seconds() / 3600
-            do_reflect = age_hours >= 12  # Max 1 Reflexion pro 12h
+            last_ref_dt = safe_parse_dt(last_reflection)
+            if last_ref_dt:
+                age_hours = (now - last_ref_dt).total_seconds() / 3600
+                do_reflect = age_hours >= 12
+            else:
+                do_reflect = True  # Kaputtes Datum → reflektieren
 
         if do_reflect:
             from reflection import run_reflection
             chunk_id = run_reflection(user_id)
             if chunk_id:
                 state = load_state()
-                state[f"{user_id}_last_reflection"] = now.isoformat()
+                state[f"{user_id}_last_reflection"] = to_iso(now)
                 save_state(state)
                 logger.info(f"Reflexion erzeugt: {chunk_id[:8]}")
         else:
@@ -425,8 +434,8 @@ def run_heartbeat(user_id, context_name):
         # Briefing-Fenster dürfen den Stille-Check umgehen — sie sollen kommen
         # wenn Tommy aktiv war, nicht nur bei langer Stille.
         # Aber: max 1 Briefing pro Fenster (eigener Cooldown).
-        is_morning = 7 <= now.hour < 10
-        is_evening = 20 <= now.hour < 22
+        is_morning = 7 <= berlin.hour < 10
+        is_evening = 20 <= berlin.hour < 22
         is_briefing_window = is_morning or is_evening
         allow_proactive = False
 
@@ -435,8 +444,12 @@ def run_heartbeat(user_id, context_name):
             cooldown_key = f"{user_id}_last_briefing_morning" if is_morning else f"{user_id}_last_briefing_evening"
             last_briefing = state.get(cooldown_key)
             if last_briefing:
-                age_hours = (now - datetime.fromisoformat(last_briefing)).total_seconds() / 3600
-                allow_proactive = age_hours >= 20  # Min 20h zwischen Briefings desselben Typs
+                last_br_dt = safe_parse_dt(last_briefing)
+                if last_br_dt:
+                    age_hours = (now - last_br_dt).total_seconds() / 3600
+                    allow_proactive = age_hours >= 20
+                else:
+                    allow_proactive = True  # Kaputtes Datum → erlauben
             else:
                 allow_proactive = True
         else:
@@ -446,11 +459,11 @@ def run_heartbeat(user_id, context_name):
             sent = run_proactive(user_id, context_name, now)
             if sent:
                 state = load_state()
-                state[f"{user_id}_message"] = now.isoformat()
+                state[f"{user_id}_message"] = to_iso(now)
                 if is_morning:
-                    state[f"{user_id}_last_briefing_morning"] = now.isoformat()
+                    state[f"{user_id}_last_briefing_morning"] = to_iso(now)
                 elif is_evening:
-                    state[f"{user_id}_last_briefing_evening"] = now.isoformat()
+                    state[f"{user_id}_last_briefing_evening"] = to_iso(now)
                 save_state(state)
         else:
             logger.info("Proaktive Nachricht: Cooldown/Zeitfenster nicht erfuellt, skip.")
@@ -465,7 +478,7 @@ def run_heartbeat(user_id, context_name):
 
     # State
     state = load_state()
-    state[f"{user_id}_last_run"] = now.isoformat()
+    state[f"{user_id}_last_run"] = to_iso(now)
     save_state(state)
 
     logger.info(f"--- fertig ---")

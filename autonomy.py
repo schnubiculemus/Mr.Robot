@@ -24,6 +24,7 @@ from datetime import datetime, timezone, timedelta
 from config import OLLAMA_API_URL, OLLAMA_API_KEY, OLLAMA_MODEL, BOT_NAME
 from core.whatsapp import send_message
 from core.database import save_message
+from core.datetime_utils import now_utc, safe_parse_dt, to_iso
 
 logger = logging.getLogger(__name__)
 
@@ -170,7 +171,7 @@ def _save_pending_pr(proposal, user_id):
     pr_data = {
         "proposal": proposal,
         "user_id": user_id,
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": to_iso(),
         "status": "pending",
     }
     try:
@@ -201,7 +202,7 @@ def _close_pending_pr(new_status):
     if not pending:
         return
     pending["status"] = new_status
-    pending["closed_at"] = datetime.now(timezone.utc).isoformat()
+    pending["closed_at"] = to_iso()
     try:
         with open(SOUL_PR_PATH, "w", encoding="utf-8") as f:
             json.dump(pending, f, ensure_ascii=False, indent=2)
@@ -224,14 +225,12 @@ def _can_send_new_pr():
     if pending:
         created = pending.get("created_at", "")
         if created:
-            try:
-                created_dt = datetime.fromisoformat(created)
-                age_hours = (datetime.now(timezone.utc) - created_dt).total_seconds() / 3600
+            created_dt = safe_parse_dt(created)
+            if created_dt:
+                age_hours = (now_utc() - created_dt).total_seconds() / 3600
                 if age_hours < SOUL_PR_COOLDOWN_HOURS:
                     logger.info(f"Soul-PR Skip: Cooldown ({age_hours:.1f}h < {SOUL_PR_COOLDOWN_HOURS}h)")
                     return False
-            except (ValueError, TypeError):
-                pass
 
     return True
 
@@ -594,7 +593,7 @@ def apply_arch_update(old_text, new_text, reason):
 def _log_autonomy(action_type, details):
     """Loggt alle autonomen Aktionen in separates Log."""
     entry = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": to_iso(),
         "action": action_type,
         "details": details[:500],
     }

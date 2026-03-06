@@ -63,10 +63,9 @@ def build_system_prompt(context_name=None, user_id=None, user_message=None):
     """
     parts = []
 
-    # 1. Datum/Uhrzeit
-    from datetime import datetime
-    now = datetime.now()
-    parts.append(f"Aktuelles Datum und Uhrzeit: {now.strftime('%A, %d. %B %Y, %H:%M Uhr')}")
+    # 1. Datum/Uhrzeit (Berliner Zeit für Tommy)
+    from core.datetime_utils import format_berlin
+    parts.append(f"Aktuelles Datum und Uhrzeit: {format_berlin()}")
 
     # 2. Verfassung
     parts.append(load_soul())

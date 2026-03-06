@@ -6,7 +6,7 @@ Formatiert selektierte Memory-Chunks fuer den System-Prompt.
 Typweise gruppiert, feste Reihenfolge, self_reflection separiert.
 """
 
-from datetime import datetime, timezone
+from core.datetime_utils import safe_age_days
 from memory.memory_config import (
     PROMPT_TYPE_ORDER,
     PROMPT_MEMORY_HEADER,
@@ -21,11 +21,7 @@ from memory.memory_config import (
 
 def _format_chunk(chunk):
     """Formatiert einen einzelnen Chunk fuer den Prompt (Abschnitt 9)."""
-    # Alter berechnen
-    created = datetime.fromisoformat(chunk.get("created_at", ""))
-    if created.tzinfo is None:
-        created = created.replace(tzinfo=timezone.utc)
-    age_days = (datetime.now(timezone.utc) - created).days
+    age_days = safe_age_days(chunk.get("created_at", ""), default=0)
 
     # Tags
     tags = chunk.get("tags", [])

@@ -8,12 +8,20 @@ Flow:
 3. Heartbeat erkennt offene Tasks und lässt Kimi iterieren
 4. Pro Iteration: Kimi bekommt vorheriges Ergebnis + Verbesserungsauftrag
 5. Kimi sagt TASK_DONE oder max. Runden erreicht → Ergebnis per WhatsApp
+
+Fix 9.7:
+- Task-IDs jetzt UUID-basiert (keine Sekunden-Kollision mehr)
+- Atomisches Schreiben via Temp-Datei + os.replace()
+- UTC-Timestamps via datetime_utils
 """
 
 import os
 import json
+import uuid
+import tempfile
 import logging
-from datetime import datetime
+
+from core.datetime_utils import to_iso
 
 logger = logging.getLogger(__name__)
 
@@ -25,11 +33,32 @@ def ensure_tasks_dir():
     os.makedirs(TASKS_DIR, exist_ok=True)
 
 
+def _atomic_write_json(path, data):
+    """
+    Schreibt JSON atomar: erst in Temp-Datei, dann os.replace().
+    Verhindert halb-geschriebene Dateien bei Crashes oder parallelen Zugriffen.
+    """
+    dir_name = os.path.dirname(path)
+    try:
+        fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix=".tmp")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, path)
+    except Exception as e:
+        # Temp-Datei aufräumen falls replace fehlschlägt
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise e
+
+
 def create_task(user_id, prompt, context_name=None):
-    """Erstellt einen neuen Task."""
+    """Erstellt einen neuen Task mit UUID-basierter ID."""
     ensure_tasks_dir()
 
-    task_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    now = to_iso()
+    task_id = uuid.uuid4().hex[:12]
     task = {
         "id": task_id,
         "user_id": user_id,
@@ -39,15 +68,14 @@ def create_task(user_id, prompt, context_name=None):
         "iterations": [],
         "current_iteration": 0,
         "max_iterations": MAX_ITERATIONS,
-        "created_at": datetime.now().isoformat(),
-        "updated_at": datetime.now().isoformat(),
+        "created_at": now,
+        "updated_at": now,
     }
 
     path = os.path.join(TASKS_DIR, f"{task_id}.json")
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(task, f, ensure_ascii=False, indent=2)
+    _atomic_write_json(path, task)
 
-    logger.info(f"📝 Task erstellt: {task_id} – {prompt[:80]}")
+    logger.info(f"Task erstellt: {task_id} – {prompt[:80]}")
     return task_id
 
 
@@ -65,18 +93,18 @@ def get_pending_tasks():
                 task = json.load(f)
             if task.get("status") in ("pending", "running"):
                 tasks.append(task)
-        except (json.JSONDecodeError, IOError):
+        except (json.JSONDecodeError, IOError) as e:
+            logger.warning(f"Task-Datei nicht lesbar: {fn}: {e}")
             continue
 
     return tasks
 
 
 def save_task(task):
-    """Speichert einen Task."""
-    task["updated_at"] = datetime.now().isoformat()
+    """Speichert einen Task atomar."""
+    task["updated_at"] = to_iso()
     path = os.path.join(TASKS_DIR, f"{task['id']}.json")
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(task, f, ensure_ascii=False, indent=2)
+    _atomic_write_json(path, task)
 
 
 def build_iteration_prompt(task):

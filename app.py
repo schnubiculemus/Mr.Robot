@@ -1,6 +1,7 @@
 import logging
 import threading
 import os
+from concurrent.futures import ThreadPoolExecutor
 from flask import Flask, request, jsonify
 from config import WAHA_API_KEY, BOT_NAME, WEBHOOK_SECRET
 from core.database import init_db, get_or_create_user, save_message, get_chat_history
@@ -47,6 +48,11 @@ OWNER_ID = "221152228159675@lid"
 # Garantiert dass Antworten in der richtigen Reihenfolge kommen.
 _user_locks = {}
 _user_locks_guard = threading.Lock()
+
+# ThreadPool: begrenzt die Anzahl gleichzeitiger Background-Threads.
+# max_workers=4: 1 Chat-Thread + 1 Fast-Track pro User, mit Puffer.
+# Verhindert unkontrolliertes Thread-Wachstum bei Nachrichtenspitzen.
+_thread_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="schnubot")
 
 
 def _get_user_lock(user_id):
@@ -135,14 +141,10 @@ def webhook():
         logger.info(f"Status abgefragt")
         return jsonify({"status": "status_sent"}), 200
 
-    # --- Chat-Verarbeitung in Background-Thread ---
+    # --- Chat-Verarbeitung im ThreadPool ---
     # Sofort 200 an WAHA zurück, damit der Webhook nicht timeout'd.
-    # Kimi-Antwort + Fast-Track laufen asynchron.
-    threading.Thread(
-        target=_process_chat,
-        args=(phone_number, text, display_name, context_name),
-        daemon=True,
-    ).start()
+    # Kimi-Antwort + Fast-Track laufen asynchron im begrenzten Pool.
+    _thread_pool.submit(_process_chat, phone_number, text, display_name, context_name)
 
     return jsonify({"status": "processing"}), 200
 
@@ -156,13 +158,8 @@ def _process_chat(phone_number, text, display_name, context_name):
     lock = _get_user_lock(phone_number)
     with lock:
         try:
-            # Fast-Track parallel starten
-            ft_thread = threading.Thread(
-                target=_safe_fast_track,
-                args=(phone_number, text),
-                daemon=True,
-            )
-            ft_thread.start()
+            # Fast-Track im Pool starten (nicht als verschachtelter Thread)
+            _thread_pool.submit(_safe_fast_track, phone_number, text)
 
             # History HIER holen (nicht im Webhook), damit bei Doppel-Nachrichten
             # die zweite Nachricht Kimis Antwort auf die erste sieht.

@@ -17,6 +17,7 @@ PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, PROJECT_DIR)
 os.environ["HF_HUB_OFFLINE"] = "1"
 
+from core.datetime_utils import now_utc, to_iso
 from memory.memory_store import get_stats, get_active_collection, get_archive_collection
 
 
@@ -76,7 +77,7 @@ def get_heartbeat_state():
 def get_log_errors(hours=24):
     """Zählt Fehler in den Logs der letzten N Stunden."""
     errors = {"schnubot": 0, "heartbeat": 0}
-    cutoff = datetime.now() - timedelta(hours=hours)
+    cutoff = now_utc() - timedelta(hours=hours)
 
     for logname in ["schnubot", "heartbeat"]:
         logpath = os.path.join(PROJECT_DIR, "logs", f"{logname}.log")
@@ -181,7 +182,7 @@ def build_full_report():
     bot_running = get_bot_uptime()
 
     return {
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": to_iso(),
         "bot_running": bot_running,
         "resources": get_system_resources(),
         "memory": {

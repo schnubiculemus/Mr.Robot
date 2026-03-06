@@ -19,6 +19,7 @@ from config import OLLAMA_API_URL, OLLAMA_API_KEY, OLLAMA_MODEL
 from core.database import get_chat_history, save_message
 from core.whatsapp import send_message
 from core.ollama_client import build_system_prompt
+from core.datetime_utils import now_utc, safe_parse_dt, format_berlin
 from memory.memory_store import query_active
 
 logger = logging.getLogger(__name__)
@@ -189,20 +190,19 @@ def _check_stale_working_states():
     results = query_active("Projekt Phase Status Arbeit aktuell", n_results=15)
     stale = []
 
-    now = datetime.now(timezone.utc)
+    now = now_utc()
     for chunk in results:
         if chunk.get("chunk_type") != "working_state":
             continue
         created = chunk.get("created_at", "")
         if not created:
             continue
-        try:
-            created_dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
-            age_days = (now - created_dt).days
-            if age_days >= 7:
-                stale.append(f"- [{age_days}d alt] {chunk['text']}")
-        except (ValueError, TypeError):
+        created_dt = safe_parse_dt(created)
+        if created_dt is None:
             continue
+        age_days = (now - created_dt).days
+        if age_days >= 7:
+            stale.append(f"- [{age_days}d alt] {chunk['text']}")
 
     if stale:
         return "Arbeitsstände älter als 7 Tage (evtl. veraltet):\n" + "\n".join(stale[:5])
@@ -238,7 +238,7 @@ def generate_proactive_message(user_id, context_name, triggers, now):
 
 {trigger_text}
 
-Aktuelle Zeit: {now.strftime('%A, %d. %B %Y, %H:%M Uhr')}
+Aktuelle Zeit: {format_berlin(now)}
 
 REGELN:
 - Schreib eine kurze, natürliche WhatsApp-Nachricht an Tommy.
