@@ -40,6 +40,9 @@ USER_CONTEXTS = {
     "221152228159675@lid": "tommy",
 }
 
+# Owner: nur dieser User darf /merge, /ablehnen und andere privilegierte Commands
+OWNER_ID = "221152228159675@lid"
+
 # Per-User Lock: verhindert parallele Kimi-Calls für denselben User.
 # Garantiert dass Antworten in der richtigen Reihenfolge kommen.
 _user_locks = {}
@@ -100,8 +103,11 @@ def webhook():
             send_message(phone_number, reply)
             return jsonify({"status": "ok"}), 200
 
-    # /merge Befehl — Soul-PR übernehmen
+    # /merge Befehl — Soul-PR übernehmen (nur Owner)
     if text.strip().lower() in ("/merge", "merge"):
+        if phone_number != OWNER_ID:
+            logger.warning(f"Merge abgelehnt: {phone_number} ist nicht Owner")
+            return jsonify({"status": "unauthorized"}), 200
         from autonomy import handle_merge
         reply = handle_merge(phone_number)
         save_message(phone_number, "assistant", reply)
@@ -109,8 +115,11 @@ def webhook():
         logger.info(f"Soul-PR Merge: {reply[:100]}")
         return jsonify({"status": "soul_merge"}), 200
 
-    # /ablehnen Befehl — Soul-PR verwerfen
+    # /ablehnen Befehl — Soul-PR verwerfen (nur Owner)
     if text.strip().lower() in ("/ablehnen", "ablehnen"):
+        if phone_number != OWNER_ID:
+            logger.warning(f"Reject abgelehnt: {phone_number} ist nicht Owner")
+            return jsonify({"status": "unauthorized"}), 200
         from autonomy import handle_reject
         reply = handle_reject(phone_number)
         save_message(phone_number, "assistant", reply)

@@ -128,11 +128,14 @@ def process_fast_track(user_id, user_message):
     base_confidence = CONFIDENCE_THRESHOLDS.get(chunk_type, 0.75)
     confidence = base_confidence + 0.05 - FAST_TRACK_CONFIDENCE_PENALTY
 
+    # Kernphrase extrahieren statt Rohtext zu speichern.
+    # Nimmt den Satz der den Trigger enthält. Wenn die Nachricht nur 1 Satz ist,
+    # wird der ganze Text genommen, aber auf 200 Zeichen begrenzt.
+    chunk_text = _extract_core_phrase(user_message, matched)
+
     # Chunk erzeugen
-    # Text ist die ganze Nachricht, verdichtet — bei Fast-Track
-    # nehmen wir die User-Nachricht direkt, der Heartbeat kann spaeter verfeinern.
     chunk = create_chunk(
-        text=user_message.strip(),
+        text=chunk_text,
         chunk_type=chunk_type,
         source="tommy",
         confidence=confidence,
@@ -149,7 +152,7 @@ def process_fast_track(user_id, user_message):
     # PII-Check (gleiche Logik wie Konsolidierer)
     try:
         from memory.consolidator import _contains_sensitive_data
-        if _contains_sensitive_data(user_message):
+        if _contains_sensitive_data(chunk_text):
             logger.warning(f"Fast-Track: PII erkannt, uebersprungen")
             return None
     except ImportError:
@@ -161,9 +164,34 @@ def process_fast_track(user_id, user_message):
         _increment_count(user_id)
         logger.info(
             f"Fast-Track gespeichert: [{chunk_type}] conf={confidence} "
-            f"({_get_count(user_id)}/{FAST_TRACK_MAX_PER_CHAT}) | {user_message[:80]}"
+            f"({_get_count(user_id)}/{FAST_TRACK_MAX_PER_CHAT}) | {chunk_text[:80]}"
         )
         return chunk["id"]
     except Exception as e:
         logger.error(f"Fast-Track Speicherfehler: {e}")
         return None
+
+
+def _extract_core_phrase(message, trigger):
+    """
+    Extrahiert den relevanten Satz aus der Nachricht.
+    Nimmt den Satz der den Trigger enthaelt.
+    Begrenzt auf 200 Zeichen.
+    """
+    # Nach Satzgrenzen aufteilen (vereinfacht: . ! ? und Zeilenumbrüche)
+    import re
+    sentences = re.split(r'[.!?\n]+', message)
+    sentences = [s.strip() for s in sentences if s.strip()]
+
+    # Satz finden der den Trigger enthält
+    trigger_lower = trigger.lower()
+    for sentence in sentences:
+        if trigger_lower in sentence.lower():
+            return sentence[:200].strip()
+
+    # Fallback: ersten Satz nehmen
+    if sentences:
+        return sentences[0][:200].strip()
+
+    # Letzter Fallback
+    return message[:200].strip()

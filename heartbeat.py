@@ -92,13 +92,14 @@ def get_last_message_time(user_id):
 # Task 1: Konsolidierung (NEU - ersetzt alten Facts-Merge)
 # =============================================================================
 
-def get_new_turns(user_id, since_iso):
+def get_new_turns(user_id, since_iso, until_iso=None):
     """
-    Holt alle Nachrichten seit dem letzten Heartbeat-Lauf.
+    Holt alle Nachrichten seit dem letzten Heartbeat-Lauf bis upper_bound.
 
     Args:
         user_id: Phone-Number / LID
         since_iso: ISO-Timestamp des letzten Laufs
+        until_iso: Upper-Bound (exklusiv). Verhindert Doppel-Konsolidierung.
 
     Returns:
         Liste von Dicts mit 'role' und 'content'
@@ -107,14 +108,24 @@ def get_new_turns(user_id, since_iso):
     cursor = conn.cursor()
 
     if since_iso:
-        cursor.execute(
-            """
-            SELECT role, content FROM messages
-            WHERE phone_number = ? AND timestamp > ?
-            ORDER BY timestamp ASC
-            """,
-            (user_id, since_iso),
-        )
+        if until_iso:
+            cursor.execute(
+                """
+                SELECT role, content FROM messages
+                WHERE phone_number = ? AND timestamp > ? AND timestamp <= ?
+                ORDER BY timestamp ASC
+                """,
+                (user_id, since_iso, until_iso),
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT role, content FROM messages
+                WHERE phone_number = ? AND timestamp > ?
+                ORDER BY timestamp ASC
+                """,
+                (user_id, since_iso),
+            )
     else:
         # Erster Lauf: letzte 30 Nachrichten
         cursor.execute(
@@ -142,7 +153,8 @@ def get_new_turns(user_id, since_iso):
 def run_consolidation(user_id):
     """
     Holt neue Turns und konsolidiert sie zu Memory-Chunks.
-    Fix: upper_bound VOR dem Query setzen, damit keine Turns verloren gehen.
+    upper_bound wird VOR dem Query gesetzt UND im Query als Obergrenze verwendet,
+    damit keine Turns doppelt konsolidiert werden.
     """
     state = load_state()
     last_run = state.get(f"{user_id}_last_consolidation")
@@ -150,7 +162,7 @@ def run_consolidation(user_id):
     # Upper bound JETZT setzen — alles was danach reinkommt wird beim nächsten Lauf geholt
     upper_bound = datetime.now(timezone.utc).isoformat()
 
-    turns = get_new_turns(user_id, last_run)
+    turns = get_new_turns(user_id, last_run, until_iso=upper_bound)
 
     if not turns:
         logger.info(f"Keine neuen Turns seit letztem Lauf")
