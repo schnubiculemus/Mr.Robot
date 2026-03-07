@@ -10,9 +10,11 @@ import json
 import logging
 import re
 import requests
+import uuid
 from datetime import datetime, timezone
 
 from config import OLLAMA_API_URL, OLLAMA_API_KEY
+from core.database import log_consolidator_event
 from memory.memory_config import (
     CONSOLIDATION_MODEL,
     CHUNK_TYPES,
@@ -320,12 +322,18 @@ def format_block_for_prompt(turns):
 # Konsolidierung ausfuehren (Phase 4 erweitert)
 # =============================================================================
 
-def consolidate_block(turns):
+def consolidate_block(turns, run_id=None, block_index=0):
     """
     Konsolidiert einen einzelnen Turn-Block.
     Phase 4: Laedt bestehende Chunks und uebergibt sie dem Prompt.
     """
+    if run_id is None:
+        run_id = str(uuid.uuid4())[:8]
+
     conversation_text = format_block_for_prompt(turns)
+    user_turns = [t for t in turns if t.get("role") == "user"]
+    retry_triggered = False
+    null_result = False
 
     # Phase 4: Bestehende Chunks als Kontext laden
     existing_chunks = _get_existing_chunks_for_block(turns)
@@ -334,29 +342,45 @@ def consolidate_block(turns):
     # API-Call
     raw_response = _call_consolidation_model(prompt)
     if raw_response is None:
+        log_consolidator_event(
+            run_id=run_id, block_index=block_index,
+            block_size=len(turns), turns_count=len(user_turns),
+            actions=[], error="api_call_failed",
+        )
         return []
 
     # JSON parsen
     chunk_defs = _parse_response(raw_response)
     if chunk_defs is None:
         logger.warning("Erster Parse fehlgeschlagen, Retry mit Fehlerhinweis...")
+        retry_triggered = True
         retry_prompt = prompt + "\n\nYour previous response was not valid JSON. Return ONLY a valid JSON array now. No text, no backticks."
         raw_response = _call_consolidation_model(retry_prompt)
         if raw_response is None:
+            log_consolidator_event(
+                run_id=run_id, block_index=block_index,
+                block_size=len(turns), turns_count=len(user_turns),
+                actions=[], retry_triggered=True, error="retry_api_failed",
+            )
             return []
         chunk_defs = _parse_response(raw_response)
         if chunk_defs is None:
             logger.error("Retry fehlgeschlagen, Block verworfen")
+            log_consolidator_event(
+                run_id=run_id, block_index=block_index,
+                block_size=len(turns), turns_count=len(user_turns),
+                actions=[], retry_triggered=True, error="parse_failed",
+            )
             return []
 
     if not chunk_defs:
-        # Null-Ergebnis bei substanziellem Block: nochmal versuchen mit Fokus-Prompt
-        user_turns = [t for t in turns if t.get("role") == "user"]
         if len(user_turns) >= 2:
             logger.warning(
                 f"Konsolidierer: 0 Chunks aus {len(turns)} Turns ({len(user_turns)} User-Turns) — "
                 f"Retry mit Fokus-Prompt"
             )
+            retry_triggered = True
+            null_result = True
             retry_prompt = (
                 prompt
                 + "\n\nIMPORTANT: You returned an empty array, but this block contains "
@@ -370,18 +394,28 @@ def consolidate_block(turns):
                 chunk_defs = _parse_response(raw_retry)
                 if chunk_defs:
                     logger.info(f"Konsolidierer: Retry ergab {len(chunk_defs)} Aktionen")
+                    null_result = False
                 else:
                     chunk_defs = []
 
         if not chunk_defs:
             logger.info("Konsolidierer: No-Op (nichts speicherwuerdig)")
+            log_consolidator_event(
+                run_id=run_id, block_index=block_index,
+                block_size=len(turns), turns_count=len(user_turns),
+                actions=[], retry_triggered=retry_triggered, null_result=True,
+            )
             return []
 
     # Aktionslimit
+    creates_before = len([c for c in chunk_defs if c.get("action") == "create"])
     chunk_defs = _apply_action_limit(chunk_defs)
+    creates_after = len([c for c in chunk_defs if c.get("action") == "create"])
+    dropped_count = max(0, creates_before - creates_after)
 
     # Chunks verarbeiten (create/confirm/update/supersede)
     result_ids = []
+    executed_actions = []
     for cdef in chunk_defs:
         action = cdef.get("action", "create")
         if action == "create":
@@ -398,13 +432,28 @@ def consolidate_block(turns):
 
         if chunk_id:
             result_ids.append(chunk_id)
+            executed_actions.append({
+                "action": action,
+                "chunk_type": cdef.get("chunk_type") or action,
+                "chunk_id": chunk_id[:8],
+                "text_preview": (cdef.get("text") or "")[:80],
+                "confidence": cdef.get("confidence"),
+                "existing_chunk_id": (cdef.get("existing_chunk_id") or "")[:8] or None,
+            })
 
     # Ergebnis loggen
-    actions = {}
+    actions_summary = {}
     for cdef in chunk_defs:
         a = cdef.get("action", "?")
-        actions[a] = actions.get(a, 0) + 1
-    logger.info(f"Konsolidierer: {len(result_ids)} Aktionen ausgefuehrt | {actions}")
+        actions_summary[a] = actions_summary.get(a, 0) + 1
+    logger.info(f"Konsolidierer: {len(result_ids)} Aktionen ausgefuehrt | {actions_summary}")
+
+    log_consolidator_event(
+        run_id=run_id, block_index=block_index,
+        block_size=len(turns), turns_count=len(user_turns),
+        actions=executed_actions, dropped_count=dropped_count,
+        retry_triggered=retry_triggered, null_result=null_result,
+    )
 
     return result_ids
 
@@ -415,10 +464,11 @@ def consolidate_turns(turns):
     if not blocks:
         return 0
 
+    run_id = str(uuid.uuid4())[:8]
     total = 0
     for i, block in enumerate(blocks):
         logger.info(f"Konsolidiere Block {i+1}/{len(blocks)} ({len(block)} Turns)")
-        ids = consolidate_block(block)
+        ids = consolidate_block(block, run_id=run_id, block_index=i)
         total += len(ids)
 
     return total

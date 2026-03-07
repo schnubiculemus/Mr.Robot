@@ -45,8 +45,31 @@
 <script>
 async function loadStats() {
     try {
-        const res = await fetch('/api/stats');
+        const [res, ftRes, consRes] = await Promise.all([
+            fetch('/api/stats'),
+            fetch('/api/fasttrack/stats'),
+            fetch('/api/consolidator/stats'),
+        ]);
         const data = await res.json();
+        const ft = ftRes.ok ? await ftRes.json() : null;
+        const cons = consRes.ok ? await consRes.json() : null;
+
+        const ftRate = ft && ft.total > 0 ? Math.round((ft.stored / ft.total) * 100) : null;
+        const ftCard = ft
+            ? `<div class="stat-card" style="cursor:pointer" onclick="location.href='/fasttrack'">
+                <div class="stat-card-label">Fast-Track heute</div>
+                <div class="stat-card-value" style="color:var(--accent)">${ft.today_stored}</div>
+                <div class="stat-card-sub">${ft.today_total} Trigger · ${ftRate ?? '—'}% Store-Rate</div>
+               </div>`
+            : '';
+
+        const consCard = cons
+            ? `<div class="stat-card" style="cursor:pointer" onclick="location.href='/consolidator'">
+                <div class="stat-card-label">Konsolidierer heute</div>
+                <div class="stat-card-value" style="color:var(--blue)">${cons.today_runs}</div>
+                <div class="stat-card-sub">${cons.null_runs} No-Op · ${cons.retry_runs} Retries</div>
+               </div>`
+            : '';
 
         document.getElementById('stats-grid').innerHTML = `
             <div class="stat-card">
@@ -64,6 +87,8 @@ async function loadStats() {
                 <div class="stat-card-value">${Object.keys(data.by_type).length}</div>
                 <div class="stat-card-sub">verschiedene Typen aktiv</div>
             </div>
+            ${ftCard}
+            ${consCard}
             <div class="stat-card">
                 <div class="stat-card-label">Stand</div>
                 <div class="stat-card-value" style="font-size:16px">${data.timestamp}</div>

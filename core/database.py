@@ -57,6 +57,51 @@ def init_db():
         ON messages(phone_number, timestamp DESC)
     """)
 
+    # Observability: Fast-Track Events
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS fast_track_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            message_preview TEXT,
+            trigger_pattern TEXT,
+            chunk_type TEXT,
+            tags TEXT,
+            chunk_id TEXT,
+            chunk_text TEXT,
+            confidence REAL,
+            stored INTEGER NOT NULL DEFAULT 0,
+            skip_reason TEXT
+        )
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_ft_events_ts
+        ON fast_track_events(timestamp DESC)
+    """)
+
+    # Observability: Konsolidierer Events
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS consolidator_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            run_id TEXT NOT NULL,
+            block_index INTEGER NOT NULL DEFAULT 0,
+            block_size INTEGER NOT NULL DEFAULT 0,
+            turns_count INTEGER NOT NULL DEFAULT 0,
+            actions_json TEXT,
+            dropped_count INTEGER NOT NULL DEFAULT 0,
+            retry_triggered INTEGER NOT NULL DEFAULT 0,
+            null_result INTEGER NOT NULL DEFAULT 0,
+            error TEXT
+        )
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_cons_events_ts
+        ON consolidator_events(timestamp DESC)
+    """)
+
     conn.commit()
     conn.close()
     logger.info("Datenbank initialisiert (WAL-Modus)")
@@ -133,3 +178,191 @@ def set_user_profile(phone_number, profile_file):
 
     conn.commit()
     conn.close()
+
+
+def log_fast_track_event(
+    user_id,
+    message_preview,
+    trigger_pattern,
+    chunk_type=None,
+    tags=None,
+    chunk_id=None,
+    chunk_text=None,
+    confidence=None,
+    stored=False,
+    skip_reason=None,
+):
+    """Schreibt ein Fast-Track-Event in die Observability-Tabelle."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO fast_track_events
+            (timestamp, user_id, message_preview, trigger_pattern,
+             chunk_type, tags, chunk_id, chunk_text, confidence, stored, skip_reason)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            to_iso(),
+            user_id,
+            (message_preview or "")[:200],
+            trigger_pattern,
+            chunk_type,
+            ",".join(tags) if tags else None,
+            chunk_id,
+            (chunk_text or "")[:500],
+            confidence,
+            1 if stored else 0,
+            skip_reason,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_fast_track_events(limit=50, user_id=None):
+    """Holt die letzten Fast-Track-Events, optional gefiltert nach user_id."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    if user_id:
+        cursor.execute(
+            "SELECT * FROM fast_track_events WHERE user_id = ? ORDER BY timestamp DESC, id DESC LIMIT ?",
+            (user_id, limit),
+        )
+    else:
+        cursor.execute(
+            "SELECT * FROM fast_track_events ORDER BY timestamp DESC, id DESC LIMIT ?",
+            (limit,),
+        )
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_fast_track_stats():
+    """Aggregierte Fast-Track-Statistiken."""
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT COUNT(*) FROM fast_track_events")
+    total = cursor.fetchone()[0]
+
+    cursor.execute("SELECT COUNT(*) FROM fast_track_events WHERE stored = 1")
+    stored = cursor.fetchone()[0]
+
+    today = to_iso()[:10]
+    cursor.execute(
+        "SELECT COUNT(*) FROM fast_track_events WHERE timestamp LIKE ?", (f"{today}%",)
+    )
+    today_total = cursor.fetchone()[0]
+
+    cursor.execute(
+        "SELECT COUNT(*) FROM fast_track_events WHERE stored = 1 AND timestamp LIKE ?",
+        (f"{today}%",),
+    )
+    today_stored = cursor.fetchone()[0]
+
+    cursor.execute(
+        "SELECT chunk_type, COUNT(*) as cnt FROM fast_track_events WHERE stored = 1 GROUP BY chunk_type"
+    )
+    by_type = {row[0]: row[1] for row in cursor.fetchall() if row[0]}
+
+    cursor.execute(
+        "SELECT skip_reason, COUNT(*) as cnt FROM fast_track_events WHERE stored = 0 GROUP BY skip_reason"
+    )
+    by_skip = {row[0] or "unknown": row[1] for row in cursor.fetchall()}
+
+    conn.close()
+    return {
+        "total": total,
+        "stored": stored,
+        "skipped": total - stored,
+        "today_total": today_total,
+        "today_stored": today_stored,
+        "by_type": by_type,
+        "by_skip": by_skip,
+    }
+
+
+def log_consolidator_event(
+    run_id,
+    block_index,
+    block_size,
+    turns_count,
+    actions,
+    dropped_count=0,
+    retry_triggered=False,
+    null_result=False,
+    error=None,
+):
+    """Schreibt ein Konsolidierer-Event in die Observability-Tabelle."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO consolidator_events
+            (timestamp, run_id, block_index, block_size, turns_count,
+             actions_json, dropped_count, retry_triggered, null_result, error)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            to_iso(),
+            run_id,
+            block_index,
+            block_size,
+            turns_count,
+            json.dumps(actions, ensure_ascii=False),
+            dropped_count,
+            1 if retry_triggered else 0,
+            1 if null_result else 0,
+            error,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_consolidator_events(limit=30):
+    """Holt die letzten Konsolidierer-Events."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT * FROM consolidator_events ORDER BY timestamp DESC, id DESC LIMIT ?",
+        (limit,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_consolidator_stats():
+    """Aggregierte Konsolidierer-Statistiken."""
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT COUNT(*) FROM consolidator_events")
+    total_runs = cursor.fetchone()[0]
+
+    today = to_iso()[:10]
+    cursor.execute(
+        "SELECT COUNT(*) FROM consolidator_events WHERE timestamp LIKE ?", (f"{today}%",)
+    )
+    today_runs = cursor.fetchone()[0]
+
+    cursor.execute("SELECT COUNT(*) FROM consolidator_events WHERE null_result = 1")
+    null_runs = cursor.fetchone()[0]
+
+    cursor.execute("SELECT COUNT(*) FROM consolidator_events WHERE retry_triggered = 1")
+    retry_runs = cursor.fetchone()[0]
+
+    cursor.execute("SELECT SUM(dropped_count) FROM consolidator_events")
+    total_dropped = cursor.fetchone()[0] or 0
+
+    conn.close()
+    return {
+        "total_runs": total_runs,
+        "today_runs": today_runs,
+        "null_runs": null_runs,
+        "retry_runs": retry_runs,
+        "total_dropped": total_dropped,
+    }

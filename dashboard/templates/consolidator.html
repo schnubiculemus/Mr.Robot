@@ -1,0 +1,219 @@
+{% extends "base.html" %}
+{% block title %}Konsolidierer Inspector{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Konsolidierer Inspector</h1>
+    <p>Jeden Heartbeat-Lauf — welche Blöcke verarbeitet wurden, welche Aktionen rausgekommen sind.</p>
+</div>
+
+<!-- Stat Cards -->
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-card-label">Läufe gesamt</div>
+        <div class="stat-card-value" id="s-total">—</div>
+        <div class="stat-card-sub" id="s-today">— heute</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-card-label">No-Op Läufe</div>
+        <div class="stat-card-value" id="s-null" style="color:var(--amber)">—</div>
+        <div class="stat-card-sub">nichts extrahiert</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-card-label">Retries</div>
+        <div class="stat-card-value" id="s-retry" style="color:var(--blue)">—</div>
+        <div class="stat-card-sub">Parse/API Fehler</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-card-label">Gedroppt</div>
+        <div class="stat-card-value" id="s-dropped" style="color:var(--red)">—</div>
+        <div class="stat-card-sub">Limit überschritten</div>
+    </div>
+</div>
+
+<!-- Event-Tabelle -->
+<div class="card">
+    <div class="card-header">
+        <div>
+            <div class="card-title">Heartbeat-Läufe</div>
+            <div class="card-subtitle">Letzte Konsolidierungs-Events</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+            <select class="filter-select" id="f-limit" onchange="loadEvents()">
+                <option value="20">20 Einträge</option>
+                <option value="30" selected>30 Einträge</option>
+                <option value="50">50 Einträge</option>
+            </select>
+            <button class="btn" onclick="loadEvents()">↺ Refresh</button>
+        </div>
+    </div>
+
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Zeit</th>
+                    <th>Run-ID</th>
+                    <th>Block</th>
+                    <th>Turns</th>
+                    <th>Aktionen</th>
+                    <th>Zusammenfassung</th>
+                    <th>Flags</th>
+                </tr>
+            </thead>
+            <tbody id="cons-tbody">
+                <tr><td colspan="7" class="loading">Lade Events…</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Detail Panel -->
+<div class="detail-panel" id="cons-detail">
+    <div class="card-header" style="margin-bottom:12px">
+        <div class="card-title">Lauf-Detail</div>
+        <button onclick="closeDetail()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:18px">✕</button>
+    </div>
+    <div id="cons-detail-content"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let _allEvents = [];
+
+async function loadStats() {
+    const r = await fetch('/api/consolidator/stats');
+    const d = await r.json();
+    if (d.error) return;
+    document.getElementById('s-total').textContent = d.total_runs ?? '—';
+    document.getElementById('s-today').textContent = `${d.today_runs ?? 0} heute`;
+    document.getElementById('s-null').textContent = d.null_runs ?? '—';
+    document.getElementById('s-retry').textContent = d.retry_runs ?? '—';
+    document.getElementById('s-dropped').textContent = d.total_dropped ?? '—';
+}
+
+async function loadEvents() {
+    const limit = document.getElementById('f-limit').value;
+    const tbody = document.getElementById('cons-tbody');
+    tbody.innerHTML = '<tr><td colspan="7" class="loading">Lade…</td></tr>';
+
+    const r = await fetch(`/api/consolidator/events?limit=${limit}`);
+    const d = await r.json();
+    if (d.error) {
+        tbody.innerHTML = `<tr><td colspan="7" class="loading" style="color:var(--red)">${d.error}</td></tr>`;
+        return;
+    }
+
+    _allEvents = d.events || [];
+
+    if (_allEvents.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="loading">Keine Events — warte auf nächsten Heartbeat.</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = _allEvents.map(ev => {
+        const flags = [];
+        if (ev.retry_triggered) flags.push(`<span class="badge" style="background:var(--blue-dim);color:var(--blue)">retry</span>`);
+        if (ev.null_result) flags.push(`<span class="badge" style="background:var(--amber-dim);color:var(--amber)">no-op</span>`);
+        if (ev.dropped_count > 0) flags.push(`<span class="badge" style="background:var(--red-dim);color:var(--red)">-${ev.dropped_count} dropped</span>`);
+        if (ev.error) flags.push(`<span class="badge" style="background:var(--red-dim);color:var(--red)">error</span>`);
+
+        const summary = ev.actions_summary || {};
+        const summaryHtml = Object.entries(summary)
+            .map(([a, n]) => `<span class="badge badge-${actionColor(a)}" style="margin:1px">${a} ${n}</span>`)
+            .join(' ') || '<span style="color:var(--text-dim)">—</span>';
+
+        return `<tr onclick="showDetail(${ev.id})" style="cursor:pointer">
+            <td class="mono">${escHtml(ev.timestamp_short)}</td>
+            <td class="mono" style="color:var(--text-dim)">${escHtml(ev.run_id)}</td>
+            <td style="color:var(--text-secondary)">${ev.block_index + 1}</td>
+            <td style="color:var(--text-secondary)">${ev.turns_count} / ${ev.block_size}</td>
+            <td style="color:var(--text-primary);font-weight:600">${ev.actions_count}</td>
+            <td>${summaryHtml}</td>
+            <td>${flags.join(' ') || '—'}</td>
+        </tr>`;
+    }).join('');
+}
+
+function actionColor(action) {
+    const map = { create: 'knowledge', confirm: 'active', update: 'working_state', supersede: 'decision' };
+    return map[action] || 'archived';
+}
+
+function showDetail(eventId) {
+    const ev = _allEvents.find(e => e.id === eventId);
+    if (!ev) return;
+
+    const panel = document.getElementById('cons-detail');
+    const content = document.getElementById('cons-detail-content');
+
+    const actionsHtml = (ev.actions || []).length === 0
+        ? '<div style="color:var(--text-dim);padding:8px 0">Keine Aktionen ausgeführt.</div>'
+        : (ev.actions || []).map((a, i) => `
+            <div style="border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;margin-bottom:8px;background:var(--bg-deep)">
+                <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+                    <span style="color:var(--text-dim);font-size:10px">#${i+1}</span>
+                    <span class="badge badge-${actionColor(a.action)}">${a.action}</span>
+                    ${a.chunk_type ? `<span class="badge badge-${a.chunk_type}">${a.chunk_type}</span>` : ''}
+                    ${a.confidence != null ? `<span style="color:var(--text-muted);font-size:10px">conf ${Number(a.confidence).toFixed(2)}</span>` : ''}
+                    <span class="mono" style="color:var(--text-dim);font-size:10px;margin-left:auto">${a.chunk_id || ''}</span>
+                </div>
+                ${a.text_preview ? `<div style="color:var(--text-secondary);font-size:12px;line-height:1.5">${escHtml(a.text_preview)}</div>` : ''}
+                ${a.existing_chunk_id ? `<div style="margin-top:4px;font-size:10px;color:var(--text-dim)">↩ ${escHtml(a.existing_chunk_id)}</div>` : ''}
+            </div>`).join('');
+
+    content.innerHTML = `
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;margin-bottom:16px">
+            <div class="stat-card">
+                <div class="stat-card-label">Zeitpunkt</div>
+                <div style="font-size:12px;margin-top:6px;color:var(--text-primary)">${escHtml(ev.timestamp_short)}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-card-label">Run-ID</div>
+                <div class="mono" style="font-size:12px;margin-top:6px;color:var(--text-primary)">${escHtml(ev.run_id)}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-card-label">Block / Turns</div>
+                <div style="font-size:12px;margin-top:6px;color:var(--text-primary)">Block ${ev.block_index + 1} · ${ev.turns_count} User-Turns (${ev.block_size} gesamt)</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-card-label">Flags</div>
+                <div style="margin-top:6px">
+                    ${ev.retry_triggered ? '<span class="badge" style="background:var(--blue-dim);color:var(--blue)">retry</span> ' : ''}
+                    ${ev.null_result ? '<span class="badge" style="background:var(--amber-dim);color:var(--amber)">no-op</span> ' : ''}
+                    ${ev.dropped_count > 0 ? `<span class="badge" style="background:var(--red-dim);color:var(--red)">-${ev.dropped_count} dropped</span>` : ''}
+                    ${ev.error ? `<span class="badge" style="background:var(--red-dim);color:var(--red)">${escHtml(ev.error)}</span>` : ''}
+                    ${!ev.retry_triggered && !ev.null_result && !ev.dropped_count && !ev.error ? '<span style="color:var(--text-dim)">—</span>' : ''}
+                </div>
+            </div>
+        </div>
+        <div class="card-title" style="margin-bottom:12px">Ausgeführte Aktionen (${ev.actions_count})</div>
+        ${actionsHtml}
+    `;
+
+    panel.classList.add('visible');
+    panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+    document.querySelectorAll('#cons-tbody tr').forEach(r => r.classList.remove('selected'));
+    document.querySelectorAll('#cons-tbody tr').forEach(r => {
+        if (r.getAttribute('onclick') && r.getAttribute('onclick').includes(String(eventId))) {
+            r.classList.add('selected');
+        }
+    });
+}
+
+function closeDetail() {
+    document.getElementById('cons-detail').classList.remove('visible');
+    document.querySelectorAll('#cons-tbody tr').forEach(r => r.classList.remove('selected'));
+}
+
+function escHtml(s) {
+    if (!s) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+loadStats();
+loadEvents();
+</script>
+{% endblock %}

@@ -30,3 +30,7 @@ USER_CONTEXTS = {
 
 # Owner: nur dieser User darf /merge, /ablehnen und andere privilegierte Commands
 OWNER_ID = "221152228159675@lid"
+
+# Dashboard Auth
+# Token selbst setzen: python3 -c "import secrets; print(secrets.token_hex(32))"
+DASHBOARD_TOKEN = os.getenv("DASHBOARD_TOKEN", "97af1c5b59637b0372b9bee663720bb3a0c715749e09c6c9320f970e217fa0e9")

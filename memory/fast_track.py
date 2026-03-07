@@ -22,6 +22,7 @@ from memory.memory_config import (
 )
 from memory.chunk_schema import create_chunk, validate_chunk, sanitize_tags
 from memory.memory_store import store_chunk
+from core.database import log_fast_track_event
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +154,13 @@ def process_fast_track(user_id, user_message):
     """
     # Limit pruefen
     if _get_count(user_id) >= FAST_TRACK_MAX_PER_CHAT:
+        log_fast_track_event(
+            user_id=user_id,
+            message_preview=user_message,
+            trigger_pattern=None,
+            stored=False,
+            skip_reason="daily_limit_reached",
+        )
         return None
 
     # Erkennung
@@ -184,6 +192,17 @@ def process_fast_track(user_id, user_message):
     valid, error = validate_chunk(chunk)
     if not valid:
         logger.warning(f"Fast-Track: Chunk ungueltig: {error}")
+        log_fast_track_event(
+            user_id=user_id,
+            message_preview=user_message,
+            trigger_pattern=matched,
+            chunk_type=chunk_type,
+            tags=tags,
+            chunk_text=chunk_text,
+            confidence=confidence,
+            stored=False,
+            skip_reason=f"invalid_chunk: {error}",
+        )
         return None
 
     # PII-Check
@@ -191,6 +210,17 @@ def process_fast_track(user_id, user_message):
         from memory.consolidator import _contains_sensitive_data
         if _contains_sensitive_data(chunk_text):
             logger.warning(f"Fast-Track: PII erkannt, uebersprungen")
+            log_fast_track_event(
+                user_id=user_id,
+                message_preview=user_message,
+                trigger_pattern=matched,
+                chunk_type=chunk_type,
+                tags=tags,
+                chunk_text=chunk_text,
+                confidence=confidence,
+                stored=False,
+                skip_reason="pii_detected",
+            )
             return None
     except ImportError:
         pass
@@ -199,6 +229,17 @@ def process_fast_track(user_id, user_message):
     try:
         store_chunk(chunk)
         _increment_count(user_id)
+        log_fast_track_event(
+            user_id=user_id,
+            message_preview=user_message,
+            trigger_pattern=matched,
+            chunk_type=chunk_type,
+            tags=tags,
+            chunk_id=chunk["id"],
+            chunk_text=chunk_text,
+            confidence=confidence,
+            stored=True,
+        )
         logger.info(
             f"Fast-Track gespeichert: [{chunk_type}] conf={confidence} "
             f"({_get_count(user_id)}/{FAST_TRACK_MAX_PER_CHAT}) | {chunk_text[:80]}"
@@ -206,6 +247,17 @@ def process_fast_track(user_id, user_message):
         return chunk["id"]
     except Exception as e:
         logger.error(f"Fast-Track Speicherfehler: {e}")
+        log_fast_track_event(
+            user_id=user_id,
+            message_preview=user_message,
+            trigger_pattern=matched,
+            chunk_type=chunk_type,
+            tags=tags,
+            chunk_text=chunk_text,
+            confidence=confidence,
+            stored=False,
+            skip_reason=f"store_error: {e}",
+        )
         return None
 
 

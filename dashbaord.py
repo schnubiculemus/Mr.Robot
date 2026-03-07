@@ -14,8 +14,7 @@ import sys
 import json
 import logging
 from datetime import datetime, timezone, timedelta
-from functools import wraps
-from flask import Flask, render_template, jsonify, request, redirect, url_for, make_response
+from flask import Flask, render_template, jsonify, request
 
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, PROJECT_DIR)
@@ -31,8 +30,7 @@ from memory.memory_store import (
 )
 from memory.memory_config import CHUNK_TYPES
 from core.datetime_utils import now_utc, now_berlin, safe_parse_dt
-from core.database import get_fast_track_events, get_fast_track_stats, get_consolidator_events, get_consolidator_stats
-from config import DASHBOARD_TOKEN
+from core.database import get_fast_track_events, get_fast_track_stats
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [DASHBOARD] %(message)s")
 logger = logging.getLogger(__name__)
@@ -42,27 +40,6 @@ app = Flask(
     template_folder=os.path.join(PROJECT_DIR, "dashboard", "templates"),
     static_folder=os.path.join(PROJECT_DIR, "dashboard", "static"),
 )
-app.secret_key = DASHBOARD_TOKEN or "dev-secret-change-me"
-
-COOKIE_NAME = "dashboard_session"
-COOKIE_DAYS = 30
-
-
-def _is_authenticated():
-    """Prüft ob das Session-Cookie gültig ist."""
-    if not DASHBOARD_TOKEN:
-        return True  # Kein Token gesetzt → Auth deaktiviert
-    return request.cookies.get(COOKIE_NAME) == DASHBOARD_TOKEN
-
-
-def require_auth(f):
-    """Decorator: schützt eine Route mit Token-Auth."""
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        if not _is_authenticated():
-            return redirect(url_for("login_page", next=request.path))
-        return f(*args, **kwargs)
-    return decorated
 
 
 # =============================================================================
@@ -129,71 +106,31 @@ def _age_str(iso_str):
 
 
 # =============================================================================
-# Auth
-# =============================================================================
-
-@app.route("/login", methods=["GET", "POST"])
-def login_page():
-    error = None
-    if request.method == "POST":
-        token = request.form.get("token", "").strip()
-        if token == DASHBOARD_TOKEN:
-            resp = make_response(redirect(request.args.get("next", "/")))
-            resp.set_cookie(
-                COOKIE_NAME, token,
-                max_age=60 * 60 * 24 * COOKIE_DAYS,
-                httponly=True, samesite="Lax",
-            )
-            return resp
-        error = "Falsches Token."
-    return render_template("login.html", error=error)
-
-
-@app.route("/logout")
-def logout():
-    resp = make_response(redirect(url_for("login_page")))
-    resp.delete_cookie(COOKIE_NAME)
-    return resp
-
-
-# =============================================================================
 # Pages
 # =============================================================================
 
 @app.route("/")
-@require_auth
 def index():
+    """Übersicht — Stats und Schnellblick."""
     return render_template("index.html")
 
 
 @app.route("/chunks")
-@require_auth
 def chunks_page():
+    """Chunk Explorer."""
     return render_template("chunks.html")
 
 
 @app.route("/retrieval")
-@require_auth
 def retrieval_page():
+    """Retrieval Inspector."""
     return render_template("retrieval.html")
 
 
 @app.route("/fasttrack")
-@require_auth
 def fasttrack_page():
+    """Fast-Track Monitor."""
     return render_template("fasttrack.html")
-
-
-@app.route("/consolidator")
-@require_auth
-def consolidator_page():
-    return render_template("consolidator.html")
-
-
-@app.route("/diary")
-@require_auth
-def diary_page():
-    return render_template("diary.html")
 
 
 # =============================================================================
@@ -201,7 +138,6 @@ def diary_page():
 # =============================================================================
 
 @app.route("/api/stats")
-@require_auth
 def api_stats():
     """Übersicht-Statistiken."""
     stats = get_stats()
@@ -245,7 +181,6 @@ def api_stats():
 # =============================================================================
 
 @app.route("/api/chunks")
-@require_auth
 def api_chunks():
     """Alle Chunks mit Filtern."""
     collection_name = request.args.get("collection", "active")
@@ -290,7 +225,6 @@ def api_chunks():
 
 
 @app.route("/api/chunks/<chunk_id>")
-@require_auth
 def api_chunk_detail(chunk_id):
     """Einzelner Chunk mit allen Details."""
     collection = get_active_collection()
@@ -340,7 +274,6 @@ def api_chunk_detail(chunk_id):
 # =============================================================================
 
 @app.route("/api/retrieval/simulate")
-@require_auth
 def api_retrieval_simulate():
     """Simuliert ein Retrieval für eine Query — zeigt was im Prompt landen würde."""
     query = request.args.get("q", "")
@@ -392,7 +325,6 @@ def api_retrieval_simulate():
 # =============================================================================
 
 @app.route("/api/retrieval/log")
-@require_auth
 def api_retrieval_log():
     """Letzte Retrieval-Log Einträge."""
     log_path = os.path.join(PROJECT_DIR, "logs", "retrieval.log")
@@ -428,7 +360,6 @@ def api_retrieval_log():
 # =============================================================================
 
 @app.route("/api/fasttrack/stats")
-@require_auth
 def api_fasttrack_stats():
     """Aggregierte Fast-Track-Statistiken."""
     try:
@@ -440,7 +371,6 @@ def api_fasttrack_stats():
 
 
 @app.route("/api/fasttrack/events")
-@require_auth
 def api_fasttrack_events():
     """Fast-Track Events mit optionalem Filter."""
     limit = int(request.args.get("limit", 50))
@@ -467,127 +397,6 @@ def api_fasttrack_events():
         return jsonify({"events": events, "total": len(events)})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
-
-# =============================================================================
-# API: Konsolidierer Inspector
-# =============================================================================
-
-@app.route("/api/consolidator/stats")
-@require_auth
-def api_consolidator_stats():
-    """Aggregierte Konsolidierer-Statistiken."""
-    try:
-        stats = get_consolidator_stats()
-        stats["timestamp"] = now_berlin().strftime("%d.%m.%Y %H:%M")
-        return jsonify(stats)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/consolidator/events")
-@require_auth
-def api_consolidator_events():
-    """Konsolidierer Events."""
-    limit = int(request.args.get("limit", 30))
-    try:
-        events = get_consolidator_events(limit=limit)
-        for ev in events:
-            ev["timestamp_short"] = ev["timestamp"][:16].replace("T", " ") if ev["timestamp"] else "?"
-            try:
-                ev["actions"] = json.loads(ev.get("actions_json") or "[]")
-            except Exception:
-                ev["actions"] = []
-            # Zusammenfassung
-            summary = {}
-            for a in ev["actions"]:
-                k = a.get("action", "?")
-                summary[k] = summary.get(k, 0) + 1
-            ev["actions_summary"] = summary
-            ev["actions_count"] = len(ev["actions"])
-        return jsonify({"events": events, "total": len(events)})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-# =============================================================================
-# API: Diary
-# =============================================================================
-
-@app.route("/api/diary/list")
-@require_auth
-def api_diary_list():
-    """Liste aller Tagebucheinträge, neueste zuerst."""
-    diary_dir = os.path.join(PROJECT_DIR, "diary")
-    entries = []
-
-    if not os.path.isdir(diary_dir):
-        return jsonify({"entries": []})
-
-    for fname in sorted(os.listdir(diary_dir), reverse=True):
-        if not fname.endswith(".md"):
-            continue
-        path = os.path.join(diary_dir, fname)
-        date = None
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if line.lower().startswith("datum:"):
-                        date = line.split(":", 1)[1].strip()
-                        break
-        except IOError:
-            pass
-        entries.append({"filename": fname[:-3], "date": date or fname[:-3]})
-
-    return jsonify({"entries": entries, "total": len(entries)})
-
-
-@app.route("/api/diary/entry")
-@require_auth
-def api_diary_entry():
-    """Inhalt eines einzelnen Tagebucheintrags."""
-    filename = request.args.get("file", "")
-    if not filename or ".." in filename or "/" in filename:
-        return jsonify({"error": "Ungültiger Dateiname"}), 400
-
-    path = os.path.join(PROJECT_DIR, "diary", filename + ".md")
-    if not os.path.isfile(path):
-        return jsonify({"error": "Datei nicht gefunden"}), 404
-
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            raw = f.read()
-    except IOError as e:
-        return jsonify({"error": str(e)}), 500
-
-    # Header parsen (Datum, Autor, Titel)
-    title, date, author, body = filename, None, None, raw
-    lines = raw.split("\n")
-    header_end = 0
-
-    for i, line in enumerate(lines):
-        s = line.strip()
-        if s.startswith("# "):
-            title = s[2:]
-        elif s.lower().startswith("datum:"):
-            date = s.split(":", 1)[1].strip()
-        elif s.lower().startswith("autor:"):
-            author = s.split(":", 1)[1].strip()
-        elif s == "---" and i > 0:
-            header_end = i + 1
-            break
-
-    body = "\n".join(lines[header_end:]).strip()
-
-    return jsonify({
-        "filename": filename,
-        "title": title,
-        "date": date,
-        "author": author,
-        "body": body,
-        "raw": raw,
-    })
 
 
 # =============================================================================

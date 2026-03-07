@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}Tagebuch{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Tagebuch</h1>
+    <p>Mr. Robots persönliche Aufzeichnungen</p>
+</div>
+
+<div style="display:grid;grid-template-columns:220px 1fr;gap:16px;align-items:start">
+
+    <!-- Eintrags-Liste -->
+    <div class="card" style="padding:0;position:sticky;top:24px">
+        <div style="padding:14px 16px;border-bottom:1px solid var(--border)">
+            <div class="card-title" style="font-size:13px">Einträge</div>
+        </div>
+        <div id="diary-list" style="max-height:70vh;overflow-y:auto">
+            <div class="loading">Lade…</div>
+        </div>
+    </div>
+
+    <!-- Eintrag-Inhalt -->
+    <div id="diary-content-wrap">
+        <div class="card" id="diary-empty" style="text-align:center;padding:48px;color:var(--text-muted)">
+            ← Eintrag auswählen
+        </div>
+        <div class="card" id="diary-entry" style="display:none">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+                <div>
+                    <div class="card-title" id="diary-title">—</div>
+                    <div class="card-subtitle" id="diary-meta">—</div>
+                </div>
+                <span id="diary-date-badge" style="font-size:11px;color:var(--text-dim);background:var(--bg-elevated);padding:4px 10px;border-radius:20px;border:1px solid var(--border)"></span>
+            </div>
+            <div id="diary-body" style="
+                font-family: var(--font-sans);
+                font-size: 13px;
+                line-height: 1.8;
+                color: var(--text-secondary);
+                white-space: pre-wrap;
+                word-break: break-word;
+            "></div>
+        </div>
+    </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let _entries = [];
+
+async function loadList() {
+    const r = await fetch('/api/diary/list');
+    const d = await r.json();
+    if (d.error) {
+        document.getElementById('diary-list').innerHTML = `<div class="loading" style="color:var(--red)">${d.error}</div>`;
+        return;
+    }
+
+    _entries = d.entries || [];
+
+    if (_entries.length === 0) {
+        document.getElementById('diary-list').innerHTML = '<div class="loading">Noch keine Einträge.</div>';
+        return;
+    }
+
+    document.getElementById('diary-list').innerHTML = _entries.map(e => `
+        <div onclick="loadEntry('${e.filename}')" id="list-${e.filename}"
+             style="padding:10px 16px;cursor:pointer;border-bottom:1px solid var(--border);transition:background 0.1s"
+             onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background=''">
+            <div style="font-size:12px;color:var(--text-primary);font-weight:500">${escHtml(e.date || e.filename)}</div>
+            <div style="font-size:10px;color:var(--text-dim);margin-top:2px">${escHtml(e.filename)}</div>
+        </div>
+    `).join('');
+
+    // Neuesten automatisch laden
+    if (_entries.length > 0) {
+        loadEntry(_entries[0].filename);
+    }
+}
+
+async function loadEntry(filename) {
+    // Highlight in Liste
+    document.querySelectorAll('#diary-list > div').forEach(el => {
+        el.style.background = el.id === `list-${filename}` ? 'var(--bg-elevated)' : '';
+    });
+
+    document.getElementById('diary-empty').style.display = 'none';
+    document.getElementById('diary-entry').style.display = 'block';
+    document.getElementById('diary-body').textContent = 'Lade…';
+    document.getElementById('diary-title').textContent = '…';
+
+    const r = await fetch(`/api/diary/entry?file=${encodeURIComponent(filename)}`);
+    const d = await r.json();
+
+    if (d.error) {
+        document.getElementById('diary-body').textContent = d.error;
+        return;
+    }
+
+    document.getElementById('diary-title').textContent = d.title || filename;
+    document.getElementById('diary-meta').textContent = d.author ? `von ${d.author}` : 'Mr. Robot';
+    document.getElementById('diary-date-badge').textContent = d.date || filename;
+    document.getElementById('diary-body').textContent = d.body || '';
+}
+
+function escHtml(s) {
+    if (!s) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+loadList();
+</script>
+{% endblock %}

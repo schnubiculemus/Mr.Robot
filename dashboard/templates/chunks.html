@@ -120,7 +120,7 @@ function renderTable(chunks) {
         return `<tr class="${isSelected ? 'selected' : ''}" style="cursor:pointer" onclick="showDetail('${c.id}')">
             <td class="mono">${c.id.substring(0, 8)}</td>
             <td><span class="badge badge-${c.chunk_type}">${c.chunk_type}</span></td>
-            <td class="text-col">${escHtml(c.text_preview)}${tags ? '<br>' + tags : ''}</td>
+            <td class="text-col" style="white-space:normal;word-break:break-word">${escHtml(c.text)}${tags ? '<br>' + tags : ''}</td>
             <td class="mono">${c.confidence} ${confBar}</td>
             <td class="mono">${c.weight} ${weightBar}</td>
             <td class="mono">${c.age}</td>
@@ -134,7 +134,7 @@ function renderTable(chunks) {
 
 async function showDetail(chunkId) {
     selectedChunkId = chunkId;
-    renderTable(allChunks); // re-render to highlight
+    renderTable(allChunks);
 
     try {
         const res = await fetch(`/api/chunks/${chunkId}`);

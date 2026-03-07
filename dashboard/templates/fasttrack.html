@@ -1,0 +1,290 @@
+{% extends "base.html" %}
+{% block title %}Fast-Track Monitor{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Fast-Track Monitor</h1>
+    <p>Jede erkannte Direktive — gespeichert oder verworfen, mit Grund.</p>
+</div>
+
+<!-- Stat Cards -->
+<div class="stats-grid" id="ft-stats">
+    <div class="stat-card">
+        <div class="stat-card-label">Gesamt Trigger</div>
+        <div class="stat-card-value" id="s-total">—</div>
+        <div class="stat-card-sub" id="s-today-total">— heute</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-card-label">Gespeichert</div>
+        <div class="stat-card-value" id="s-stored" style="color: var(--accent)">—</div>
+        <div class="stat-card-sub" id="s-today-stored">— heute</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-card-label">Verworfen</div>
+        <div class="stat-card-value" id="s-skipped" style="color: var(--amber)">—</div>
+        <div class="stat-card-sub" id="s-store-rate">— Store-Rate</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-card-label">Nach Typ</div>
+        <div id="s-by-type" style="margin-top:8px; line-height:1.8">—</div>
+    </div>
+</div>
+
+<!-- Filter + Tabelle -->
+<div class="card">
+    <div class="card-header">
+        <div>
+            <div class="card-title">Event-Log</div>
+            <div class="card-subtitle">Letzte Fast-Track-Erkennungen</div>
+        </div>
+        <button class="btn" onclick="loadEvents()">↺ Refresh</button>
+    </div>
+
+    <div class="filters">
+        <select class="filter-select" id="f-stored" onchange="loadEvents()">
+            <option value="">Alle</option>
+            <option value="1">✓ Gespeichert</option>
+            <option value="0">✗ Verworfen</option>
+        </select>
+        <select class="filter-select" id="f-type" onchange="loadEvents()">
+            <option value="">Alle Typen</option>
+            <option value="hard_fact">hard_fact</option>
+            <option value="decision">decision</option>
+            <option value="preference">preference</option>
+        </select>
+        <input class="filter-input" id="f-search" type="text" placeholder="Suche in Nachricht / Chunk-Text..." oninput="debounceLoad()">
+        <select class="filter-select" id="f-limit" onchange="loadEvents()">
+            <option value="25">25 Einträge</option>
+            <option value="50" selected>50 Einträge</option>
+            <option value="100">100 Einträge</option>
+        </select>
+    </div>
+
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Zeit</th>
+                    <th>Status</th>
+                    <th>Typ</th>
+                    <th>Trigger</th>
+                    <th>Nachricht</th>
+                    <th>Chunk / Grund</th>
+                    <th>Conf</th>
+                    <th>Tags</th>
+                </tr>
+            </thead>
+            <tbody id="ft-tbody">
+                <tr><td colspan="8" class="loading">Lade Events…</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Detail Panel -->
+<div class="detail-panel" id="ft-detail">
+    <div class="card-header" style="margin-bottom:12px">
+        <div class="card-title">Event-Detail</div>
+        <button onclick="closeDetail()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:18px">✕</button>
+    </div>
+    <div id="ft-detail-content"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let _allEvents = [];
+let _debounceTimer = null;
+
+function debounceLoad() {
+    clearTimeout(_debounceTimer);
+    _debounceTimer = setTimeout(loadEvents, 300);
+}
+
+async function loadStats() {
+    const r = await fetch('/api/fasttrack/stats');
+    const d = await r.json();
+    if (d.error) return;
+
+    document.getElementById('s-total').textContent = d.total ?? '—';
+    document.getElementById('s-today-total').textContent = `${d.today_total ?? 0} heute`;
+    document.getElementById('s-stored').textContent = d.stored ?? '—';
+    document.getElementById('s-today-stored').textContent = `${d.today_stored ?? 0} heute`;
+    document.getElementById('s-skipped').textContent = d.skipped ?? '—';
+    const rate = d.total > 0 ? Math.round((d.stored / d.total) * 100) : 0;
+    document.getElementById('s-store-rate').textContent = `${rate}% Store-Rate`;
+
+    // By type
+    const byType = d.by_type || {};
+    const typeEl = document.getElementById('s-by-type');
+    if (Object.keys(byType).length === 0) {
+        typeEl.textContent = '—';
+    } else {
+        typeEl.innerHTML = Object.entries(byType)
+            .map(([t, n]) => `<span class="badge badge-${t}" style="margin:2px">${t} <strong>${n}</strong></span>`)
+            .join(' ');
+    }
+}
+
+async function loadEvents() {
+    const stored = document.getElementById('f-stored').value;
+    const limit = document.getElementById('f-limit').value;
+    const url = `/api/fasttrack/events?limit=${limit}&stored=${stored}`;
+
+    const tbody = document.getElementById('ft-tbody');
+    tbody.innerHTML = '<tr><td colspan="8" class="loading">Lade…</td></tr>';
+
+    const r = await fetch(url);
+    const d = await r.json();
+    if (d.error) {
+        tbody.innerHTML = `<tr><td colspan="8" class="loading" style="color:var(--red)">${d.error}</td></tr>`;
+        return;
+    }
+
+    _allEvents = d.events || [];
+
+    // Client-side search filter
+    const search = document.getElementById('f-search').value.toLowerCase();
+    const typeFilter = document.getElementById('f-type').value;
+    let events = _allEvents;
+    if (search) {
+        events = events.filter(e =>
+            (e.message_preview || '').toLowerCase().includes(search) ||
+            (e.chunk_text || '').toLowerCase().includes(search) ||
+            (e.trigger_pattern || '').toLowerCase().includes(search)
+        );
+    }
+    if (typeFilter) {
+        events = events.filter(e => e.chunk_type === typeFilter);
+    }
+
+    if (events.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" class="loading">Keine Events gefunden.</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = events.map(ev => {
+        const statusBadge = ev.stored
+            ? `<span class="badge badge-active">✓ stored</span>`
+            : `<span class="badge badge-archived">✗ skip</span>`;
+
+        const typeBadge = ev.chunk_type
+            ? `<span class="badge badge-${ev.chunk_type}">${ev.chunk_type}</span>`
+            : '<span class="badge" style="background:var(--bg-hover);color:var(--text-dim)">—</span>';
+
+        const trigger = ev.trigger_pattern
+            ? `<code style="background:var(--bg-deep);padding:2px 5px;border-radius:3px;font-size:10px">${escHtml(ev.trigger_pattern)}</code>`
+            : '—';
+
+        const chunkOrReason = ev.stored
+            ? `<span style="color:var(--text-secondary)">${escHtml(ev.chunk_text_short || '—')}</span>`
+            : `<span style="color:var(--amber);font-size:10px">${escHtml(ev.skip_reason || '—')}</span>`;
+
+        const conf = ev.confidence != null
+            ? `<span style="color:var(--text-muted)">${Number(ev.confidence).toFixed(2)}</span>`
+            : '—';
+
+        const tags = (ev.tags_list || [])
+            .map(t => `<span class="tag">${escHtml(t)}</span>`)
+            .join('');
+
+        return `<tr onclick="showDetail(${ev.id})" style="cursor:pointer">
+            <td class="mono">${escHtml(ev.timestamp_short)}</td>
+            <td>${statusBadge}</td>
+            <td>${typeBadge}</td>
+            <td>${trigger}</td>
+            <td class="text-col">${escHtml(ev.message_short || '—')}</td>
+            <td class="text-col">${chunkOrReason}</td>
+            <td>${conf}</td>
+            <td>${tags || '—'}</td>
+        </tr>`;
+    }).join('');
+}
+
+function showDetail(eventId) {
+    const ev = _allEvents.find(e => e.id === eventId);
+    if (!ev) return;
+
+    const panel = document.getElementById('ft-detail');
+    const content = document.getElementById('ft-detail-content');
+
+    const statusColor = ev.stored ? 'var(--accent)' : 'var(--amber)';
+    const statusLabel = ev.stored ? '✓ Gespeichert' : '✗ Verworfen';
+
+    content.innerHTML = `
+        <div class="detail-row">
+            <div class="detail-label">Status</div>
+            <div class="detail-value" style="color:${statusColor};font-weight:600">${statusLabel}</div>
+        </div>
+        <div class="detail-row">
+            <div class="detail-label">Zeitpunkt</div>
+            <div class="detail-value">${escHtml(ev.timestamp || '—')}</div>
+        </div>
+        <div class="detail-row">
+            <div class="detail-label">User ID</div>
+            <div class="detail-value mono">${escHtml(ev.user_id || '—')}</div>
+        </div>
+        <div class="detail-row">
+            <div class="detail-label">Trigger</div>
+            <div class="detail-value"><code style="background:var(--bg-deep);padding:2px 6px;border-radius:3px">${escHtml(ev.trigger_pattern || '—')}</code></div>
+        </div>
+        <div class="detail-row">
+            <div class="detail-label">Chunk-Typ</div>
+            <div class="detail-value">${ev.chunk_type ? `<span class="badge badge-${ev.chunk_type}">${ev.chunk_type}</span>` : '—'}</div>
+        </div>
+        <div class="detail-row">
+            <div class="detail-label">Confidence</div>
+            <div class="detail-value">${ev.confidence != null ? Number(ev.confidence).toFixed(4) : '—'}</div>
+        </div>
+        <div class="detail-row">
+            <div class="detail-label">Tags</div>
+            <div class="detail-value">${(ev.tags_list || []).map(t => `<span class="tag">${escHtml(t)}</span>`).join(' ') || '—'}</div>
+        </div>
+        ${ev.chunk_id ? `<div class="detail-row">
+            <div class="detail-label">Chunk-ID</div>
+            <div class="detail-value mono"><a href="/chunks?search=${encodeURIComponent(ev.chunk_id)}" style="color:var(--accent)">${escHtml(ev.chunk_id)}</a></div>
+        </div>` : ''}
+        ${ev.skip_reason ? `<div class="detail-row">
+            <div class="detail-label">Skip-Grund</div>
+            <div class="detail-value" style="color:var(--amber)">${escHtml(ev.skip_reason)}</div>
+        </div>` : ''}
+        <div style="margin-top:12px">
+            <div class="detail-label" style="margin-bottom:6px">Originalnachricht</div>
+            <div class="detail-text">${escHtml(ev.message_preview || '—')}</div>
+        </div>
+        ${ev.chunk_text ? `<div style="margin-top:12px">
+            <div class="detail-label" style="margin-bottom:6px">Gespeicherter Chunk-Text</div>
+            <div class="detail-text">${escHtml(ev.chunk_text)}</div>
+        </div>` : ''}
+    `;
+
+    panel.classList.add('visible');
+    panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+    // Highlight row
+    document.querySelectorAll('#ft-tbody tr').forEach(r => r.classList.remove('selected'));
+    const rows = document.querySelectorAll('#ft-tbody tr');
+    rows.forEach(r => {
+        if (r.onclick && r.onclick.toString().includes(eventId)) r.classList.add('selected');
+    });
+}
+
+function closeDetail() {
+    document.getElementById('ft-detail').classList.remove('visible');
+    document.querySelectorAll('#ft-tbody tr').forEach(r => r.classList.remove('selected'));
+}
+
+function escHtml(s) {
+    if (!s) return '';
+    return String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+// Init
+loadStats();
+loadEvents();
+</script>
+{% endblock %}
