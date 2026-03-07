@@ -89,6 +89,11 @@ async function loadStats() {
             </div>
             ${ftCard}
             ${consCard}
+            ${data.heartbeat_last_run ? `<div class="stat-card">
+                <div class="stat-card-label">Letzter Heartbeat</div>
+                <div class="stat-card-value" style="font-size:15px;color:${data.heartbeat_age_min > 240 ? 'var(--amber)' : 'var(--text-primary)'}">${data.heartbeat_last_run}</div>
+                <div class="stat-card-sub">vor ${data.heartbeat_age_min < 60 ? data.heartbeat_age_min + ' Min' : Math.round(data.heartbeat_age_min/60) + ' Std'}</div>
+            </div>` : ''}
             <div class="stat-card">
                 <div class="stat-card-label">Stand</div>
                 <div class="stat-card-value" style="font-size:16px">${data.timestamp}</div>

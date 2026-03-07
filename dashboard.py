@@ -228,6 +228,26 @@ def api_stats():
         if created[:10] == today_str:
             today_count += 1
 
+    # Letzter Heartbeat aus heartbeat_state.json
+    heartbeat_last_run = None
+    heartbeat_age_min = None
+    try:
+        state_path = os.path.join(PROJECT_DIR, "heartbeat_state.json")
+        with open(state_path, "r") as f:
+            state = json.load(f)
+        # Suche nach *_last_run Key
+        for key, val in state.items():
+            if key.endswith("_last_run") and val:
+                dt = safe_parse_dt(val)
+                if dt:
+                    from core.datetime_utils import TZ_BERLIN
+                    heartbeat_last_run = dt.astimezone(TZ_BERLIN).strftime("%d.%m.%Y %H:%M")
+                    delta = now_utc() - dt
+                    heartbeat_age_min = int(delta.total_seconds() / 60)
+                break
+    except Exception:
+        pass
+
     return jsonify({
         "active_chunks": stats["active_count"],
         "archived_chunks": stats["archive_count"],
@@ -237,6 +257,8 @@ def api_stats():
         "by_source": by_source,
         "by_epistemic": by_epistemic,
         "timestamp": now_berlin().strftime("%d.%m.%Y %H:%M"),
+        "heartbeat_last_run": heartbeat_last_run,
+        "heartbeat_age_min": heartbeat_age_min,
     })
 
 
