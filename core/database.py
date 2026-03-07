@@ -1,8 +1,8 @@
 import sqlite3
 import json
 import logging
-from datetime import datetime
 from config import DB_PATH, MAX_CONTEXT_MESSAGES
+from core.datetime_utils import to_iso
 
 logger = logging.getLogger(__name__)
 
@@ -28,13 +28,16 @@ def init_db():
     cursor.execute("PRAGMA journal_mode=WAL")
     cursor.execute("PRAGMA busy_timeout=10000")
 
+    # DEFAULTs als Fallback: strftime gibt UTC-ISO ohne Timezone-Suffix.
+    # Alle expliziten Inserts nutzen Python-seitige to_iso() mit +00:00 (P1.6).
+    # DEFAULTs greifen nur falls ein Insert ohne Timestamp-Feld durchkommt.
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             phone_number TEXT PRIMARY KEY,
             display_name TEXT,
             profile_file TEXT,
-            created_at TEXT DEFAULT (datetime('now')),
-            updated_at TEXT DEFAULT (datetime('now'))
+            created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now')),
+            updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now'))
         )
     """)
 
@@ -44,7 +47,7 @@ def init_db():
             phone_number TEXT NOT NULL,
             role TEXT NOT NULL,
             content TEXT NOT NULL,
-            timestamp TEXT DEFAULT (datetime('now')),
+            timestamp TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now')),
             FOREIGN KEY (phone_number) REFERENCES users(phone_number)
         )
     """)
@@ -68,9 +71,10 @@ def get_or_create_user(phone_number, display_name=None):
     user = cursor.fetchone()
 
     if not user:
+        now = to_iso()
         cursor.execute(
-            "INSERT INTO users (phone_number, display_name) VALUES (?, ?)",
-            (phone_number, display_name or "Unbekannt"),
+            "INSERT INTO users (phone_number, display_name, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            (phone_number, display_name or "Unbekannt", now, now),
         )
         conn.commit()
         cursor.execute("SELECT * FROM users WHERE phone_number = ?", (phone_number,))
@@ -86,8 +90,8 @@ def save_message(phone_number, role, content):
     cursor = conn.cursor()
 
     cursor.execute(
-        "INSERT INTO messages (phone_number, role, content) VALUES (?, ?, ?)",
-        (phone_number, role, content),
+        "INSERT INTO messages (phone_number, role, content, timestamp) VALUES (?, ?, ?, ?)",
+        (phone_number, role, content, to_iso()),
     )
 
     conn.commit()
@@ -103,7 +107,7 @@ def get_chat_history(phone_number, limit=MAX_CONTEXT_MESSAGES):
         """
         SELECT role, content FROM messages
         WHERE phone_number = ?
-        ORDER BY timestamp DESC
+        ORDER BY timestamp DESC, id DESC
         LIMIT ?
         """,
         (phone_number, limit),
@@ -123,8 +127,8 @@ def set_user_profile(phone_number, profile_file):
     cursor = conn.cursor()
 
     cursor.execute(
-        "UPDATE users SET profile_file = ?, updated_at = datetime('now') WHERE phone_number = ?",
-        (profile_file, phone_number),
+        "UPDATE users SET profile_file = ?, updated_at = ? WHERE phone_number = ?",
+        (profile_file, to_iso(), phone_number),
     )
 
     conn.commit()

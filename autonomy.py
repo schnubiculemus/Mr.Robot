@@ -25,6 +25,7 @@ from config import OLLAMA_API_URL, OLLAMA_API_KEY, OLLAMA_MODEL, BOT_NAME
 from core.whatsapp import send_message
 from core.database import save_message
 from core.datetime_utils import now_utc, safe_parse_dt, to_iso
+from core.file_utils import atomic_write_json, atomic_write_text
 
 logger = logging.getLogger(__name__)
 
@@ -33,8 +34,35 @@ SOUL_PATH = os.path.join(PROJECT_DIR, "soul.md")
 ARCHITECTURE_PATH = os.path.join(PROJECT_DIR, "architecture.md")
 AUTONOMY_LOG_PATH = os.path.join(PROJECT_DIR, "logs", "autonomy.log")
 SOUL_PR_PATH = os.path.join(PROJECT_DIR, "soul_pr_pending.json")
+ARCH_COOLDOWN_PATH = os.path.join(PROJECT_DIR, "arch_update_state.json")
 
 # Cooldown: Max 1 Soul-PR pro 24h
+SOUL_PR_COOLDOWN_HOURS = 24
+
+
+# =============================================================================
+# Arch-Update Cooldown (Anti-Spirale)
+# =============================================================================
+
+def _get_arch_cooldown():
+    """Liest den letzten Arch-Update Timestamp. Returns: ISO-String oder None."""
+    if not os.path.exists(ARCH_COOLDOWN_PATH):
+        return None
+    try:
+        with open(ARCH_COOLDOWN_PATH, "r") as f:
+            data = json.load(f)
+        return data.get("last_arch_update")
+    except (json.JSONDecodeError, IOError) as e:
+        logger.warning(f"Arch-Cooldown State kaputt: {e}")
+        return None
+
+
+def _set_arch_cooldown():
+    """Setzt den Arch-Update Cooldown-Timestamp."""
+    try:
+        atomic_write_json(ARCH_COOLDOWN_PATH, {"last_arch_update": to_iso()})
+    except Exception as e:
+        logger.warning(f"Arch-Cooldown speichern fehlgeschlagen: {e}")
 SOUL_PR_COOLDOWN_HOURS = 24
 
 
@@ -167,7 +195,7 @@ def send_soul_proposal(user_id, proposal):
 # =============================================================================
 
 def _save_pending_pr(proposal, user_id):
-    """Speichert einen offenen Soul-PR als JSON."""
+    """Speichert einen offenen Soul-PR als JSON (atomar)."""
     pr_data = {
         "proposal": proposal,
         "user_id": user_id,
@@ -175,9 +203,8 @@ def _save_pending_pr(proposal, user_id):
         "status": "pending",
     }
     try:
-        with open(SOUL_PR_PATH, "w", encoding="utf-8") as f:
-            json.dump(pr_data, f, ensure_ascii=False, indent=2)
-    except IOError as e:
+        atomic_write_json(SOUL_PR_PATH, pr_data)
+    except Exception as e:
         logger.error(f"Soul-PR speichern fehlgeschlagen: {e}")
 
 
@@ -188,7 +215,16 @@ def get_pending_pr():
     try:
         with open(SOUL_PR_PATH, "r", encoding="utf-8") as f:
             return json.load(f)
-    except (json.JSONDecodeError, IOError):
+    except (json.JSONDecodeError, IOError) as e:
+        corrupt_path = SOUL_PR_PATH + ".corrupt"
+        logger.error(
+            f"soul_pr_pending.json kaputt: {e} — "
+            f"sichere als {corrupt_path}"
+        )
+        try:
+            os.replace(SOUL_PR_PATH, corrupt_path)
+        except OSError as rename_err:
+            logger.error(f"Umbenennen fehlgeschlagen: {rename_err}")
         return None
 
 
@@ -204,9 +240,8 @@ def _close_pending_pr(new_status):
     pending["status"] = new_status
     pending["closed_at"] = to_iso()
     try:
-        with open(SOUL_PR_PATH, "w", encoding="utf-8") as f:
-            json.dump(pending, f, ensure_ascii=False, indent=2)
-    except IOError as e:
+        atomic_write_json(SOUL_PR_PATH, pending)
+    except Exception as e:
         logger.error(f"Soul-PR schließen fehlgeschlagen: {e}")
 
 
@@ -272,11 +307,10 @@ def handle_merge(user_id):
     if soul_after.strip() == soul_before.strip():
         return "Merge abgebrochen — keine Änderung erkannt. PR bleibt offen."
 
-    # soul.md schreiben
+    # soul.md atomar schreiben (P1.4)
     try:
-        with open(SOUL_PATH, "w", encoding="utf-8") as f:
-            f.write(soul_after)
-    except IOError as e:
+        atomic_write_text(SOUL_PATH, soul_after)
+    except Exception as e:
         logger.error(f"soul.md schreiben fehlgeschlagen: {e}")
         return f"Merge fehlgeschlagen — Dateifehler: {e}"
 
@@ -574,8 +608,7 @@ def apply_arch_update(old_text, new_text, reason):
 
         updated = content.replace(old_text, new_text, 1)
 
-        with open(ARCHITECTURE_PATH, "w", encoding="utf-8") as f:
-            f.write(updated)
+        atomic_write_text(ARCHITECTURE_PATH, updated)
 
         _log_autonomy("arch-update", f"ALT: {old_text[:100]}\nNEU: {new_text[:100]}\nGRUND: {reason}")
         logger.info(f"Arch-Update angewendet: {reason[:80]}")
@@ -628,11 +661,26 @@ def run_autonomy(user_id):
         logger.warning(f"Soul-Review fehlgeschlagen: {e}")
 
     # 2. Architecture.md Update (Tier 2)
+    # Cooldown: max 1x pro 24h, verhindert Endlosschleifen bei wiederkehrenden
+    # "Erkenntnis"-Zyklen (z.B. "Dokumentation abgeschnitten" → Fix → wieder erkannt).
     try:
-        update = check_arch_update()
-        if update:
-            old, new, reason = update
-            apply_arch_update(old, new, reason)
+        do_arch = True
+        last_arch = _get_arch_cooldown()
+        if last_arch:
+            last_arch_dt = safe_parse_dt(last_arch)
+            if last_arch_dt:
+                age_hours = (now_utc() - last_arch_dt).total_seconds() / 3600
+                do_arch = age_hours >= 24
+                if not do_arch:
+                    logger.info(f"Arch-Update: Cooldown ({age_hours:.1f}h < 24h), skip")
+
+        if do_arch:
+            update = check_arch_update()
+            if update:
+                old, new, reason = update
+                success = apply_arch_update(old, new, reason)
+                if success:
+                    _set_arch_cooldown()
     except Exception as e:
         logger.warning(f"Arch-Review fehlgeschlagen: {e}")
 

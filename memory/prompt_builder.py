@@ -15,8 +15,9 @@ from memory.memory_config import (
     PROMPT_REFLECTION_HINT,
 )
 
-PROMPT_GLOBAL_RULES_HEADER = "# Aktive Regeln & Präferenzen"
-PROMPT_GLOBAL_RULES_HINT = "(Diese gelten IMMER — unabhängig vom aktuellen Thema. Halte dich strikt daran.)"
+PROMPT_GLOBAL_RULES_HEADER = "# VERBINDLICHE REGELN & PRÄFERENZEN"
+PROMPT_GLOBAL_RULES_HINT = """(WICHTIG: Diese Regeln gelten IMMER — unabhängig vom aktuellen Thema.
+Verstoß gegen diese Regeln ist ein Fehler. Halte dich strikt daran.)"""
 
 
 # =============================================================================
@@ -43,8 +44,11 @@ def _format_chunk(chunk):
 
 
 def _format_rule(chunk):
-    """Formatiert eine globale Regel kompakt — weniger Metadaten, mehr Fokus auf Text."""
-    return f"- [{chunk['chunk_type']}] {chunk['text']}"
+    """Formatiert eine globale Regel als klare Anweisung."""
+    tags = chunk.get("tags", [])
+    is_style = "response-style" in tags or "global-preference" in tags
+    prefix = "STIL-REGEL" if is_style else chunk["chunk_type"].upper()
+    return f"→ [{prefix}] {chunk['text']}"
 
 
 # =============================================================================

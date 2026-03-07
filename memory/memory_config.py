@@ -55,17 +55,20 @@ EPISTEMIC_STATUS = {
 
 # =============================================================================
 # Confidence-Schwellen - Mindestsicherheit pro Typ (Abschnitt 6.3)
+# Bewusst niedrig gehalten: lieber zu viel speichern und per Decay/Dedup
+# filtern als wichtige Infos zu verlieren. Das Retrieval-Scoring sorgt dafür
+# dass nur relevante Chunks im Prompt landen.
 # =============================================================================
 CONFIDENCE_THRESHOLDS = {
-    "decision":        0.85,
-    "hard_fact":       0.75,
-    "knowledge":       0.70,
-    "preference":      0.70,
-    "working_state":   0.60,
+    "decision":        0.70,
+    "hard_fact":       0.60,
+    "knowledge":       0.60,
+    "preference":      0.55,
+    "working_state":   0.50,
     "self_reflection": 0.40,
 }
 
-CONFIDENCE_GLOBAL_MIN = 0.40
+CONFIDENCE_GLOBAL_MIN = 0.35
 CONFIDENCE_MAX = 0.99
 
 # =============================================================================
@@ -159,7 +162,7 @@ MERGE_MAX_CANDIDATES = 5
 # Konsolidierer - Buffer und Limits (Abschnitt 13)
 # =============================================================================
 BUFFER_MAX_TURNS_PER_BLOCK = 20
-CONSOLIDATION_MAX_ACTIONS_PER_BLOCK = 10
+CONSOLIDATION_MAX_ACTIONS_PER_BLOCK = 15  # Erhöht von 10: lieber mehr speichern
 
 # Lazy Consolidation (Abschnitt 13.3)
 LAZY_CONSOLIDATION_THRESHOLD = 50
@@ -167,7 +170,7 @@ LAZY_MIN_WORD_COUNT = 20
 LAZY_FALLBACK_HOURS = 48
 
 # Fast-Track (Abschnitt 13.3.1)
-FAST_TRACK_MAX_PER_CHAT = 3
+FAST_TRACK_MAX_PER_CHAT = 8  # Erhöht von 3: mehr Sofortspeicherung erlauben
 FAST_TRACK_CONFIDENCE_PENALTY = 0.05
 
 # Confidence-Sofortkorrektur (Abschnitt 13.3.2)

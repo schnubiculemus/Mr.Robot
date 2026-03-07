@@ -19,7 +19,7 @@ Legacy-Systeme entfernt:
 
 import os
 import logging
-import requests
+import time
 from config import OLLAMA_API_URL, OLLAMA_API_KEY, OLLAMA_MODEL, BOT_NAME
 from memory.retrieval import score_and_select
 from memory.prompt_builder import build_memory_prompt, build_global_rules_prompt
@@ -53,22 +53,31 @@ def load_architecture():
     return load_file(ARCHITECTURE_PATH)
 
 
+# Cache für globale Regeln (P1.16): Preferences/Decisions ändern sich selten,
+# müssen aber bei jeder Nachricht im Prompt sein. TTL vermeidet wiederholte
+# Collection-Scans. Cache wird nach 120s invalidiert oder bei leerem Ergebnis.
+_global_rules_cache = None
+_global_rules_cache_time = 0
+_GLOBAL_RULES_TTL = 120  # Sekunden
+
+
 def _load_global_rules():
     """
     Lädt alle aktiven Preferences und Decisions — IMMER, unabhängig von der Query.
-
-    Diese Chunks enthalten globale Verhaltensregeln (Kommunikationsstil,
-    Formatierung, Anrede) und verbindliche Entscheidungen. Sie müssen in
-    jedem Prompt sichtbar sein, auch wenn die aktuelle Frage thematisch
-    nichts damit zu tun hat.
+    Gecached für 120s (P1.16): vermeidet Collection-Scan bei jeder Nachricht.
 
     Returns:
         Liste von Chunk-Dicts, nach Weight*Confidence sortiert (stärkste zuerst)
     """
+    global _global_rules_cache, _global_rules_cache_time
+
+    # Cache prüfen
+    if _global_rules_cache is not None and (time.time() - _global_rules_cache_time) < _GLOBAL_RULES_TTL:
+        return _global_rules_cache
+
     global_chunks = []
 
     try:
-        # Alle aktiven Preferences holen (keine semantische Suche, Typ-Filter)
         collection = __import__('memory.memory_store', fromlist=['get_active_collection']).get_active_collection()
         all_data = collection.get(
             where={"$or": [{"chunk_type": "preference"}, {"chunk_type": "decision"}]},
@@ -80,7 +89,6 @@ def _load_global_rules():
                 meta = all_data["metadatas"][i]
                 text = all_data["documents"][i]
 
-                # Nur aktive Chunks
                 if meta.get("status", "active") != "active":
                     continue
 
@@ -102,11 +110,14 @@ def _load_global_rules():
                     "tags": meta.get("tags", "").split(",") if meta.get("tags") else [],
                 })
 
-            # Sortieren: stärkste zuerst (Weight * Confidence)
             global_chunks.sort(key=lambda c: c["weight"] * c["confidence"], reverse=True)
 
     except Exception as e:
         logger.warning(f"Globale Regeln laden fehlgeschlagen: {e}")
+
+    # Cache setzen (auch leere Liste cachen, damit nicht dauernd gescannt wird)
+    _global_rules_cache = global_chunks
+    _global_rules_cache_time = time.time()
 
     return global_chunks
 
@@ -118,8 +129,9 @@ def build_system_prompt(context_name=None, user_id=None, user_message=None):
     1. Datum/Uhrzeit
     2. soul.md — immer
     3. architecture.md — immer
-    4. Globale Regeln (Preferences + Decisions) — IMMER
-    5. Memory-Chunks — dynamisch basierend auf user_message
+    4. Memory-Chunks — dynamisch basierend auf user_message
+    5. Globale Regeln (Preferences + Decisions) — IMMER, am ENDE
+       (Recency Bias: LLMs beachten das Ende des System-Prompts stärker)
     """
     parts = []
 
@@ -135,14 +147,11 @@ def build_system_prompt(context_name=None, user_id=None, user_message=None):
     if arch:
         parts.append(arch)
 
-    # 4. Globale Regeln — IMMER laden, unabhängig von der Query
+    # 4. Globale Regeln laden (IDs merken für Deduplizierung)
     global_rules = _load_global_rules()
     global_rule_ids = set()
     if global_rules:
-        rules_prompt = build_global_rules_prompt(global_rules)
-        if rules_prompt:
-            parts.append(rules_prompt)
-            global_rule_ids = {c["id"] for c in global_rules}
+        global_rule_ids = {c["id"] for c in global_rules}
 
     # 5. Memory-Chunks (kontextabhängig) — ohne bereits geladene globale Regeln
     if user_message:
@@ -157,6 +166,13 @@ def build_system_prompt(context_name=None, user_id=None, user_message=None):
         except Exception as e:
             logger.warning(f"Memory-Retrieval fehlgeschlagen: {e}")
 
+    # 6. Globale Regeln am ENDE — nach Memory, vor der User-Nachricht
+    # Recency Bias: das Letzte im System-Prompt bekommt das meiste Gewicht.
+    if global_rules:
+        rules_prompt = build_global_rules_prompt(global_rules)
+        if rules_prompt:
+            parts.append(rules_prompt)
+
     return "\n\n---\n\n".join(parts)
 
 
@@ -168,24 +184,23 @@ def chat(user_id, message, chat_history, context_name=None):
     Daher KEIN zusätzlicher append von message — sonst sieht Kimi sie doppelt.
     message wird nur für build_system_prompt (Memory-Retrieval) verwendet.
     """
+    from api_utils import api_call_with_retry
+
     system_prompt = build_system_prompt(context_name, user_id, user_message=message)
     messages = [{"role": "system", "content": system_prompt}]
     messages.extend(chat_history)
 
-    try:
-        response = requests.post(
-            f"{OLLAMA_API_URL}/api/chat",
-            headers={
-                "Authorization": f"Bearer {OLLAMA_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={"model": OLLAMA_MODEL, "messages": messages, "stream": False},
-            timeout=120,
-        )
-        response.raise_for_status()
-        return response.json().get("message", {}).get("content", "Hmm, da kam keine Antwort zurueck.")
+    result = api_call_with_retry(
+        url=f"{OLLAMA_API_URL}/api/chat",
+        headers={
+            "Authorization": f"Bearer {OLLAMA_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        json_payload={"model": OLLAMA_MODEL, "messages": messages, "stream": False},
+        timeout=120,
+    )
 
-    except requests.exceptions.Timeout:
-        return "Sorry, Kimi braucht gerade zu lange. Versuch's nochmal!"
-    except requests.exceptions.RequestException as e:
-        return f"API-Fehler: {str(e)}"
+    if not result:
+        return "Sorry, Kimi ist gerade nicht erreichbar. Versuch's gleich nochmal!"
+
+    return result.get("message", {}).get("content", "Hmm, da kam keine Antwort zurueck.")

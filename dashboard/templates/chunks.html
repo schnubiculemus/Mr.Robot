@@ -1,0 +1,227 @@
+{% extends "base.html" %}
+{% block title %}Chunks{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Chunk Explorer</h1>
+    <p>Alle Erinnerungen durchsuchen und inspizieren</p>
+</div>
+
+<div class="filters">
+    <select class="filter-select" id="filter-type" onchange="loadChunks()">
+        <option value="">Alle Typen</option>
+        <option value="hard_fact">hard_fact</option>
+        <option value="preference">preference</option>
+        <option value="decision">decision</option>
+        <option value="working_state">working_state</option>
+        <option value="knowledge">knowledge</option>
+        <option value="self_reflection">self_reflection</option>
+    </select>
+    <select class="filter-select" id="filter-source" onchange="loadChunks()">
+        <option value="">Alle Quellen</option>
+        <option value="tommy">tommy</option>
+        <option value="robot">robot</option>
+        <option value="shared">shared</option>
+    </select>
+    <select class="filter-select" id="filter-collection" onchange="loadChunks()">
+        <option value="active">Aktiv</option>
+        <option value="archive">Archiviert</option>
+    </select>
+    <input type="text" class="filter-input" id="filter-search" placeholder="Textsuche..." onkeyup="debounceSearch()">
+    <input type="text" class="filter-input" id="filter-tag" placeholder="Tag filtern..." style="min-width:120px" onkeyup="debounceSearch()">
+    <span id="chunk-count" style="color:var(--text-muted);font-size:11px;align-self:center;margin-left:auto"></span>
+</div>
+
+<div class="card" style="padding:0;overflow:hidden">
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th style="width:80px">ID</th>
+                    <th style="width:110px">Typ</th>
+                    <th>Text</th>
+                    <th style="width:55px">Conf.</th>
+                    <th style="width:55px">Weight</th>
+                    <th style="width:65px">Alter</th>
+                    <th style="width:60px">Source</th>
+                    <th style="width:80px">Epistemic</th>
+                </tr>
+            </thead>
+            <tbody id="chunk-table">
+                <tr><td colspan="8" class="loading">Lade Chunks...</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div class="detail-panel" id="detail-panel">
+    <div class="card-header">
+        <div>
+            <div class="card-title" id="detail-title">Chunk-Details</div>
+            <div class="card-subtitle" id="detail-subtitle"></div>
+        </div>
+        <span style="cursor:pointer;color:var(--text-muted);font-size:18px" onclick="closeDetail()">✕</span>
+    </div>
+    <div id="detail-content"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let searchTimeout = null;
+let allChunks = [];
+let selectedChunkId = null;
+
+function debounceSearch() {
+    clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(loadChunks, 300);
+}
+
+async function loadChunks() {
+    const type = document.getElementById('filter-type').value;
+    const source = document.getElementById('filter-source').value;
+    const collection = document.getElementById('filter-collection').value;
+    const search = document.getElementById('filter-search').value;
+    const tag = document.getElementById('filter-tag').value;
+
+    const params = new URLSearchParams();
+    if (type) params.set('type', type);
+    if (source) params.set('source', source);
+    if (collection) params.set('collection', collection);
+    if (search) params.set('search', search);
+    if (tag) params.set('tag', tag);
+
+    try {
+        const res = await fetch('/api/chunks?' + params.toString());
+        const data = await res.json();
+        allChunks = data.chunks;
+
+        document.getElementById('chunk-count').textContent = `${data.total} Chunks`;
+        renderTable(data.chunks);
+    } catch (e) {
+        document.getElementById('chunk-table').innerHTML =
+            `<tr><td colspan="8" class="loading">Fehler: ${e.message}</td></tr>`;
+    }
+}
+
+function renderTable(chunks) {
+    if (!chunks.length) {
+        document.getElementById('chunk-table').innerHTML =
+            '<tr><td colspan="8" class="loading">Keine Chunks gefunden</td></tr>';
+        return;
+    }
+
+    const html = chunks.map(c => {
+        const isSelected = c.id === selectedChunkId;
+        const confBar = `<span class="score-bar"><span class="score-bar-fill" style="width:${c.confidence * 100}%"></span></span>`;
+        const weightBar = `<span class="score-bar"><span class="score-bar-fill" style="width:${(c.weight / 2) * 100}%"></span></span>`;
+        const tags = c.tags_list.map(t => `<span class="tag">${t}</span>`).join('');
+
+        return `<tr class="${isSelected ? 'selected' : ''}" style="cursor:pointer" onclick="showDetail('${c.id}')">
+            <td class="mono">${c.id.substring(0, 8)}</td>
+            <td><span class="badge badge-${c.chunk_type}">${c.chunk_type}</span></td>
+            <td class="text-col">${escHtml(c.text_preview)}${tags ? '<br>' + tags : ''}</td>
+            <td class="mono">${c.confidence} ${confBar}</td>
+            <td class="mono">${c.weight} ${weightBar}</td>
+            <td class="mono">${c.age}</td>
+            <td>${c.source}</td>
+            <td>${c.epistemic_status}</td>
+        </tr>`;
+    }).join('');
+
+    document.getElementById('chunk-table').innerHTML = html;
+}
+
+async function showDetail(chunkId) {
+    selectedChunkId = chunkId;
+    renderTable(allChunks); // re-render to highlight
+
+    try {
+        const res = await fetch(`/api/chunks/${chunkId}`);
+        const c = await res.json();
+
+        if (c.error) {
+            document.getElementById('detail-content').innerHTML = `<div class="loading">${c.error}</div>`;
+            return;
+        }
+
+        const tags = c.tags_list.map(t => `<span class="tag">${t}</span>`).join(' ') || '—';
+
+        document.getElementById('detail-title').textContent = `${c.chunk_type} — ${c.id.substring(0, 12)}`;
+        document.getElementById('detail-subtitle').textContent = `Erstellt: ${c.created_at ? c.created_at.substring(0, 19).replace('T', ' ') : '?'} (${c.age})`;
+
+        document.getElementById('detail-content').innerHTML = `
+            <div class="detail-text">${escHtml(c.text)}</div>
+            <div style="margin-top:16px">
+                <div class="detail-row">
+                    <div class="detail-label">ID</div>
+                    <div class="detail-value" style="font-size:11px">${c.id}</div>
+                </div>
+                <div class="detail-row">
+                    <div class="detail-label">Typ</div>
+                    <div class="detail-value"><span class="badge badge-${c.chunk_type}">${c.chunk_type}</span></div>
+                </div>
+                <div class="detail-row">
+                    <div class="detail-label">Source</div>
+                    <div class="detail-value">${c.source}</div>
+                </div>
+                <div class="detail-row">
+                    <div class="detail-label">Epistemic</div>
+                    <div class="detail-value">${c.epistemic_status}</div>
+                </div>
+                <div class="detail-row">
+                    <div class="detail-label">Confidence</div>
+                    <div class="detail-value">${c.confidence}</div>
+                </div>
+                <div class="detail-row">
+                    <div class="detail-label">Weight</div>
+                    <div class="detail-value">${c.weight}</div>
+                </div>
+                <div class="detail-row">
+                    <div class="detail-label">Status</div>
+                    <div class="detail-value"><span class="badge badge-${c.status}">${c.status}</span></div>
+                </div>
+                <div class="detail-row">
+                    <div class="detail-label">Tags</div>
+                    <div class="detail-value">${tags}</div>
+                </div>
+                <div class="detail-row">
+                    <div class="detail-label">Erstellt</div>
+                    <div class="detail-value">${c.created_at || '—'}</div>
+                </div>
+                ${c.last_confirmed_at ? `<div class="detail-row">
+                    <div class="detail-label">Bestätigt</div>
+                    <div class="detail-value">${c.last_confirmed_at}</div>
+                </div>` : ''}
+                ${c.last_decay_at ? `<div class="detail-row">
+                    <div class="detail-label">Letzter Decay</div>
+                    <div class="detail-value">${c.last_decay_at}</div>
+                </div>` : ''}
+                ${c.supersedes ? `<div class="detail-row">
+                    <div class="detail-label">Ersetzt</div>
+                    <div class="detail-value" style="font-size:11px">${c.supersedes}</div>
+                </div>` : ''}
+            </div>
+        `;
+
+        document.getElementById('detail-panel').classList.add('visible');
+    } catch (e) {
+        document.getElementById('detail-content').innerHTML = `<div class="loading">Fehler: ${e.message}</div>`;
+    }
+}
+
+function closeDetail() {
+    selectedChunkId = null;
+    document.getElementById('detail-panel').classList.remove('visible');
+    renderTable(allChunks);
+}
+
+function escHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+
+loadChunks();
+</script>
+{% endblock %}

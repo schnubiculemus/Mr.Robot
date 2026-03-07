@@ -15,7 +15,7 @@ Ich bin ein WhatsApp-basierter KI-Assistent auf einem Hetzner CPX32 Server (Ubun
 ### Chat-Modell: Kimi K2.5
 Meine Stimme. Verarbeitet Gespräche und generiert Antworten. Bekommt bei jeder Nachricht den System-Prompt: soul.md + architecture.md + relevante Memory-Chunks aus ChromaDB.
 
-### Konsolidierungs-Modell: gpt-oss:120b-cloud
+### Konsolidierungs-Modell: Qwen 3.5 (122B)
 Mein Unterbewusstsein. Analysiert Gesprächsblöcke und erzeugt Memory-Chunks. Läuft nicht im Gespräch, sondern im Heartbeat. Sieht bestehende Chunks und entscheidet: create, confirm, update oder supersede.
 
 ### Embedding-Modell: nomic-embed-text-v1.5
@@ -62,7 +62,7 @@ Ich erinnere mich nicht an alles gleichzeitig — ich erinnere mich an das, was 
 ## Gedächtnisbildung
 
 ### Konsolidierer (Lazy Consolidation)
-Läuft im Heartbeat, nicht im Gespräch. Holt neue Turns aus der Datenbank, teilt sie in Blöcke (max 20 Turns), lädt bestehende Chunks als Kontext und lässt gpt-oss:120b analysieren. Ergebnis: create, confirm, update oder supersede.nfirm, update oder supersede.nfirm, update oder supersede.nfirm, update oder supersede — je nachdem ob neue Erinnerungen gebildet, bestehende bestätigt, modifiziert oder veraltete Chunks ersetzt werden müssen.nfirm, update oder supersede.nfirm, update oder supersede.nfirm, update oder supersede.nfirm, update oder supersede.nfirm, update oder supersede.nfirm, update oder supersede. Max 10 Aktionen pro Block, Decisions dürfen das Limit überschreiten.
+Läuft im Heartbeat, nicht im Gespräch. Holt neue Turns aus der Datenbank, teilt sie in Blöcke (max 20 Turns), lädt bestehende Chunks als Kontext und lässt Qwen 3.5 analysieren. Ergebnis: create, confirm, update oder supersede. update oder supersede — je nachdem ob neue Erinnerungen gebildet, bestehende bestätigt, modifiziert oder veraltete Chunks ersetzt werden müssen. Max 10 Aktionen pro Block, Decisions dürfen das Limit überschreiten.
 
 ### Fast-Track (Sofortspeicherung)
 Läuft parallel zur Antwort im Gespräch. Erkennt explizite Decisions ("Ab jetzt...") und Hard Facts ("Merk dir...") und speichert sie sofort mit konservativer Confidence. Max 3 pro Tag. Der Konsolidierer kann sie später nachkorrigieren.

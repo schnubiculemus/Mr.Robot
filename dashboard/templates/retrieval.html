@@ -1,0 +1,219 @@
+{% extends "base.html" %}
+{% block title %}Retrieval{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Retrieval Inspector</h1>
+    <p>Simuliere eine Query und sieh welche Chunks im Prompt landen würden</p>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <div>
+            <div class="card-title">Query simulieren</div>
+            <div class="card-subtitle">Gib eine Nachricht ein wie Tommy sie schreiben würde</div>
+        </div>
+    </div>
+
+    <div class="query-input-wrap">
+        <input type="text" class="query-input" id="query-input" placeholder="z.B. Was weisst du über meinen Kollegen Max?" onkeydown="if(event.key==='Enter')runQuery()">
+        <button class="btn" onclick="runQuery()">Retrieval starten</button>
+    </div>
+
+    <div id="query-result" style="display:none">
+        <div style="display:flex;gap:12px;margin-bottom:16px">
+            <div class="stat-card" style="flex:1">
+                <div class="stat-card-label">Kandidaten</div>
+                <div class="stat-card-value" id="res-candidates">0</div>
+            </div>
+            <div class="stat-card" style="flex:1">
+                <div class="stat-card-label">Im Prompt</div>
+                <div class="stat-card-value" id="res-selected">0</div>
+            </div>
+            <div class="stat-card" style="flex:1">
+                <div class="stat-card-label">Verworfen</div>
+                <div class="stat-card-value" id="res-dropped">0</div>
+            </div>
+        </div>
+
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th style="width:40px"></th>
+                        <th style="width:80px">ID</th>
+                        <th style="width:100px">Typ</th>
+                        <th>Text</th>
+                        <th style="width:70px">Semantic</th>
+                        <th style="width:70px">Score</th>
+                        <th style="width:55px">Conf.</th>
+                        <th style="width:55px">Weight</th>
+                        <th style="width:50px">Alter</th>
+                    </tr>
+                </thead>
+                <tbody id="result-table"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <div>
+            <div class="card-title">Letzte Retrievals</div>
+            <div class="card-subtitle">Aus dem Retrieval-Log</div>
+        </div>
+    </div>
+    <div id="retrieval-log">
+        <div class="loading">Lade Log...</div>
+    </div>
+</div>
+
+<div class="detail-panel" id="score-detail-panel">
+    <div class="card-header">
+        <div>
+            <div class="card-title" id="score-detail-title">Score-Details</div>
+        </div>
+        <span style="cursor:pointer;color:var(--text-muted);font-size:18px" onclick="document.getElementById('score-detail-panel').classList.remove('visible')">✕</span>
+    </div>
+    <div id="score-detail-content"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let lastCandidates = [];
+
+async function runQuery() {
+    const query = document.getElementById('query-input').value.trim();
+    if (!query) return;
+
+    document.getElementById('query-result').style.display = 'block';
+    document.getElementById('result-table').innerHTML = '<tr><td colspan="9" class="loading">Simuliere Retrieval...</td></tr>';
+
+    try {
+        const res = await fetch('/api/retrieval/simulate?q=' + encodeURIComponent(query));
+        const data = await res.json();
+
+        lastCandidates = data.candidates;
+        const selected = data.candidates.filter(c => c.selected);
+        const dropped = data.candidates.filter(c => !c.selected);
+
+        document.getElementById('res-candidates').textContent = data.candidates_count;
+        document.getElementById('res-selected').textContent = data.selected_count;
+        document.getElementById('res-dropped').textContent = dropped.length;
+
+        const html = data.candidates.map((c, idx) => {
+            const semBar = `<span class="score-bar"><span class="score-bar-fill" style="width:${c.semantic_similarity * 100}%"></span></span>`;
+            const scoreBar = `<span class="score-bar"><span class="score-bar-fill" style="width:${c.retrieval_score * 100}%;background:${c.selected ? 'var(--accent)' : 'var(--text-dim)'}"></span></span>`;
+
+            return `<tr style="cursor:pointer;${c.selected ? '' : 'opacity:0.5'}" onclick="showScoreDetail(${idx})">
+                <td>${c.selected ? '<span style="color:var(--accent)">✓</span>' : '<span style="color:var(--text-dim)">✗</span>'}</td>
+                <td class="mono">${c.id.substring(0, 8)}</td>
+                <td><span class="badge badge-${c.chunk_type}">${c.chunk_type}</span></td>
+                <td class="text-col">${escHtml(c.text_preview)}</td>
+                <td class="mono">${c.semantic_similarity} ${semBar}</td>
+                <td class="mono">${c.retrieval_score} ${scoreBar}</td>
+                <td class="mono">${c.confidence}</td>
+                <td class="mono">${c.weight}</td>
+                <td class="mono">${c.age}</td>
+            </tr>`;
+        }).join('');
+
+        document.getElementById('result-table').innerHTML = html;
+    } catch (e) {
+        document.getElementById('result-table').innerHTML =
+            `<tr><td colspan="9" class="loading">Fehler: ${e.message}</td></tr>`;
+    }
+}
+
+function showScoreDetail(idx) {
+    const c = lastCandidates[idx];
+    if (!c || !c.score_details) return;
+
+    const d = c.score_details;
+    const factors = [
+        { name: 'Semantic', value: d.semantic, weight: 0.45, contribution: (d.semantic * 0.45).toFixed(3) },
+        { name: 'Epistemic', value: d.epistemic, weight: 0.15, contribution: (d.epistemic * 0.15).toFixed(3) },
+        { name: 'Weight', value: d.weight, weight: 0.13, contribution: (d.weight * 0.13).toFixed(3) },
+        { name: 'Recency', value: d.recency, weight: 0.12, contribution: (d.recency * 0.12).toFixed(3) },
+        { name: 'Confidence', value: d.confidence, weight: 0.08, contribution: (d.confidence * 0.08).toFixed(3) },
+        { name: 'Type Factor', value: d.type_factor, weight: 0.07, contribution: (d.type_factor * 0.07).toFixed(3) },
+    ];
+
+    if (d.decay !== undefined && d.decay < 1.0) {
+        factors.push({ name: 'Decay', value: d.decay, weight: '—', contribution: 'multipliziert auf Recency' });
+    }
+
+    document.getElementById('score-detail-title').textContent = `Score-Details: ${c.id.substring(0, 12)}`;
+    document.getElementById('score-detail-content').innerHTML = `
+        <div style="margin-bottom:12px;font-size:12px;color:var(--text-secondary)">
+            <span class="badge badge-${c.chunk_type}">${c.chunk_type}</span>
+            ${c.selected ? '<span class="badge badge-active" style="margin-left:4px">im Prompt</span>' : '<span class="badge badge-archived" style="margin-left:4px">verworfen</span>'}
+            <span style="float:right;font-size:16px;font-weight:600;color:var(--text-primary)">${c.retrieval_score}</span>
+        </div>
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Faktor</th>
+                        <th>Wert</th>
+                        <th>Gewicht</th>
+                        <th>Beitrag</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${factors.map(f => `<tr>
+                        <td>${f.name}</td>
+                        <td class="mono">${f.value}</td>
+                        <td class="mono">${f.weight}</td>
+                        <td class="mono">${f.contribution}</td>
+                    </tr>`).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
+
+    document.getElementById('score-detail-panel').classList.add('visible');
+}
+
+async function loadRetrievalLog() {
+    try {
+        const res = await fetch('/api/retrieval/log?limit=10');
+        const data = await res.json();
+
+        if (!data.entries.length) {
+            document.getElementById('retrieval-log').innerHTML = '<div class="loading">Noch keine Retrieval-Einträge</div>';
+            return;
+        }
+
+        const html = data.entries.map(e => {
+            const chunks = (e.chunks || []).map(c =>
+                `<span class="badge badge-${c.type}" style="margin:1px">${c.id} (${c.score})</span>`
+            ).join(' ');
+
+            return `<div style="padding:10px 0;border-bottom:1px solid var(--border);font-size:12px">
+                <div style="display:flex;justify-content:space-between">
+                    <span style="color:var(--text-primary)">${escHtml(e.query || '?')}</span>
+                    <span style="color:var(--text-dim)">${e.selected || 0} / ${e.candidates || 0} Chunks</span>
+                </div>
+                <div style="margin-top:4px">${chunks || '<span style="color:var(--text-dim)">keine</span>'}</div>
+                ${e.fallback ? '<span class="tag" style="margin-top:4px">Fallback</span>' : ''}
+            </div>`;
+        }).join('');
+
+        document.getElementById('retrieval-log').innerHTML = html;
+    } catch (e) {
+        document.getElementById('retrieval-log').innerHTML = `<div class="loading">Fehler: ${e.message}</div>`;
+    }
+}
+
+function escHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+
+loadRetrievalLog();
+</script>
+{% endblock %}

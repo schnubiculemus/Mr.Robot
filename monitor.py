@@ -20,9 +20,14 @@ os.environ["HF_HUB_OFFLINE"] = "1"
 from core.datetime_utils import now_utc, to_iso
 from memory.memory_store import get_stats, get_active_collection, get_archive_collection
 
+logger = logging.getLogger(__name__)
+
 
 def get_chunk_distribution():
-    """Chunk-Verteilung nach Typ und Source."""
+    """
+    Chunk-Verteilung nach Typ und Source.
+    Zählt heute erstellte Chunks gleich mit (P1.11: ein Scan statt zwei).
+    """
     collection = get_active_collection()
     all_data = collection.get(include=["metadatas"])
 
@@ -31,6 +36,9 @@ def get_chunk_distribution():
     by_epistemic = {}
     oldest = None
     newest = None
+    today_count = 0
+
+    today_str = now_utc().strftime("%Y-%m-%d")
 
     for meta in all_data["metadatas"]:
         # Nach Typ
@@ -45,13 +53,15 @@ def get_chunk_distribution():
         ep = meta.get("epistemic_status", "unknown")
         by_epistemic[ep] = by_epistemic.get(ep, 0) + 1
 
-        # Alter
+        # Alter + Heute-Zähler
         created = meta.get("created_at", "")
         if created:
             if oldest is None or created < oldest:
                 oldest = created
             if newest is None or created > newest:
                 newest = created
+            if created[:10] == today_str:
+                today_count += 1
 
     return {
         "by_type": by_type,
@@ -59,19 +69,21 @@ def get_chunk_distribution():
         "by_epistemic": by_epistemic,
         "oldest_chunk": oldest,
         "newest_chunk": newest,
+        "today_count": today_count,
     }
 
 
 def get_heartbeat_state():
     """Letzter Heartbeat-Status."""
     state_path = os.path.join(PROJECT_DIR, "heartbeat_state.json")
-    if os.path.exists(state_path):
-        try:
-            with open(state_path) as f:
-                return json.load(f)
-        except (json.JSONDecodeError, IOError):
-            pass
-    return {}
+    if not os.path.exists(state_path):
+        return {}
+    try:
+        with open(state_path) as f:
+            return json.load(f)
+    except (json.JSONDecodeError, IOError) as e:
+        logger.error(f"heartbeat_state.json kaputt: {e}")
+        return {}
 
 
 def get_log_errors(hours=24):

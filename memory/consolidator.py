@@ -2,7 +2,7 @@
 SchnuBot.ai - Konsolidierer (Gedaechtnisbildung)
 Referenz: Konzeptdokument V1.1, Abschnitt 13
 
-Analysiert Gespraechsbloecke und erzeugt/aktualisiert Memory-Chunks via gpt-oss:120b-cloud.
+Analysiert Gespraechsbloecke und erzeugt/aktualisiert Memory-Chunks via qwen3.5:122b.
 Phase 4: Alle Aktionen aktiv (create, confirm, update, supersede).
 """
 
@@ -109,7 +109,7 @@ preference: Likes, dislikes, communication style preferences. Stable traits, rec
 
 decision: Binding decisions and commitments. Must be explicit, not speculative.
   "SchnuBot nutzt ChromaDB als Vektor-Datenbank — entschieden."
-  "Drei-Modell-Architektur: Kimi chattet, gpt-oss konsolidiert, nomic embeddet."
+  "Drei-Modell-Architektur: Kimi chattet, Qwen konsolidiert, nomic embeddet."
   "Kein Parallelbetrieb beim Cutover, harter Umstieg."
 
 working_state: Current work status, project progress, temporary activities, open tasks.
@@ -199,6 +199,18 @@ IMPORTANT:
 12. Do not store assistant messages unless they are explicit self_reflection.
 13. NO SYSTEM SNAPSHOTS: Never store system status, RAM/CPU/disk usage, chunk counts, monitoring data, or /status output as chunks. These are ephemeral and belong in logs, not in memory.
 14. SUPERSEDE ON INVALIDATION: When Tommy explicitly says something is done, finished, obsolete, or no longer relevant ("ist erledigt", "streich das", "Phasen sind Geschichte", "ist abgeschlossen"), supersede or mark the corresponding existing chunks as outdated. Do not keep old working_states alive when they are explicitly contradicted.
+
+## MUST STORE — NEVER SKIP THESE
+The following categories MUST always be extracted when present. Skipping them is an error:
+
+- NEW PEOPLE: When Tommy mentions a new colleague, contact, project partner, or person by name and role — ALWAYS create a hard_fact. Example: "Mein neuer Kollege Max macht die TGA-Planung" → hard_fact.
+- ROLE/TEAM CHANGES: New team members, departures, role changes, project reassignments — ALWAYS store.
+- NEW PROJECTS: A new project, phase, or initiative Tommy mentions — ALWAYS create a working_state or knowledge chunk.
+- EXPLICIT CORRECTIONS: When Tommy corrects something Mr. Robot said or believed — ALWAYS update or supersede the wrong chunk.
+- PERSONAL LIFE EVENTS: Relationships, moves, health, major life changes Tommy shares — ALWAYS create a hard_fact.
+- BINDING DECISIONS: "Wir machen X", "Ab jetzt Y", "Ist entschieden" — ALWAYS create a decision.
+
+When in doubt between storing and not storing: STORE IT. A chunk that turns out unnecessary can be decayed or archived later. A missed chunk is lost forever.
 
 ## OUTPUT FORMAT
 JSON array only. No prose, no markdown backticks.
@@ -338,8 +350,32 @@ def consolidate_block(turns):
             return []
 
     if not chunk_defs:
-        logger.info("Konsolidierer: No-Op (nichts speicherwuerdig)")
-        return []
+        # Null-Ergebnis bei substanziellem Block: nochmal versuchen mit Fokus-Prompt
+        user_turns = [t for t in turns if t.get("role") == "user"]
+        if len(user_turns) >= 2:
+            logger.warning(
+                f"Konsolidierer: 0 Chunks aus {len(turns)} Turns ({len(user_turns)} User-Turns) — "
+                f"Retry mit Fokus-Prompt"
+            )
+            retry_prompt = (
+                prompt
+                + "\n\nIMPORTANT: You returned an empty array, but this block contains "
+                + f"{len(user_turns)} user messages. Review again carefully. "
+                + "Are there really NO new facts, people, decisions, preferences, or project updates? "
+                + "Remember: new people, role changes, and corrections MUST always be stored. "
+                + "If you still find nothing, return []."
+            )
+            raw_retry = _call_consolidation_model(retry_prompt)
+            if raw_retry:
+                chunk_defs = _parse_response(raw_retry)
+                if chunk_defs:
+                    logger.info(f"Konsolidierer: Retry ergab {len(chunk_defs)} Aktionen")
+                else:
+                    chunk_defs = []
+
+        if not chunk_defs:
+            logger.info("Konsolidierer: No-Op (nichts speicherwuerdig)")
+            return []
 
     # Aktionslimit
     chunk_defs = _apply_action_limit(chunk_defs)
@@ -666,7 +702,7 @@ def _validate_common_fields(text, chunk_type, source, confidence, epistemic_stat
 # =============================================================================
 
 def _call_consolidation_model(prompt):
-    """Ruft gpt-oss:120b-cloud auf mit Retry."""
+    """Ruft das Konsolidierungs-Modell auf mit Retry."""
     from api_utils import api_call_with_retry
 
     result = api_call_with_retry(

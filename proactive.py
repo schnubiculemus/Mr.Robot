@@ -12,14 +12,13 @@ Wird vom Heartbeat aufgerufen.
 """
 
 import logging
-import requests
 from datetime import datetime, timezone
 
 from config import OLLAMA_API_URL, OLLAMA_API_KEY, OLLAMA_MODEL
 from core.database import get_chat_history, save_message
 from core.whatsapp import send_message
 from core.ollama_client import build_system_prompt
-from core.datetime_utils import now_utc, safe_parse_dt, format_berlin
+from core.datetime_utils import now_utc, now_berlin, safe_parse_dt, format_berlin
 from memory.memory_store import query_active
 
 logger = logging.getLogger(__name__)
@@ -35,11 +34,15 @@ def check_triggers(user_id, now):
     """
     Prüft alle Event-Trigger und sammelt aktive Anlässe.
     Returns: Liste von Trigger-Dicts mit typ und kontext.
+
+    now kann UTC oder Berlin sein — Zeitfenster werden intern
+    mit Berliner Zeit geprüft (P1.10).
     """
+    berlin = now_berlin()
     triggers = []
 
     # --- Morgen-Briefing ---
-    if _is_morning_briefing_time(now):
+    if _is_morning_briefing_time(berlin):
         briefing_context = _build_morning_context(user_id)
         if briefing_context:
             triggers.append({
@@ -49,7 +52,7 @@ def check_triggers(user_id, now):
             })
 
     # --- Abend-Briefing ---
-    if _is_evening_briefing_time(now):
+    if _is_evening_briefing_time(berlin):
         evening_context = _build_evening_context(user_id)
         if evening_context:
             triggers.append({
@@ -79,14 +82,14 @@ def check_triggers(user_id, now):
     return triggers
 
 
-def _is_morning_briefing_time(now):
-    """Morgen-Briefing zwischen 7:00 und 10:00 (inkl. 9:xx fuer 3h-Cronjob-Takt)."""
-    return 7 <= now.hour < 10
+def _is_morning_briefing_time(berlin):
+    """Morgen-Briefing zwischen 7:00 und 10:00 Berliner Zeit."""
+    return 7 <= berlin.hour < 10
 
 
-def _is_evening_briefing_time(now):
-    """Abend-Briefing zwischen 20:00 und 22:00 (21:xx Heartbeat trifft das Fenster)."""
-    return 20 <= now.hour < 22
+def _is_evening_briefing_time(berlin):
+    """Abend-Briefing zwischen 20:00 und 22:00 Berliner Zeit."""
+    return 20 <= berlin.hour < 22
 
 
 def _build_morning_context(user_id):
@@ -253,17 +256,22 @@ REGELN:
     messages.append({"role": "user", "content": prompt})
 
     try:
-        response = requests.post(
-            f"{OLLAMA_API_URL}/api/chat",
+        from api_utils import api_call_with_retry
+        result = api_call_with_retry(
+            url=f"{OLLAMA_API_URL}/api/chat",
             headers={
                 "Authorization": f"Bearer {OLLAMA_API_KEY}",
                 "Content-Type": "application/json",
             },
-            json={"model": OLLAMA_MODEL, "messages": messages, "stream": False},
+            json_payload={"model": OLLAMA_MODEL, "messages": messages, "stream": False},
             timeout=60,
         )
-        response.raise_for_status()
-        reply = response.json().get("message", {}).get("content", "").strip()
+
+        if not result:
+            logger.warning("Proaktiv-Engine: Kein API-Ergebnis nach Retry")
+            return None
+
+        reply = result.get("message", {}).get("content", "").strip()
 
         if HEARTBEAT_OK_TOKEN in reply.upper().replace(" ", "_"):
             logger.info("Proaktiv-Engine: Kimi sagt nichts zu tun")
@@ -271,8 +279,8 @@ REGELN:
 
         return reply
 
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Proaktiv-Engine API-Fehler: {e}")
+    except Exception as e:
+        logger.error(f"Proaktiv-Engine Fehler: {e}")
         return None
 
 

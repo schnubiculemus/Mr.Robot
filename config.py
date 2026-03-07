@@ -21,3 +21,12 @@ DB_PATH = os.getenv("DB_PATH", "bot.db")
 
 # Chat-Kontext
 MAX_CONTEXT_MESSAGES = int(os.getenv("MAX_CONTEXT_MESSAGES", "30"))
+
+# User-Mapping: WAHA-ID -> Context-Name (= Dateiname in context/ ohne .md)
+# Zentral definiert, wird von app.py und heartbeat.py importiert (P1.9).
+USER_CONTEXTS = {
+    "221152228159675@lid": "tommy",
+}
+
+# Owner: nur dieser User darf /merge, /ablehnen und andere privilegierte Commands
+OWNER_ID = "221152228159675@lid"

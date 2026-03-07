@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}Übersicht{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Übersicht</h1>
+    <p>Gedächtnis-Status auf einen Blick</p>
+</div>
+
+<div class="stats-grid" id="stats-grid">
+    <div class="loading">Lade Stats...</div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <div>
+            <div class="card-title">Chunk-Verteilung nach Typ</div>
+            <div class="card-subtitle">Aktive Chunks im Gedächtnis</div>
+        </div>
+    </div>
+    <div id="type-distribution"></div>
+</div>
+
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+    <div class="card">
+        <div class="card-header">
+            <div>
+                <div class="card-title">Nach Quelle</div>
+            </div>
+        </div>
+        <div id="source-distribution"></div>
+    </div>
+    <div class="card">
+        <div class="card-header">
+            <div>
+                <div class="card-title">Nach Epistemic Status</div>
+            </div>
+        </div>
+        <div id="epistemic-distribution"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function loadStats() {
+    try {
+        const res = await fetch('/api/stats');
+        const data = await res.json();
+
+        document.getElementById('stats-grid').innerHTML = `
+            <div class="stat-card">
+                <div class="stat-card-label">Aktive Chunks</div>
+                <div class="stat-card-value">${data.active_chunks}</div>
+                <div class="stat-card-sub">${data.today_count} neu heute</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-card-label">Archiviert</div>
+                <div class="stat-card-value">${data.archived_chunks}</div>
+                <div class="stat-card-sub">${data.total_chunks} gesamt</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-card-label">Chunk-Typen</div>
+                <div class="stat-card-value">${Object.keys(data.by_type).length}</div>
+                <div class="stat-card-sub">verschiedene Typen aktiv</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-card-label">Stand</div>
+                <div class="stat-card-value" style="font-size:16px">${data.timestamp}</div>
+                <div class="stat-card-sub">zuletzt aktualisiert</div>
+            </div>
+        `;
+
+        // Type distribution
+        const typeHtml = Object.entries(data.by_type)
+            .sort((a, b) => b[1] - a[1])
+            .map(([type, count]) => {
+                const max = Math.max(...Object.values(data.by_type));
+                const pct = Math.round((count / max) * 100);
+                return `<div style="display:flex;align-items:center;gap:12px;padding:6px 0;">
+                    <span class="badge badge-${type}" style="min-width:100px;text-align:center">${type}</span>
+                    <div style="flex:1;height:6px;background:var(--bg-hover);border-radius:3px;overflow:hidden">
+                        <div style="width:${pct}%;height:100%;background:var(--accent);border-radius:3px"></div>
+                    </div>
+                    <span style="color:var(--text-secondary);min-width:30px;text-align:right">${count}</span>
+                </div>`;
+            }).join('');
+        document.getElementById('type-distribution').innerHTML = typeHtml;
+
+        // Source distribution
+        const srcHtml = Object.entries(data.by_source)
+            .sort((a, b) => b[1] - a[1])
+            .map(([src, count]) => `<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12px">
+                <span style="color:var(--text-secondary)">${src}</span>
+                <span style="color:var(--text-primary)">${count}</span>
+            </div>`).join('');
+        document.getElementById('source-distribution').innerHTML = srcHtml;
+
+        // Epistemic distribution
+        const epHtml = Object.entries(data.by_epistemic)
+            .sort((a, b) => b[1] - a[1])
+            .map(([ep, count]) => `<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12px">
+                <span style="color:var(--text-secondary)">${ep}</span>
+                <span style="color:var(--text-primary)">${count}</span>
+            </div>`).join('');
+        document.getElementById('epistemic-distribution').innerHTML = epHtml;
+
+    } catch (e) {
+        document.getElementById('stats-grid').innerHTML = `<div class="loading">Fehler: ${e.message}</div>`;
+    }
+}
+
+loadStats();
+</script>
+{% endblock %}

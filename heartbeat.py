@@ -16,23 +16,27 @@ import os
 import sys
 import json
 import logging
-from datetime import datetime, timezone
 
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, PROJECT_DIR)
 os.chdir(PROJECT_DIR)
 
-from config import OLLAMA_API_URL, OLLAMA_API_KEY, OLLAMA_MODEL, WAHA_API_KEY
+from config import OLLAMA_API_URL, OLLAMA_API_KEY, OLLAMA_MODEL, WAHA_API_KEY, USER_CONTEXTS
 from core.datetime_utils import now_utc, now_berlin, safe_parse_dt, to_iso
+from core.file_utils import atomic_write_json
 from core.database import get_connection, get_chat_history, save_message
 from core.whatsapp import send_message, init_waha
-from core.tasks import get_pending_tasks, save_task, build_iteration_prompt, TASK_DONE_TOKEN
+from core.tasks import (
+    get_pending_tasks, save_task, build_iteration_prompt, TASK_DONE_TOKEN,
+    claim_task, release_task, is_claimed, generate_runner_id, deliver_task,
+)
 from memory.consolidator import consolidate_turns
 from memory.merge import deduplicate_active
 from memory.memory_store import get_stats
 from proactive import run_proactive
 from autonomy import run_autonomy
 from decay import run_decay
+from diary import run_diary
 
 logging.basicConfig(
     level=logging.INFO,
@@ -49,11 +53,6 @@ ACTIVE_HOURS_START = 8
 ACTIVE_HOURS_END = 22
 SILENCE_THRESHOLD_HOURS = 12
 HEARTBEAT_COOLDOWN_HOURS = 18
-HEARTBEAT_OK_TOKEN = "HEARTBEAT_OK"
-
-USER_CONTEXTS = {
-    "221152228159675@lid": "tommy",
-}
 
 HEARTBEAT_STATE_PATH = os.path.join(PROJECT_DIR, "heartbeat_state.json")
 
@@ -63,25 +62,34 @@ HEARTBEAT_STATE_PATH = os.path.join(PROJECT_DIR, "heartbeat_state.json")
 # =============================================================================
 
 def load_state():
-    if os.path.exists(HEARTBEAT_STATE_PATH):
+    if not os.path.exists(HEARTBEAT_STATE_PATH):
+        return {}
+    try:
+        with open(HEARTBEAT_STATE_PATH, "r") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, IOError) as e:
+        # Defekte Datei sichern und Fehler sichtbar machen (P1.5)
+        corrupt_path = HEARTBEAT_STATE_PATH + ".corrupt"
+        logger.error(
+            f"heartbeat_state.json kaputt: {e} — "
+            f"sichere als {corrupt_path}, starte mit leerem State"
+        )
         try:
-            with open(HEARTBEAT_STATE_PATH, "r") as f:
-                return json.load(f)
-        except (json.JSONDecodeError, IOError):
-            pass
-    return {}
+            os.replace(HEARTBEAT_STATE_PATH, corrupt_path)
+        except OSError as rename_err:
+            logger.error(f"Umbenennen fehlgeschlagen: {rename_err}")
+        return {}
 
 
 def save_state(state):
-    with open(HEARTBEAT_STATE_PATH, "w") as f:
-        json.dump(state, f, indent=2)
+    atomic_write_json(HEARTBEAT_STATE_PATH, state)
 
 
 def get_last_message_time(user_id):
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT timestamp FROM messages WHERE phone_number = ? ORDER BY timestamp DESC LIMIT 1",
+        "SELECT timestamp FROM messages WHERE phone_number = ? ORDER BY timestamp DESC, id DESC LIMIT 1",
         (user_id,),
     )
     row = cursor.fetchone()
@@ -114,7 +122,7 @@ def get_new_turns(user_id, since_iso, until_iso=None):
                 """
                 SELECT role, content FROM messages
                 WHERE phone_number = ? AND timestamp > ? AND timestamp <= ?
-                ORDER BY timestamp ASC
+                ORDER BY timestamp ASC, id ASC
                 """,
                 (user_id, since_iso, until_iso),
             )
@@ -123,7 +131,7 @@ def get_new_turns(user_id, since_iso, until_iso=None):
                 """
                 SELECT role, content FROM messages
                 WHERE phone_number = ? AND timestamp > ?
-                ORDER BY timestamp ASC
+                ORDER BY timestamp ASC, id ASC
                 """,
                 (user_id, since_iso),
             )
@@ -133,7 +141,7 @@ def get_new_turns(user_id, since_iso, until_iso=None):
             """
             SELECT role, content FROM messages
             WHERE phone_number = ?
-            ORDER BY timestamp DESC
+            ORDER BY timestamp DESC, id DESC
             LIMIT 30
             """,
             (user_id,),
@@ -161,7 +169,7 @@ def run_consolidation(user_id):
     last_run = state.get(f"{user_id}_last_consolidation")
 
     # Upper bound JETZT setzen — alles was danach reinkommt wird beim nächsten Lauf geholt
-    upper_bound = datetime.now(timezone.utc).isoformat()
+    upper_bound = to_iso()
 
     turns = get_new_turns(user_id, last_run, until_iso=upper_bound)
 
@@ -189,12 +197,11 @@ def run_consolidation(user_id):
 
 
 # =============================================================================
-# Task 2: Proaktive Nachricht (LEGACY — nicht mehr verwendet)
-# Ersetzt durch run_proactive() aus proactive.py
-# TODO Roadmap: Diesen Block entfernen nach Bestätigung dass run_proactive stabil läuft.
+# Stille-Check (wird in run_heartbeat als Fallback außerhalb Briefing-Fenster genutzt)
 # =============================================================================
 
 def should_send_message(user_id, now):
+    """Prüft ob eine proaktive Nachricht basierend auf Stille-Dauer sinnvoll ist."""
     berlin = now_berlin()
     if berlin.hour < ACTIVE_HOURS_START or berlin.hour >= ACTIVE_HOURS_END:
         return False
@@ -219,77 +226,26 @@ def should_send_message(user_id, now):
     return True
 
 
-def maybe_send_message(user_id, context_name, now):
-    if not should_send_message(user_id, now):
-        logger.info("Proaktive Nachricht: Bedingungen nicht erfuellt, skip.")
-        return
-
-    heartbeat_path = os.path.join(PROJECT_DIR, "heartbeat.md")
-    try:
-        with open(heartbeat_path, "r", encoding="utf-8") as f:
-            heartbeat_prompt = f.read()
-    except FileNotFoundError:
-        logger.info("Keine heartbeat.md, skip.")
-        return
-
-    logger.info("Pruefe ob proaktive Nachricht sinnvoll...")
-
-    import requests
-    from core.ollama_client import build_system_prompt
-    system_prompt = build_system_prompt(context_name, user_id)
-    history = get_chat_history(user_id, limit=10)
-
-    prompt = f"""{heartbeat_prompt}
-
----
-Aktuelle Uhrzeit: {now_berlin().strftime('%A, %d. %B %Y, %H:%M Uhr')}
-
-Schreib eine kurze Nachricht ODER antworte mit HEARTBEAT_OK."""
-
-    messages = [{"role": "system", "content": system_prompt}]
-    messages.extend(history)
-    messages.append({"role": "user", "content": prompt})
-
-    try:
-        response = requests.post(
-            f"{OLLAMA_API_URL}/api/chat",
-            headers={
-                "Authorization": f"Bearer {OLLAMA_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={"model": OLLAMA_MODEL, "messages": messages, "stream": False},
-            timeout=60,
-        )
-        response.raise_for_status()
-        reply = response.json().get("message", {}).get("content", "").strip()
-
-        if HEARTBEAT_OK_TOKEN in reply.upper().replace(" ", "_"):
-            logger.info("Kimi: nichts zu tun.")
-        else:
-            logger.info(f"Sende: {reply[:100]}")
-            send_message(user_id, reply + "\n\n[kimi/heartbeat]")
-            save_message(user_id, "assistant", reply)
-
-        state = load_state()
-        state[f"{user_id}_message"] = to_iso()
-        save_state(state)
-
-    except Exception as e:
-        logger.error(f"Proaktive Nachricht Fehler: {e}")
-
-
 # =============================================================================
-# Task 3: Iterative Task-Verarbeitung (aus legacy uebernommen)
+# Task-Verarbeitung
 # =============================================================================
 
 def process_tasks():
-    """Verarbeitet offene Tasks — eine Iteration pro Heartbeat-Durchlauf."""
-    import requests
+    """
+    Verarbeitet offene Tasks — eine Iteration pro Heartbeat-Durchlauf.
+
+    Ownership-Modell (P1.1):
+    - Prüft ob ein Task bereits von app.py geclaimed ist (frischer Claim)
+    - Übernimmt nur Tasks ohne Claim oder mit abgelaufenem (stale) Claim
+    - Eigener runner_id verhindert Konflikte mit parallelen Heartbeat-Läufen
+    """
     from core.ollama_client import build_system_prompt
 
     pending = get_pending_tasks()
     if not pending:
         return
+
+    runner_id = generate_runner_id("heartbeat")
 
     for task in pending:
         task_id = task["id"]
@@ -297,14 +253,23 @@ def process_tasks():
         context_name = task.get("context_name")
         iteration = task["current_iteration"]
 
+        # --- Ownership-Check (P1.1) ---
+        if is_claimed(task):
+            logger.info(
+                f"Task {task_id}: Bereits claimed von {task.get('runner_id')}, skip"
+            )
+            continue
+
         if iteration >= task["max_iterations"]:
             task["status"] = "done"
             save_task(task)
-            _deliver_task(task)
+            deliver_task(task)
             continue
 
-        logger.info(f"Task {task_id}: Iteration {iteration + 1}/{task['max_iterations']}")
-        task["status"] = "running"
+        # Task für diesen Heartbeat-Lauf claimen
+        claim_task(task, runner_id)
+
+        logger.info(f"Task {task_id}: Iteration {iteration + 1}/{task['max_iterations']} (runner={runner_id})")
 
         system_prompt = build_system_prompt(context_name, user_id, user_message=task.get("prompt", ""))
         iter_prompt = build_iteration_prompt(task)
@@ -315,17 +280,23 @@ def process_tasks():
         ]
 
         try:
-            response = requests.post(
-                f"{OLLAMA_API_URL}/api/chat",
+            from api_utils import api_call_with_retry
+            result_json = api_call_with_retry(
+                url=f"{OLLAMA_API_URL}/api/chat",
                 headers={
                     "Authorization": f"Bearer {OLLAMA_API_KEY}",
                     "Content-Type": "application/json",
                 },
-                json={"model": OLLAMA_MODEL, "messages": messages, "stream": False},
+                json_payload={"model": OLLAMA_MODEL, "messages": messages, "stream": False},
                 timeout=180,
             )
-            response.raise_for_status()
-            result = response.json().get("message", {}).get("content", "").strip()
+
+            if not result_json:
+                logger.error(f"Task {task_id}: API nicht erreichbar nach Retry")
+                release_task(task, runner_id)
+                continue
+
+            result = result_json.get("message", {}).get("content", "").strip()
 
             task["iterations"].append({
                 "iteration": iteration + 1,
@@ -338,40 +309,19 @@ def process_tasks():
                 logger.info(f"Task {task_id}: DONE nach Iteration {iteration + 1}")
                 task["status"] = "done"
                 save_task(task)
-                _deliver_task(task)
+                deliver_task(task)
             elif task["current_iteration"] >= task["max_iterations"]:
                 logger.info(f"Task {task_id}: Max Iterationen erreicht")
                 task["status"] = "done"
                 save_task(task)
-                _deliver_task(task)
+                deliver_task(task)
             else:
-                save_task(task)
+                # Claim freigeben — nächste Iteration beim nächsten Heartbeat
+                release_task(task, runner_id)
 
         except Exception as e:
             logger.error(f"Task {task_id}: Fehler: {e}")
-            save_task(task)
-
-
-def _deliver_task(task):
-    """Sendet das Endergebnis per WhatsApp."""
-    user_id = task["user_id"]
-    task_id = task["id"]
-
-    if not task["iterations"]:
-        return
-
-    final_result = task["iterations"][-1]["result"]
-    final_result = final_result.replace("TASK_DONE", "").replace("task_done", "").strip()
-
-    iterations_count = len(task["iterations"])
-    header = f"Task #{task_id} fertig ({iterations_count} Runden):\n\n"
-    msg = header + final_result + "\n\n[kimi/task]"
-
-    send_message(user_id, msg)
-    save_message(user_id, "assistant", msg)
-    task["status"] = "delivered"
-    save_task(task)
-    logger.info(f"Task {task_id}: zugestellt ({iterations_count} Iterationen)")
+            release_task(task, runner_id)
 
 
 # =============================================================================
@@ -428,6 +378,20 @@ def run_heartbeat(user_id, context_name):
             logger.info("Reflexion: Cooldown nicht erreicht, skip")
     except Exception as e:
         logger.warning(f"Reflexion fehlgeschlagen: {e}")
+
+    # 3c. Tagebuch (Mr. Robot schreibt seinen täglichen Eintrag)
+    # Nur im Abend-Fenster — der Tag soll erst gelebt werden bevor man drüber schreibt.
+    try:
+        is_evening_for_diary = 20 <= berlin.hour < 23
+        if is_evening_for_diary:
+            result = run_diary(user_id)
+            if result:
+                filepath, chunk_id = result
+                logger.info(f"Tagebuch geschrieben: {filepath}")
+        else:
+            logger.info("Tagebuch: Kein Abend-Fenster, skip")
+    except Exception as e:
+        logger.warning(f"Tagebuch fehlgeschlagen: {e}")
 
     # 4. Proaktive Nachrichten (Event-basiert)
     try:
