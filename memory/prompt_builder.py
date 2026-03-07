@@ -4,6 +4,7 @@ Referenz: Konzeptdokument V1.1, Abschnitt 9
 
 Formatiert selektierte Memory-Chunks fuer den System-Prompt.
 Typweise gruppiert, feste Reihenfolge, self_reflection separiert.
+Globale Regeln (Preferences + Decisions) als eigener Block.
 """
 
 from core.datetime_utils import safe_age_days
@@ -13,6 +14,9 @@ from memory.memory_config import (
     PROMPT_REFLECTION_HEADER,
     PROMPT_REFLECTION_HINT,
 )
+
+PROMPT_GLOBAL_RULES_HEADER = "# Aktive Regeln & Präferenzen"
+PROMPT_GLOBAL_RULES_HINT = "(Diese gelten IMMER — unabhängig vom aktuellen Thema. Halte dich strikt daran.)"
 
 
 # =============================================================================
@@ -36,6 +40,37 @@ def _format_chunk(chunk):
         f"{tags_str}\n"
         f"{chunk['text']}"
     )
+
+
+def _format_rule(chunk):
+    """Formatiert eine globale Regel kompakt — weniger Metadaten, mehr Fokus auf Text."""
+    return f"- [{chunk['chunk_type']}] {chunk['text']}"
+
+
+# =============================================================================
+# Globale Regeln (Preferences + Decisions) — IMMER im Prompt
+# =============================================================================
+
+def build_global_rules_prompt(chunks):
+    """
+    Baut den Block fuer globale Regeln: Preferences und Decisions.
+    Wird IMMER geladen, unabhaengig von der User-Nachricht.
+
+    Args:
+        chunks: Liste von preference/decision Chunk-Dicts
+
+    Returns:
+        String fuer den System-Prompt, oder None wenn keine Chunks
+    """
+    if not chunks:
+        return None
+
+    lines = [PROMPT_GLOBAL_RULES_HEADER, PROMPT_GLOBAL_RULES_HINT, ""]
+    for chunk in chunks:
+        lines.append(_format_rule(chunk))
+    lines.append("")
+
+    return "\n".join(lines)
 
 
 # =============================================================================

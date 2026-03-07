@@ -22,7 +22,8 @@ import logging
 import requests
 from config import OLLAMA_API_URL, OLLAMA_API_KEY, OLLAMA_MODEL, BOT_NAME
 from memory.retrieval import score_and_select
-from memory.prompt_builder import build_memory_prompt
+from memory.prompt_builder import build_memory_prompt, build_global_rules_prompt
+from memory.memory_store import query_active
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,64 @@ def load_architecture():
     return load_file(ARCHITECTURE_PATH)
 
 
+def _load_global_rules():
+    """
+    Lädt alle aktiven Preferences und Decisions — IMMER, unabhängig von der Query.
+
+    Diese Chunks enthalten globale Verhaltensregeln (Kommunikationsstil,
+    Formatierung, Anrede) und verbindliche Entscheidungen. Sie müssen in
+    jedem Prompt sichtbar sein, auch wenn die aktuelle Frage thematisch
+    nichts damit zu tun hat.
+
+    Returns:
+        Liste von Chunk-Dicts, nach Weight*Confidence sortiert (stärkste zuerst)
+    """
+    global_chunks = []
+
+    try:
+        # Alle aktiven Preferences holen (keine semantische Suche, Typ-Filter)
+        collection = __import__('memory.memory_store', fromlist=['get_active_collection']).get_active_collection()
+        all_data = collection.get(
+            where={"$or": [{"chunk_type": "preference"}, {"chunk_type": "decision"}]},
+            include=["documents", "metadatas"],
+        )
+
+        if all_data["ids"]:
+            for i, chunk_id in enumerate(all_data["ids"]):
+                meta = all_data["metadatas"][i]
+                text = all_data["documents"][i]
+
+                # Nur aktive Chunks
+                if meta.get("status", "active") != "active":
+                    continue
+
+                try:
+                    weight = float(meta.get("weight", 1.0))
+                    confidence = float(meta.get("confidence", 0.5))
+                except (ValueError, TypeError):
+                    weight, confidence = 1.0, 0.5
+
+                global_chunks.append({
+                    "id": chunk_id,
+                    "text": text,
+                    "chunk_type": meta.get("chunk_type", "preference"),
+                    "source": meta.get("source", "tommy"),
+                    "weight": weight,
+                    "confidence": confidence,
+                    "epistemic_status": meta.get("epistemic_status", "stated"),
+                    "created_at": meta.get("created_at", ""),
+                    "tags": meta.get("tags", "").split(",") if meta.get("tags") else [],
+                })
+
+            # Sortieren: stärkste zuerst (Weight * Confidence)
+            global_chunks.sort(key=lambda c: c["weight"] * c["confidence"], reverse=True)
+
+    except Exception as e:
+        logger.warning(f"Globale Regeln laden fehlgeschlagen: {e}")
+
+    return global_chunks
+
+
 def build_system_prompt(context_name=None, user_id=None, user_message=None):
     """
     Baut den System-Prompt dynamisch zusammen.
@@ -59,7 +118,8 @@ def build_system_prompt(context_name=None, user_id=None, user_message=None):
     1. Datum/Uhrzeit
     2. soul.md — immer
     3. architecture.md — immer
-    4. Memory-Chunks — dynamisch basierend auf user_message
+    4. Globale Regeln (Preferences + Decisions) — IMMER
+    5. Memory-Chunks — dynamisch basierend auf user_message
     """
     parts = []
 
@@ -75,10 +135,22 @@ def build_system_prompt(context_name=None, user_id=None, user_message=None):
     if arch:
         parts.append(arch)
 
-    # 4. Memory-Chunks (kontextabhängig)
+    # 4. Globale Regeln — IMMER laden, unabhängig von der Query
+    global_rules = _load_global_rules()
+    global_rule_ids = set()
+    if global_rules:
+        rules_prompt = build_global_rules_prompt(global_rules)
+        if rules_prompt:
+            parts.append(rules_prompt)
+            global_rule_ids = {c["id"] for c in global_rules}
+
+    # 5. Memory-Chunks (kontextabhängig) — ohne bereits geladene globale Regeln
     if user_message:
         try:
             chunks = score_and_select(user_message)
+            # Deduplizierung: Chunks die schon als globale Regeln geladen sind, rausfiltern
+            if global_rule_ids:
+                chunks = [c for c in chunks if c["id"] not in global_rule_ids]
             memory_prompt = build_memory_prompt(chunks)
             if memory_prompt:
                 parts.append(memory_prompt)

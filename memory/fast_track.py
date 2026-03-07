@@ -2,9 +2,12 @@
 SchnuBot.ai - Fast-Track Konsolidierung (Sofortspeicherung)
 Referenz: Konzeptdokument V1.1, Abschnitt 13.3.1
 
-Erkennt explizite Decisions und Hard Facts waehrend des Gespraechs
-und speichert sie sofort als Chunks, ohne auf den Heartbeat zu warten.
-Heartbeat kann spaeter nachkorrigieren.
+Erkennt explizite Decisions, Preferences und Hard Facts waehrend des
+Gespraechs und speichert sie sofort als Chunks, ohne auf den Heartbeat
+zu warten. Heartbeat kann spaeter nachkorrigieren.
+
+Ebene 2: Stilregeln und Kommunikationspräferenzen werden als preference
+mit Tags global-preference + response-style gespeichert, nicht als decision.
 """
 
 import re
@@ -23,20 +26,39 @@ from memory.memory_store import store_chunk
 logger = logging.getLogger(__name__)
 
 # =============================================================================
-# Erkennungsmuster (Abschnitt 13.3.1)
+# Erkennungsmuster (Abschnitt 13.3.1, erweitert Ebene 2)
 # =============================================================================
 
-# Decision-Signale: nur explizite, unmissverständliche Festlegungen
-_DECISION_PATTERNS = [
+# Trigger-Patterns: Signale fuer explizite Festlegungen
+_DIRECTIVE_PATTERNS = [
     re.compile(r"\bab jetzt\b", re.I),
     re.compile(r"\bab sofort\b", re.I),
     re.compile(r"\bwir machen das so\b", re.I),
     re.compile(r"\bist entschieden\b", re.I),
     re.compile(r"\bsteht fest\b", re.I),
     re.compile(r"\bich habe entschieden\b", re.I),
+    re.compile(r"\bvon nun an\b", re.I),
+    re.compile(r"\bkünftig\b", re.I),
+    re.compile(r"\bich will dass du\b", re.I),
+    re.compile(r"\bich möchte dass du\b", re.I),
+    re.compile(r"\bbitte antworte\b", re.I),
 ]
 
-# Hard-Fact-Signale: nur direkte Aufforderungen zur Speicherung
+# Keywords die auf Kommunikationsstil/Formatierung hindeuten
+# Wenn ein Directive-Trigger UND eines dieser Keywords matcht → preference
+_STYLE_KEYWORDS = [
+    re.compile(r"\b(fett|bold|hervorheb|markdown|formatier)", re.I),
+    re.compile(r"\b(fließtext|fliesstext|prosa|ohne liste)", re.I),
+    re.compile(r"\b(emoji|smiley|emoticon)", re.I),
+    re.compile(r"\b(duzen|siezen|du\b|sie\b|anrede)", re.I),
+    re.compile(r"\b(kurz|knapp|ausführlich|lang|wortreich|kompakt)", re.I),
+    re.compile(r"\b(ton|tonfall|stil|schreibstil|antwortst)", re.I),
+    re.compile(r"\b(überschrift|header|bullet|aufzählung|nummerier)", re.I),
+    re.compile(r"\b(smalltalk|floskeln?|höflichkeit)", re.I),
+    re.compile(r"\b(sprache|deutsch|englisch|denglisch)", re.I),
+]
+
+# Hard-Fact-Signale: direkte Aufforderungen zur Speicherung
 _HARD_FACT_PATTERNS = [
     re.compile(r"\bmerk dir\b", re.I),
     re.compile(r"\bspeicher dir\b", re.I),
@@ -50,8 +72,6 @@ _HARD_FACT_PATTERNS = [
 # Session-Tracker (zaehlt Fast-Tracks pro Chat)
 # =============================================================================
 
-# Einfacher In-Memory-Counter, wird bei Bot-Neustart zurueckgesetzt.
-# Das ist okay — das Limit ist pro Chat-Session, nicht persistent.
 _session_counts = {}
 
 
@@ -74,25 +94,44 @@ def _increment_count(user_id):
 
 
 # =============================================================================
-# Erkennung
+# Erkennung (Ebene 2: Stil vs. Operativ)
 # =============================================================================
+
+def _is_style_related(text):
+    """Prüft ob der Text Kommunikationsstil/Formatierung betrifft."""
+    for pattern in _STYLE_KEYWORDS:
+        if pattern.search(text):
+            return True
+    return False
+
 
 def detect_fast_track(user_message):
     """
     Prueft ob eine User-Nachricht ein Fast-Track-Kandidat ist.
 
+    Ebene 2 Logik:
+    - Directive-Trigger + Style-Keywords → preference (global, response-style)
+    - Directive-Trigger ohne Style-Keywords → decision (operativ)
+    - Hard-Fact-Trigger → hard_fact
+
     Returns:
-        ("decision", matched_pattern) oder ("hard_fact", matched_pattern) oder None
+        (chunk_type, matched_pattern, tags) oder None
     """
-    for pattern in _DECISION_PATTERNS:
+    # 1. Directive-Trigger prüfen
+    for pattern in _DIRECTIVE_PATTERNS:
         match = pattern.search(user_message)
         if match:
-            return "decision", match.group()
+            # Stil oder operativ?
+            if _is_style_related(user_message):
+                return "preference", match.group(), ["fast-track", "global-preference", "response-style"]
+            else:
+                return "decision", match.group(), ["fast-track"]
 
+    # 2. Hard-Fact-Trigger prüfen
     for pattern in _HARD_FACT_PATTERNS:
         match = pattern.search(user_message)
         if match:
-            return "hard_fact", match.group()
+            return "hard_fact", match.group(), ["fast-track"]
 
     return None
 
@@ -121,16 +160,14 @@ def process_fast_track(user_id, user_message):
     if result is None:
         return None
 
-    chunk_type, matched = result
-    logger.info(f"Fast-Track erkannt: [{chunk_type}] Trigger: '{matched}'")
+    chunk_type, matched, tags = result
+    logger.info(f"Fast-Track erkannt: [{chunk_type}] Trigger: '{matched}' Tags: {tags}")
 
     # Confidence: Typ-Baseline + kleiner Boost, minus Fast-Track-Penalty (konservativ)
     base_confidence = CONFIDENCE_THRESHOLDS.get(chunk_type, 0.75)
     confidence = base_confidence + 0.05 - FAST_TRACK_CONFIDENCE_PENALTY
 
-    # Kernphrase extrahieren statt Rohtext zu speichern.
-    # Nimmt den Satz der den Trigger enthält. Wenn die Nachricht nur 1 Satz ist,
-    # wird der ganze Text genommen, aber auf 200 Zeichen begrenzt.
+    # Kernphrase extrahieren
     chunk_text = _extract_core_phrase(user_message, matched)
 
     # Chunk erzeugen
@@ -140,7 +177,7 @@ def process_fast_track(user_id, user_message):
         source="tommy",
         confidence=confidence,
         epistemic_status="stated",
-        tags=["fast-track"],
+        tags=tags,
     )
 
     # Validieren
@@ -149,7 +186,7 @@ def process_fast_track(user_id, user_message):
         logger.warning(f"Fast-Track: Chunk ungueltig: {error}")
         return None
 
-    # PII-Check (gleiche Logik wie Konsolidierer)
+    # PII-Check
     try:
         from memory.consolidator import _contains_sensitive_data
         if _contains_sensitive_data(chunk_text):
@@ -178,20 +215,15 @@ def _extract_core_phrase(message, trigger):
     Nimmt den Satz der den Trigger enthaelt.
     Begrenzt auf 200 Zeichen.
     """
-    # Nach Satzgrenzen aufteilen (vereinfacht: . ! ? und Zeilenumbrüche)
-    import re
     sentences = re.split(r'[.!?\n]+', message)
     sentences = [s.strip() for s in sentences if s.strip()]
 
-    # Satz finden der den Trigger enthält
     trigger_lower = trigger.lower()
     for sentence in sentences:
         if trigger_lower in sentence.lower():
             return sentence[:200].strip()
 
-    # Fallback: ersten Satz nehmen
     if sentences:
         return sentences[0][:200].strip()
 
-    # Letzter Fallback
     return message[:200].strip()

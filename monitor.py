@@ -91,6 +91,7 @@ def get_log_errors(hours=24):
                         try:
                             ts_str = line[:19]
                             ts = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
+                            ts = ts.replace(tzinfo=timezone.utc)
                             if ts >= cutoff:
                                 errors[logname] += 1
                         except (ValueError, IndexError):
