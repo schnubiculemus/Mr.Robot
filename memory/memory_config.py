@@ -22,7 +22,7 @@ COLLECTION_ARCHIVE = "memory_archive"
 # =============================================================================
 # Konsolidierungsmodell
 # =============================================================================
-CONSOLIDATION_MODEL = "qwen3.5:397b"
+CONSOLIDATION_MODEL = "qwen3.5:122b"
 CONSOLIDATION_SPEC_VERSION = "1.1"
 
 # =============================================================================
@@ -35,6 +35,7 @@ CHUNK_TYPES = [
     "working_state",
     "self_reflection",
     "knowledge",
+    "diary",
 ]
 
 # =============================================================================
@@ -66,6 +67,7 @@ CONFIDENCE_THRESHOLDS = {
     "preference":      0.55,
     "working_state":   0.50,
     "self_reflection": 0.40,
+    "diary":           0.40,
 }
 
 CONFIDENCE_GLOBAL_MIN = 0.35
@@ -135,6 +137,7 @@ WEIGHT_BASELINES = {
     "preference":      1.00,
     "working_state":   0.90,
     "self_reflection": 0.85,
+    "diary":           0.90,
 }
 
 WEIGHT_ADJUSTMENTS = {

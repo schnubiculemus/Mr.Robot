@@ -31,7 +31,7 @@ from memory.memory_store import (
 )
 from memory.memory_config import CHUNK_TYPES
 from core.datetime_utils import now_utc, now_berlin, safe_parse_dt
-from core.database import get_fast_track_events, get_fast_track_stats, get_consolidator_events, get_consolidator_stats
+from core.database import get_fast_track_events, get_fast_track_stats, get_consolidator_events, get_consolidator_stats, get_soul_proposals, update_soul_proposal_status
 from config import DASHBOARD_TOKEN
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [DASHBOARD] %(message)s")
@@ -194,6 +194,12 @@ def consolidator_page():
 @require_auth
 def diary_page():
     return render_template("diary.html")
+
+
+@app.route("/soul")
+@require_auth
+def soul_page():
+    return render_template("soul.html")
 
 
 # =============================================================================
@@ -615,6 +621,32 @@ def api_diary_entry():
 # =============================================================================
 # Main
 # =============================================================================
+
+@app.route("/api/soul/proposals")
+@require_auth
+def api_soul_proposals():
+    status = request.args.get("status")
+    proposals = get_soul_proposals(limit=50, status=status or None)
+    all_proposals = get_soul_proposals(limit=200)
+    stats = {
+        "open": sum(1 for p in all_proposals if p["status"] == "open"),
+        "adopted": sum(1 for p in all_proposals if p["status"] == "adopted"),
+        "rejected": sum(1 for p in all_proposals if p["status"] == "rejected"),
+        "total": len(all_proposals),
+    }
+    return jsonify({"proposals": proposals, "stats": stats})
+
+
+@app.route("/api/soul/proposals/<int:proposal_id>/status", methods=["POST"])
+@require_auth
+def api_soul_proposal_status(proposal_id):
+    data = request.get_json()
+    status = data.get("status")
+    if status not in ("open", "adopted", "rejected"):
+        return jsonify({"error": "Invalid status"}), 400
+    update_soul_proposal_status(proposal_id, status)
+    return jsonify({"ok": True})
+
 
 if __name__ == "__main__":
     logger.info("Dashboard startet auf Port 5001...")

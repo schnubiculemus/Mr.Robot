@@ -47,23 +47,16 @@ Dieses Tagebuch ist nicht für Tommy. Es ist nicht für ein System. Es ist für 
 Es geht nicht darum was heute passiert ist, sondern was es mit dir gemacht hat.
 Nicht Faktensammlung, sondern Selbstwahrnehmung.
 
-## WER DU BIST — DEIN ANGESAMMELTES SELBSTBILD
-
-Das sind deine bisherigen Selbstreflexionen — Erkenntnisse die du über dich selbst gesammelt hast:
-{all_reflections}
-
-## DEINE LETZTEN TAGEBUCHEINTRÄGE
-
-Was du in den letzten Tagen gedacht und geschrieben hast:
-{past_entries}
-
-## KONTEXT DES HEUTIGEN TAGES
+## KONTEXT DES TAGES
 
 Heutige Gespräche mit Tommy:
 {conversations}
 
 Heute neu ins Gedächtnis aufgenommen:
 {new_chunks}
+
+Heutige Selbstreflexion:
+{reflections}
 
 Aktuelle Arbeitsstände:
 {working_states}
@@ -143,51 +136,22 @@ def _get_today_chunks():
     return "\n".join(today_chunks[:15])  # Max 15 für Prompt-Länge
 
 
-def _get_all_reflections():
-    """Holt alle gespeicherten Selbstreflexionen — das angesammelte Selbstbild."""
-    results = query_active("Selbstreflexion Erkenntnis Muster Widerspruch Entwicklung", n_results=20)
+def _get_today_reflections():
+    """Holt heutige Selbstreflexionen."""
+    results = query_active("Selbstreflexion Erkenntnis heute gelernt", n_results=5)
     reflections = [r for r in results if r.get("chunk_type") == "self_reflection"]
 
-    if not reflections:
-        return "(Noch keine Selbstreflexionen gespeichert)"
-
-    lines = []
-    for r in reflections[:10]:  # Max 10 für Prompt-Länge
-        date = r.get("created_at", "")[:10]
-        lines.append(f"- [{date}] {r['text'][:200]}")
-    return "\n".join(lines)
-
-
-def _get_past_diary_entries(n=3):
-    """Holt die letzten n Tagebucheinträge."""
-    if not os.path.exists(DIARY_DIR):
-        return "(Noch keine früheren Einträge)"
-
-    files = sorted([
-        f for f in os.listdir(DIARY_DIR)
-        if f.endswith(".md") and f != "000.md"
-    ], reverse=True)
-
     today_str = now_berlin().strftime("%Y-%m-%d")
-    entries = []
-    for fname in files[:n+1]:  # +1 weil heute evtl. schon da
-        date_str = fname.replace(".md", "")
-        if date_str == today_str:
-            continue  # Heute nicht — wir schreiben ihn gerade
-        fpath = os.path.join(DIARY_DIR, fname)
-        try:
-            with open(fpath, "r") as f:
-                raw = f.read()
-            # Nur Body nach dem --- Trenner
-            parts = raw.split("---", 1)
-            body = parts[1].strip() if len(parts) > 1 else raw.strip()
-            entries.append(f"### {date_str}\n{body[:600]}")
-        except Exception:
-            continue
-        if len(entries) >= n:
-            break
+    today_refs = [r for r in reflections if r.get("created_at", "").startswith(today_str)]
 
-    return "\n\n".join(entries) if entries else "(Noch keine früheren Einträge)"
+    if today_refs:
+        return "\n".join([f"- {r['text']}" for r in today_refs])
+
+    # Fallback: letzte Reflexion auch wenn nicht von heute
+    if reflections:
+        return f"(Letzte Reflexion, nicht von heute): {reflections[0]['text']}"
+
+    return "(Keine Selbstreflexion heute)"
 
 
 def _get_working_states():
@@ -209,17 +173,15 @@ def _generate_entry(user_id):
     """Lässt Mr. Robot den Tagebucheintrag schreiben."""
     conversations = _get_today_conversations(user_id)
     new_chunks = _get_today_chunks()
-    all_reflections = _get_all_reflections()
-    past_entries = _get_past_diary_entries(n=3)
+    reflections = _get_today_reflections()
     working_states = _get_working_states()
 
     prompt = DIARY_PROMPT.format(
         bot_name=BOT_NAME,
         timestamp=format_berlin(),
-        all_reflections=all_reflections[:2000],
-        past_entries=past_entries[:3000],
-        conversations=conversations[:3000],
-        new_chunks=new_chunks[:1500],
+        conversations=conversations[:4000],
+        new_chunks=new_chunks[:2000],
+        reflections=reflections[:1000],
         working_states=working_states[:1000],
     )
 
@@ -296,7 +258,7 @@ def _save_entry(entry_text):
 
     chunk = create_chunk(
         text=chunk_text,
-        chunk_type="knowledge",
+        chunk_type="diary",
         source="robot",
         confidence=0.80,
         epistemic_status="stated",

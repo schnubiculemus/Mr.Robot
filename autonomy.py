@@ -101,13 +101,15 @@ Bei nichts zu ändern:
 SOUL_OK"""
 
 
-def check_soul_proposal(user_id):
+def generate_soul_proposal():
     """
-    Prüft ob Mr. Robot einen Vorschlag zur soul.md hat.
-    Basiert auf self_reflection Chunks und der aktuellen soul.md.
-    Returns: Proposal-Text oder None.
+    Generiert einen qualitativen Soul-Vorschlag basierend auf
+    Selbstreflexionen und Tagebucheinträgen der letzten Woche.
+    Speichert ihn in der DB — kein WhatsApp, kein JSON.
+    Returns: True wenn Vorschlag gespeichert, False sonst.
     """
     from memory.memory_store import query_active
+    from core.database import save_soul_proposal
 
     # soul.md laden
     try:
@@ -115,23 +117,44 @@ def check_soul_proposal(user_id):
             soul_content = f.read()
     except FileNotFoundError:
         logger.warning("soul.md nicht gefunden, kein Proposal möglich")
-        return None
+        return False
 
     # Selbstreflexionen laden
-    results = query_active("Selbstreflexion Erkenntnis Verbesserung Fehler gelernt", n_results=10)
+    results = query_active("Selbstreflexion Erkenntnis Verbesserung Fehler gelernt", n_results=15)
     reflections = [r for r in results if r.get("chunk_type") == "self_reflection"]
 
-    if not reflections:
-        logger.info("Keine Selbstreflexionen für Soul-Review vorhanden")
-        return None
+    # Tagebucheinträge der letzten Woche laden
+    diary_results = query_active("Tagebucheintrag Gedanken Entwicklung", n_results=10)
+    diary_chunks = [r for r in diary_results if r.get("chunk_type") == "diary"]
 
-    ref_texts = "\n".join([f"- {r['text']}" for r in reflections])
+    if not reflections and not diary_chunks:
+        logger.info("Keine Selbstreflexionen oder Diary-Einträge für Soul-Review")
+        return False
 
-    prompt = SOUL_REVIEW_PROMPT.format(
-        bot_name=BOT_NAME,
-        soul_content=soul_content[:3000],  # Truncate falls sehr lang
-        reflections=ref_texts,
-    )
+    ref_texts = "\n".join([f"- [{r.get('created_at','')[:10]}] {r['text']}" for r in reflections[:10]])
+    diary_texts = "\n".join([f"- [{r.get('created_at','')[:10]}] {r['text'][:200]}" for r in diary_chunks[:5]])
+
+    prompt = f"""Du bist {BOT_NAME}. Du reflektierst über deine eigene Verfassung (soul.md).
+
+## AKTUELLE soul.md (Auszug):
+{soul_content[:3000]}
+
+## DEINE SELBSTREFLEXIONEN DER LETZTEN WOCHEN:
+{ref_texts}
+
+## DEINE TAGEBUCHEINTRÄGE:
+{diary_texts}
+
+## AUFGABE:
+Analysiere ob deine soul.md noch zu deiner tatsächlichen Entwicklung passt.
+Gibt es Lücken, Widersprüche oder Verbesserungspotenzial?
+
+Wenn du einen konkreten Verbesserungsvorschlag hast, schreibe ihn in diesem Format:
+SEKTION: [Name des Abschnitts]
+ÄNDERUNG: [Was genau geändert werden soll]
+BEGRÜNDUNG: [Warum — welche Muster oder Erkenntnisse führen dazu]
+
+Wenn keine Änderung nötig ist, antworte nur mit: SOUL_OK"""
 
     try:
         from api_utils import api_call_with_retry
@@ -144,7 +167,7 @@ def check_soul_proposal(user_id):
             json_payload={
                 "model": OLLAMA_MODEL,
                 "messages": [
-                    {"role": "system", "content": f"Du bist {BOT_NAME}. Du reflektierst über deine eigene Verfassung."},
+                    {"role": "system", "content": f"Du bist {BOT_NAME}. Du reflektierst ehrlich über deine eigene Verfassung."},
                     {"role": "user", "content": prompt},
                 ],
                 "stream": False,
@@ -153,41 +176,38 @@ def check_soul_proposal(user_id):
         )
 
         if not result:
-            return None
+            return False
 
         reply = result.get("message", {}).get("content", "").strip()
 
         if "SOUL_OK" in reply:
             logger.info("Soul-Review: Keine Änderung nötig")
-            return None
+            return False
 
         if "SEKTION:" in reply and "ÄNDERUNG:" in reply:
-            logger.info(f"Soul-Review: Vorschlag generiert")
-            return reply
+            save_soul_proposal(
+                proposal=reply,
+                reflections_used=len(reflections),
+                diary_entries_used=len(diary_chunks),
+            )
+            logger.info(f"Soul-Vorschlag gespeichert ({len(reflections)} Reflexionen, {len(diary_chunks)} Diary-Einträge)")
+            return True
 
-        logger.info(f"Soul-Review: Unklare Antwort, verworfen")
-        return None
+        logger.info("Soul-Review: Unklare Antwort, verworfen")
+        return False
 
-    except requests.exceptions.RequestException as e:
+    except Exception as e:
         logger.error(f"Soul-Review API-Fehler: {e}")
-        return None
+        return False
+
+
+# Legacy — wird nicht mehr verwendet, bleibt für Kompatibilität
+def check_soul_proposal(user_id):
+    return generate_soul_proposal()
 
 
 def send_soul_proposal(user_id, proposal):
-    """
-    Sendet den Soul.md-Vorschlag per WhatsApp an Tommy.
-    Speichert den PR persistent als soul_pr_pending.json.
-    NICHT in messages-DB speichern — beeinflusst sonst den Stille-Timer.
-    """
-    message = f"🔧 *Soul.md Pull-Request*\n\n{proposal}\n\n---\nAntworte mit */merge* zum Übernehmen oder */ablehnen* zum Verwerfen.\n\n[kimi/soul-pr]"
-    send_message(user_id, message)
-    # Bewusst KEIN save_message() — Soul-PRs sind System-Nachrichten,
-    # kein Gespräch, und sollen den Stille-Timer nicht zurücksetzen.
-
-    # PR persistent speichern
-    _save_pending_pr(proposal, user_id)
-    _log_autonomy("soul-proposal", proposal)
-    logger.info(f"Soul-PR gesendet und gespeichert: {proposal[:100]}")
+    pass
 
 
 # =============================================================================
@@ -331,22 +351,78 @@ def handle_merge(user_id):
     return "Soul.md wurde aktualisiert. Diff kommt als separate Nachricht."
 
 
+def _extract_section(soul_content, section_name):
+    """Extrahiert einen ## Abschnitt aus soul.md. Returns (before, section, after)."""
+    lines = soul_content.split("\n")
+    start = None
+    end = None
+    for i, line in enumerate(lines):
+        if line.strip().startswith("## ") and section_name.lower() in line.lower():
+            start = i
+        elif start is not None and line.strip().startswith("## ") and i > start:
+            end = i
+            break
+    if start is None:
+        return None, None, None
+    end = end or len(lines)
+    return "\n".join(lines[:start]), "\n".join(lines[start:end]), "\n".join(lines[end:])
+
+
 def _apply_proposal_via_llm(soul_content, proposal):
     """
-    Lässt Kimi den Vorschlag konkret auf die soul.md anwenden.
+    Lässt Kimi den Vorschlag auf die soul.md anwenden.
+    Sendet nur die betroffene Sektion statt der kompletten Datei — vermeidet API-Timeout.
     Returns: Neuer soul.md Inhalt oder None bei Fehler.
     """
-    prompt = f"""Du bekommst die aktuelle soul.md und einen genehmigten Änderungsvorschlag.
+    # Sektion aus Vorschlag extrahieren
+    section_name = None
+    for line in proposal.split("\n"):
+        if line.startswith("SEKTION:"):
+            section_name = line.replace("SEKTION:", "").strip()
+            break
+
+    before = after = None
+    if section_name:
+        before, section_content, after = _extract_section(soul_content, section_name)
+        if section_content:
+            context = section_content
+            mode = "section"
+        else:
+            context = soul_content
+            mode = "full"
+    else:
+        context = soul_content
+        mode = "full"
+
+    if mode == "section":
+        prompt = f"""Du bekommst einen Abschnitt aus soul.md und einen genehmigten Änderungsvorschlag.
+Wende den Vorschlag an und gib NUR den aktualisierten Abschnitt zurück.
+
+REGELN:
+- Gib NUR diesen Abschnitt zurück, keine Erklärungen, kein Markdown-Fence.
+- Ändere NUR was der Vorschlag verlangt. Alles andere bleibt EXAKT gleich.
+- Behalte Formatierung, Struktur und Markdown bei.
+- {{{{BOT_NAME}}}} Placeholder beibehalten.
+
+## ABSCHNITT "{section_name}":
+{context}
+
+## GENEHMIGTER VORSCHLAG:
+{proposal}
+
+Gib jetzt den aktualisierten Abschnitt zurück:"""
+    else:
+        prompt = f"""Du bekommst die aktuelle soul.md und einen genehmigten Änderungsvorschlag.
 Wende den Vorschlag an und gib die KOMPLETTE aktualisierte soul.md zurück.
 
 REGELN:
 - Gib NUR den soul.md Inhalt zurück, keine Erklärungen, kein Markdown-Fence.
 - Ändere NUR was der Vorschlag verlangt. Alles andere bleibt EXAKT gleich.
-- Behalte die bestehende Formatierung, Struktur und Markdown bei.
-- {{{{BOT_NAME}}}} Placeholder beibehalten wo sie sind.
+- Behalte Formatierung, Struktur und Markdown bei.
+- {{{{BOT_NAME}}}} Placeholder beibehalten.
 
 ## AKTUELLE soul.md:
-{soul_content}
+{context}
 
 ## GENEHMIGTER VORSCHLAG:
 {proposal}
@@ -364,7 +440,7 @@ Gib jetzt die komplette aktualisierte soul.md zurück:"""
             json_payload={
                 "model": OLLAMA_MODEL,
                 "messages": [
-                    {"role": "system", "content": f"Du bist ein präziser Texteditor. Du wendest Änderungen exakt an, ohne eigene Ergänzungen."},
+                    {"role": "system", "content": "Du bist ein präziser Texteditor. Du wendest Änderungen exakt an, ohne eigene Ergänzungen."},
                     {"role": "user", "content": prompt},
                 ],
                 "stream": False,
@@ -378,12 +454,16 @@ Gib jetzt die komplette aktualisierte soul.md zurück:"""
 
         new_content = result.get("message", {}).get("content", "").strip()
 
-        # Markdown-Fence entfernen falls Kimi einen zurückgibt
+        # Markdown-Fence entfernen
         if new_content.startswith("```"):
             lines = new_content.split("\n")
             new_content = "\n".join(lines[1:-1]).strip() if len(lines) > 2 else new_content
 
-        # Minimale Plausibilitätsprüfung
+        # Sektion zurück in soul.md einsetzen
+        if mode == "section" and before is not None:
+            new_content = before + "\n" + new_content + ("\n" + after if after else "")
+
+        # Plausibilitätsprüfung
         if "# soul.md" not in new_content and "## Wer ich bin" not in new_content:
             logger.warning("Soul-Merge: Ergebnis sieht nicht nach soul.md aus")
             return None
@@ -641,22 +721,63 @@ def _log_autonomy(action_type, details):
 # Hauptfunktion (wird vom Heartbeat aufgerufen)
 # =============================================================================
 
+# Auto-Reject Timeout: 20 Stunden
+SOUL_PR_AUTO_REJECT_HOURS = 20
+
+
+def _auto_reject_expired_pr(user_id):
+    """
+    Lehnt einen offenen Soul-PR automatisch ab wenn er älter als
+    SOUL_PR_AUTO_REJECT_HOURS ist. Benachrichtigt den User.
+    """
+    pending = get_pending_pr()
+    if not pending or pending.get("status") != "pending":
+        return
+
+    created = pending.get("created_at", "")
+    if not created:
+        return
+
+    created_dt = safe_parse_dt(created)
+    if not created_dt:
+        return
+
+    age_hours = (now_utc() - created_dt).total_seconds() / 3600
+    if age_hours >= SOUL_PR_AUTO_REJECT_HOURS:
+        _close_pending_pr("auto_rejected")
+        logger.info(f"Soul-PR auto-abgelehnt nach {age_hours:.1f}h")
+        send_message(
+            user_id,
+            f"⏰ *Soul-PR automatisch abgelehnt* — kein /merge nach {SOUL_PR_AUTO_REJECT_HOURS}h.\n\n"
+            f"Vorschlag vom {created[:10]} wurde verworfen. Ich notiere mir das für die nächste Reflexion."
+        )
+
+
+def _is_weekly_soul_day():
+    """Sonntag zwischen 20-23 Uhr Berlin."""
+    from core.datetime_utils import now_berlin
+    berlin = now_berlin()
+    return berlin.weekday() == 6 and 20 <= berlin.hour < 23
+
+
 def run_autonomy(user_id):
     """
-    Führt die Autonomie-Checks durch:
-    1. Soul.md Review → ggf. Pull-Request an Tommy (max 1x/Tag, nicht bei offenem PR)
-    2. Architecture.md Review → ggf. autonome Aktualisierung
+    Autonomie-Checks:
+    1. Soul.md Vorschlag — wöchentlich (Sonntag Abend), gespeichert in DB
+    2. Architecture.md Review — täglich
     """
     logger.info("Autonomie-Engine gestartet")
 
-    # 1. Soul.md Pull-Request (Tier 1)
+    # 1. Soul.md Vorschlag (wöchentlich, Sonntag Abend)
     try:
-        if _can_send_new_pr():
-            proposal = check_soul_proposal(user_id)
-            if proposal:
-                send_soul_proposal(user_id, proposal)
+        if _is_weekly_soul_day():
+            generated = generate_soul_proposal()
+            if generated:
+                logger.info("Soul-Vorschlag generiert und in DB gespeichert")
+            else:
+                logger.info("Soul-Review: Kein Vorschlag nötig")
         else:
-            logger.info("Soul-PR: Übersprungen (Cooldown oder offener PR)")
+            logger.info("Soul-Review: Kein Sonntag, skip")
     except Exception as e:
         logger.warning(f"Soul-Review fehlgeschlagen: {e}")
 

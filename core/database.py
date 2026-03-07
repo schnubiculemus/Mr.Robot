@@ -366,3 +366,67 @@ def get_consolidator_stats():
         "retry_runs": retry_runs,
         "total_dropped": total_dropped,
     }
+
+
+# =============================================================================
+# Soul Proposals
+# =============================================================================
+
+def init_soul_proposals_table():
+    """Erstellt die soul_proposals Tabelle falls nicht vorhanden."""
+    conn = get_connection()
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS soul_proposals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            proposal TEXT NOT NULL,
+            reflections_used INTEGER NOT NULL DEFAULT 0,
+            diary_entries_used INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'open',
+            status_changed_at TEXT
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_soul_proposals_ts ON soul_proposals(timestamp DESC)")
+    conn.commit()
+    conn.close()
+
+
+def save_soul_proposal(proposal, reflections_used=0, diary_entries_used=0):
+    """Speichert einen neuen Soul-Vorschlag."""
+    conn = get_connection()
+    conn.execute(
+        """INSERT INTO soul_proposals
+           (timestamp, proposal, reflections_used, diary_entries_used, status)
+           VALUES (?, ?, ?, ?, 'open')""",
+        (to_iso(), proposal, reflections_used, diary_entries_used),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_soul_proposals(limit=20, status=None):
+    """Lädt Soul-Vorschläge, optional nach Status gefiltert."""
+    conn = get_connection()
+    if status:
+        rows = conn.execute(
+            "SELECT * FROM soul_proposals WHERE status = ? ORDER BY timestamp DESC LIMIT ?",
+            (status, limit),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM soul_proposals ORDER BY timestamp DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def update_soul_proposal_status(proposal_id, status):
+    """Ändert den Status eines Vorschlags (open/adopted/rejected)."""
+    conn = get_connection()
+    conn.execute(
+        "UPDATE soul_proposals SET status = ?, status_changed_at = ? WHERE id = ?",
+        (status, to_iso(), proposal_id),
+    )
+    conn.commit()
+    conn.close()

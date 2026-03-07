@@ -1,0 +1,162 @@
+{% extends "base.html" %}
+{% block title %}Soul-Vorschläge{% endblock %}
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1 class="page-title">Soul-Vorschläge</h1>
+        <p class="page-subtitle">Wöchentliche Entwicklungsvorschläge von Mr. Robot — zur manuellen Übernahme in soul.md</p>
+    </div>
+    <button class="btn-refresh" onclick="loadProposals()">↺ Refresh</button>
+</div>
+
+<div class="stat-row" id="stats-row">
+    <div class="stat-card"><div class="stat-card-label">Offen</div><div class="stat-card-value" id="stat-open">—</div></div>
+    <div class="stat-card"><div class="stat-card-label">Übernommen</div><div class="stat-card-value" style="color:var(--accent)" id="stat-adopted">—</div></div>
+    <div class="stat-card"><div class="stat-card-label">Verworfen</div><div class="stat-card-value" style="color:var(--red)" id="stat-rejected">—</div></div>
+    <div class="stat-card"><div class="stat-card-label">Gesamt</div><div class="stat-card-value" id="stat-total">—</div></div>
+</div>
+
+<div class="card" style="margin-top:20px">
+    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+        <div>
+            <div class="card-title">Vorschläge</div>
+            <div class="card-sub">Änderungen händisch in soul.md übernehmen</div>
+        </div>
+        <select id="filter-status" onchange="loadProposals()" style="background:var(--bg-elevated);border:1px solid var(--border);color:var(--text-primary);padding:6px 10px;border-radius:6px;font-family:var(--font);font-size:12px">
+            <option value="">Alle</option>
+            <option value="open">Offen</option>
+            <option value="adopted">Übernommen</option>
+            <option value="rejected">Verworfen</option>
+        </select>
+    </div>
+
+    <div id="proposals-list" style="margin-top:16px"></div>
+</div>
+
+<style>
+.proposal-item {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 12px;
+}
+.proposal-item.open { border-left: 3px solid var(--amber); }
+.proposal-item.adopted { border-left: 3px solid var(--accent); }
+.proposal-item.rejected { border-left: 3px solid var(--red); opacity: 0.6; }
+
+.proposal-meta {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    margin-bottom: 10px;
+    font-size: 11px;
+    color: var(--text-muted);
+}
+.proposal-date { color: var(--text-primary); font-weight: 500; }
+.proposal-badge {
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+}
+.badge-open { background: rgba(245,158,11,0.15); color: var(--amber); }
+.badge-adopted { background: rgba(34,197,94,0.12); color: var(--accent); }
+.badge-rejected { background: rgba(239,68,68,0.12); color: var(--red); }
+
+.proposal-text {
+    font-size: 13px;
+    color: var(--text-primary);
+    white-space: pre-wrap;
+    line-height: 1.6;
+    margin-bottom: 12px;
+    background: var(--bg-surface);
+    padding: 12px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+}
+.proposal-actions { display: flex; gap: 8px; }
+.btn-adopt {
+    background: rgba(34,197,94,0.12);
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    padding: 5px 14px;
+    border-radius: 6px;
+    font-family: var(--font);
+    font-size: 12px;
+    cursor: pointer;
+}
+.btn-reject {
+    background: rgba(239,68,68,0.08);
+    border: 1px solid var(--red);
+    color: var(--red);
+    padding: 5px 14px;
+    border-radius: 6px;
+    font-family: var(--font);
+    font-size: 12px;
+    cursor: pointer;
+}
+.btn-adopt:hover { background: rgba(34,197,94,0.2); }
+.btn-reject:hover { background: rgba(239,68,68,0.15); }
+.empty-state { color: var(--text-dim); font-size: 13px; padding: 24px 0; text-align: center; }
+</style>
+
+<script>
+async function loadProposals() {
+    const status = document.getElementById('filter-status').value;
+    const url = `/api/soul/proposals${status ? '?status=' + status : ''}`;
+    const resp = await fetch(url);
+    const data = await resp.json();
+
+    // Stats
+    document.getElementById('stat-open').textContent = data.stats.open;
+    document.getElementById('stat-adopted').textContent = data.stats.adopted;
+    document.getElementById('stat-rejected').textContent = data.stats.rejected;
+    document.getElementById('stat-total').textContent = data.stats.total;
+
+    // List
+    const container = document.getElementById('proposals-list');
+    if (!data.proposals.length) {
+        container.innerHTML = '<div class="empty-state">Noch keine Vorschläge — erscheinen jeden Sonntag Abend.</div>';
+        return;
+    }
+
+    container.innerHTML = data.proposals.map(p => `
+        <div class="proposal-item ${p.status}" id="proposal-${p.id}">
+            <div class="proposal-meta">
+                <span class="proposal-date">${p.timestamp.slice(0,16).replace('T', ' ')}</span>
+                <span class="proposal-badge badge-${p.status}">${statusLabel(p.status)}</span>
+                <span>${p.reflections_used} Reflexionen · ${p.diary_entries_used} Diary-Einträge</span>
+                ${p.status_changed_at ? `<span>· ${p.status_changed_at.slice(0,10)}</span>` : ''}
+            </div>
+            <div class="proposal-text">${escHtml(p.proposal)}</div>
+            ${p.status === 'open' ? `
+            <div class="proposal-actions">
+                <button class="btn-adopt" onclick="updateStatus(${p.id}, 'adopted')">✓ Übernommen</button>
+                <button class="btn-reject" onclick="updateStatus(${p.id}, 'rejected')">✗ Verwerfen</button>
+            </div>` : ''}
+        </div>
+    `).join('');
+}
+
+function statusLabel(s) {
+    return { open: 'Offen', adopted: 'Übernommen', rejected: 'Verworfen' }[s] || s;
+}
+
+function escHtml(t) {
+    return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+async function updateStatus(id, status) {
+    await fetch(`/api/soul/proposals/${id}/status`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({status})
+    });
+    loadProposals();
+}
+
+loadProposals();
+</script>
+{% endblock %}
