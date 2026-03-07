@@ -306,7 +306,7 @@ def process_tasks():
         logger.info(f"Task {task_id}: Iteration {iteration + 1}/{task['max_iterations']}")
         task["status"] = "running"
 
-        system_prompt = build_system_prompt(context_name, user_id)
+        system_prompt = build_system_prompt(context_name, user_id, user_message=task.get("prompt", ""))
         iter_prompt = build_iteration_prompt(task)
 
         messages = [

@@ -7,7 +7,7 @@ from config import WAHA_API_KEY, BOT_NAME, WEBHOOK_SECRET
 from core.database import init_db, get_or_create_user, save_message, get_chat_history
 from core.ollama_client import chat as ollama_chat
 from core.whatsapp import send_message, extract_message, init_waha
-from core.tasks import create_task
+from core.tasks import create_task, save_task, build_iteration_prompt, TASK_DONE_TOKEN, get_pending_tasks
 from memory.fast_track import process_fast_track
 
 # logs/ Verzeichnis sicherstellen
@@ -50,9 +50,9 @@ _user_locks = {}
 _user_locks_guard = threading.Lock()
 
 # ThreadPool: begrenzt die Anzahl gleichzeitiger Background-Threads.
-# max_workers=4: 1 Chat-Thread + 1 Fast-Track pro User, mit Puffer.
+# max_workers=6: Chat + Fast-Track + Task-Runner mit Puffer.
 # Verhindert unkontrolliertes Thread-Wachstum bei Nachrichtenspitzen.
-_thread_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="schnubot")
+_thread_pool = ThreadPoolExecutor(max_workers=6, thread_name_prefix="schnubot")
 
 
 def _get_user_lock(user_id):
@@ -102,6 +102,10 @@ def webhook():
             save_message(phone_number, "assistant", reply)
             send_message(phone_number, reply)
             logger.info(f"Task erstellt: {task_id}")
+
+            # Sofort im ThreadPool starten — nicht auf Heartbeat warten
+            _thread_pool.submit(_run_task_iterations, task_id, phone_number, context_name)
+
             return jsonify({"status": "task_created"}), 200
         else:
             reply = "Bitte gib einen Auftrag nach /task an, z.B.: /task Schreib mir einen Textbaustein fuer BIM-Anforderungen"
@@ -252,6 +256,124 @@ def _build_status_reply():
     except Exception as e:
         logger.error(f"Status-Abfrage fehlgeschlagen: {e}")
         return f"Status-Abfrage fehlgeschlagen: {e}"
+
+
+def _run_task_iterations(task_id, user_id, context_name):
+    """
+    Führt alle Task-Iterationen am Stück durch (im ThreadPool).
+    Läuft unabhängig vom Chat — kein Per-User-Lock nötig.
+    Pause zwischen Iterationen verhindert API-Überlastung.
+
+    Heartbeat bleibt als Fallback: wenn der Server während der
+    Verarbeitung abstürzt, findet der Heartbeat den Task als
+    "running" und setzt ihn fort.
+    """
+    import time
+    import json
+    from config import OLLAMA_API_URL, OLLAMA_API_KEY, OLLAMA_MODEL
+    from core.ollama_client import build_system_prompt
+    from core.datetime_utils import to_iso
+    from api_utils import api_call_with_retry
+
+    PAUSE_BETWEEN_ITERATIONS = 10  # Sekunden zwischen Runden
+
+    # Task laden
+    task_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "core", "tasks", f"{task_id}.json"
+    )
+    try:
+        with open(task_path, "r", encoding="utf-8") as f:
+            task = json.load(f)
+    except (json.JSONDecodeError, IOError, FileNotFoundError) as e:
+        logger.error(f"Task {task_id}: Datei nicht lesbar: {e}")
+        return
+
+    task["status"] = "running"
+    save_task(task)
+
+    logger.info(f"Task-Runner gestartet: {task_id} (max {task['max_iterations']} Iterationen)")
+
+    while task["current_iteration"] < task["max_iterations"]:
+        iteration = task["current_iteration"]
+        logger.info(f"Task {task_id}: Iteration {iteration + 1}/{task['max_iterations']}")
+
+        system_prompt = build_system_prompt(context_name, user_id, user_message=task.get("prompt", ""))
+        iter_prompt = build_iteration_prompt(task)
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": iter_prompt},
+        ]
+
+        result_json = api_call_with_retry(
+            url=f"{OLLAMA_API_URL}/api/chat",
+            headers={
+                "Authorization": f"Bearer {OLLAMA_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json_payload={"model": OLLAMA_MODEL, "messages": messages, "stream": False},
+            timeout=180,
+        )
+
+        if not result_json:
+            logger.error(f"Task {task_id}: API nicht erreichbar in Iteration {iteration + 1}, Task pausiert")
+            save_task(task)
+            return  # Heartbeat kann übernehmen
+
+        result = result_json.get("message", {}).get("content", "").strip()
+
+        if not result:
+            logger.warning(f"Task {task_id}: Leere Antwort in Iteration {iteration + 1}, überspringe")
+            save_task(task)
+            continue
+
+        # Iteration speichern
+        task["iterations"].append({
+            "iteration": iteration + 1,
+            "result": result,
+            "timestamp": to_iso(),
+        })
+        task["current_iteration"] = iteration + 1
+        save_task(task)
+
+        # Fertig?
+        if TASK_DONE_TOKEN in result.upper().replace(" ", "_"):
+            logger.info(f"Task {task_id}: DONE nach Iteration {iteration + 1}")
+            task["status"] = "done"
+            save_task(task)
+            _deliver_task(task)
+            return
+
+        # Pause vor nächster Iteration
+        time.sleep(PAUSE_BETWEEN_ITERATIONS)
+
+    # Max Iterationen erreicht
+    logger.info(f"Task {task_id}: Max Iterationen erreicht")
+    task["status"] = "done"
+    save_task(task)
+    _deliver_task(task)
+
+
+def _deliver_task(task):
+    """Sendet das Endergebnis per WhatsApp."""
+    user_id = task["user_id"]
+    task_id = task["id"]
+
+    if not task["iterations"]:
+        return
+
+    final_result = task["iterations"][-1]["result"]
+    final_result = final_result.replace("TASK_DONE", "").replace("task_done", "").strip()
+
+    iterations_count = len(task["iterations"])
+    header = f"Task #{task_id} fertig ({iterations_count} Runden):\n\n"
+    msg = header + final_result + "\n\n[kimi/task]"
+
+    send_message(user_id, msg)
+    save_message(user_id, "assistant", msg)
+    task["status"] = "delivered"
+    save_task(task)
+    logger.info(f"Task {task_id}: zugestellt ({iterations_count} Iterationen)")
 
 
 def _safe_fast_track(user_id, text):
