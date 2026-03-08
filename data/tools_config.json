@@ -1,0 +1,66 @@
+[
+  {
+    "id": "pdf",
+    "name": "PDF-Analyse",
+    "icon": "\ud83d\udcc4",
+    "description": "PDFs per WhatsApp hochladen und durchsuchen",
+    "enabled": true,
+    "available": true
+  },
+  {
+    "id": "websearch",
+    "name": "Web Search",
+    "icon": "\ud83c\udf10",
+    "description": "Aktuelle Informationen aus dem Web abrufen",
+    "enabled": false,
+    "available": false
+  },
+  {
+    "id": "calendar",
+    "name": "Kalender",
+    "icon": "\ud83d\udcc5",
+    "description": "Termine lesen und erstellen",
+    "enabled": false,
+    "available": false
+  },
+  {
+    "id": "email",
+    "name": "E-Mail",
+    "icon": "\u2709\ufe0f",
+    "description": "E-Mails lesen und senden",
+    "enabled": false,
+    "available": false
+  },
+  {
+    "id": "voice",
+    "name": "Sprachnachrichten",
+    "icon": "\ud83c\udf99\ufe0f",
+    "description": "Sprachnachrichten transkribieren (Whisper)",
+    "enabled": false,
+    "available": false
+  },
+  {
+    "id": "tasks",
+    "name": "Aufgaben",
+    "icon": "\u2705",
+    "description": "Aufgaben erstellen und verwalten",
+    "enabled": false,
+    "available": false
+  },
+  {
+    "id": "images",
+    "name": "Bildanalyse",
+    "icon": "\ud83d\uddbc\ufe0f",
+    "description": "Bilder beschreiben und analysieren",
+    "enabled": false,
+    "available": false
+  },
+  {
+    "id": "contacts",
+    "name": "Kontakte",
+    "icon": "\ud83d\udc64",
+    "description": "WhatsApp-Kontakte als Kontext nutzen",
+    "enabled": false,
+    "available": false
+  }
+]

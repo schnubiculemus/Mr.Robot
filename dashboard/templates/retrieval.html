@@ -34,8 +34,21 @@
                 <div class="stat-card-label">Verworfen</div>
                 <div class="stat-card-value" id="res-dropped">0</div>
             </div>
+            <div class="stat-card" style="flex:1">
+                <div class="stat-card-label">~Tokens</div>
+                <div class="stat-card-value" id="res-tokens" style="color:var(--purple,#a78bfa)">—</div>
+                <div class="stat-card-sub" id="res-chars"></div>
+            </div>
         </div>
 
+        <!-- Tabs -->
+        <div style="display:flex;gap:0;margin-bottom:16px;border-bottom:1px solid var(--border)">
+            <button class="tab-btn active" onclick="switchTab('candidates')" id="tab-candidates" style="padding:8px 16px;background:none;border:none;border-bottom:2px solid var(--accent);color:var(--text-primary);cursor:pointer;font-size:13px">Alle Kandidaten</button>
+            <button class="tab-btn" onclick="switchTab('prompt')" id="tab-prompt" style="padding:8px 16px;background:none;border:none;border-bottom:2px solid transparent;color:var(--text-dim);cursor:pointer;font-size:13px">Prompt-Vorschau</button>
+            <button class="tab-btn" onclick="switchTab('displaced')" id="tab-displaced" style="padding:8px 16px;background:none;border:none;border-bottom:2px solid transparent;color:var(--text-dim);cursor:pointer;font-size:13px">Verdrängte Top-Kandidaten</button>
+        </div>
+
+        <div id="panel-candidates">
         <div class="table-wrap">
             <table>
                 <thead>
@@ -54,6 +67,22 @@
                 </thead>
                 <tbody id="result-table"></tbody>
             </table>
+        </div>
+        </div><!-- /panel-candidates -->
+
+        <div id="panel-prompt" style="display:none">
+            <div style="margin-bottom:10px;font-size:12px;color:var(--text-dim)">
+                So landet der Memory-Block im System-Prompt. Reihenfolge: nach Typ-Priorität.
+                Typen-Mix: <span id="type-mix-display" style="color:var(--text-primary)">—</span>
+            </div>
+            <pre id="prompt-preview" style="background:var(--surface-2,#1a1a2e);border:1px solid var(--border);border-radius:8px;padding:16px;font-size:11px;line-height:1.6;overflow:auto;max-height:500px;white-space:pre-wrap;color:var(--text-secondary)"></pre>
+        </div>
+
+        <div id="panel-displaced" style="display:none">
+            <div style="margin-bottom:10px;font-size:12px;color:var(--text-dim)">
+                Chunks mit Score ≥ 0.65 die trotzdem nicht im Prompt gelandet sind.
+            </div>
+            <div id="displaced-list"></div>
         </div>
     </div>
 </div>
@@ -96,6 +125,15 @@ const REJECTION_LABELS = {
     'type_cap_diary':          { label: 'Cap: diary', color: 'var(--amber)' },
 };
 
+function switchTab(tab) {
+    ['candidates','prompt','displaced'].forEach(t => {
+        document.getElementById('panel-' + t).style.display = t === tab ? '' : 'none';
+        const btn = document.getElementById('tab-' + t);
+        btn.style.borderBottomColor = t === tab ? 'var(--accent)' : 'transparent';
+        btn.style.color = t === tab ? 'var(--text-primary)' : 'var(--text-dim)';
+    });
+}
+
 async function runQuery() {
     const query = document.getElementById('query-input').value.trim();
     if (!query) return;
@@ -112,6 +150,31 @@ async function runQuery() {
 
         document.getElementById('res-candidates').textContent = data.candidates_count;
         document.getElementById('res-selected').textContent = data.selected_count;
+        document.getElementById('res-tokens').textContent = data.prompt_tokens_est ? data.prompt_tokens_est.toLocaleString() : '—';
+        document.getElementById('res-chars').textContent = data.prompt_chars ? data.prompt_chars.toLocaleString() + ' Zeichen' : '';
+
+        // Prompt-Vorschau
+        document.getElementById('prompt-preview').textContent = data.prompt_preview || '(kein Memory-Block)';
+
+        // Typen-Mix
+        if (data.type_mix) {
+            document.getElementById('type-mix-display').textContent =
+                Object.entries(data.type_mix).map(([t,n]) => `${t}: ${n}`).join(' · ');
+        }
+
+        // Verdrängte Top-Kandidaten
+        const dispHtml = (data.displaced_top || []).length === 0
+            ? '<div style="color:var(--text-dim);font-size:13px;padding:12px 0">Keine verdrängten Top-Kandidaten.</div>'
+            : (data.displaced_top || []).map(c => `
+                <div style="padding:12px;border:1px solid var(--border);border-radius:8px;margin-bottom:8px">
+                    <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+                        <span class="mono" style="font-size:12px;color:var(--text-dim)">${c.id.substring(0,12)}…</span>
+                        <span style="font-size:12px">Score: <strong style="color:var(--amber,#f59e0b)">${c.retrieval_score}</strong></span>
+                    </div>
+                    <div style="font-size:12px;color:var(--text-secondary);margin-bottom:6px">${c.text_preview}…</div>
+                    <div style="font-size:11px;color:var(--red,#ef4444)">✗ ${c.rejection_reason || 'unbekannt'}</div>
+                </div>`).join('');
+        document.getElementById('displaced-list').innerHTML = dispHtml;
         document.getElementById('res-dropped').textContent = dropped.length;
 
         const html = data.candidates.map((c, idx) => {

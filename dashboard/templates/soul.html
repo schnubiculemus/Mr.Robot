@@ -1,131 +1,174 @@
 {% extends "base.html" %}
-{% block title %}Soul-Vorschläge{% endblock %}
+{% block title %}Soul{% endblock %}
 {% block content %}
 <div class="page-header">
     <div>
-        <h1 class="page-title">Soul-Vorschläge</h1>
-        <p class="page-subtitle">Wöchentliche Entwicklungsvorschläge von Mr. Robot — zur manuellen Übernahme in soul.md</p>
+        <h1 class="page-title">Soul</h1>
+        <p class="page-subtitle">Verfassung und Entwicklungsvorschläge</p>
     </div>
-    <button class="btn-refresh" onclick="loadProposals()">↺ Refresh</button>
 </div>
 
-<div class="stat-row" id="stats-row">
-    <div class="stat-card"><div class="stat-card-label">Offen</div><div class="stat-card-value" id="stat-open">—</div></div>
-    <div class="stat-card"><div class="stat-card-label">Übernommen</div><div class="stat-card-value" style="color:var(--accent)" id="stat-adopted">—</div></div>
-    <div class="stat-card"><div class="stat-card-label">Verworfen</div><div class="stat-card-value" style="color:var(--red)" id="stat-rejected">—</div></div>
-    <div class="stat-card"><div class="stat-card-label">Gesamt</div><div class="stat-card-value" id="stat-total">—</div></div>
+<!-- Tabs -->
+<div style="display:flex;gap:0;margin-bottom:20px;border-bottom:1px solid var(--border)">
+    <button class="soul-tab active" id="tab-proposals" onclick="switchTab('proposals')" style="padding:8px 18px;background:none;border:none;border-bottom:2px solid var(--accent);color:var(--text-primary);cursor:pointer;font-size:13px;font-family:inherit">Vorschläge</button>
+    <button class="soul-tab" id="tab-editor" onclick="switchTab('editor')" style="padding:8px 18px;background:none;border:none;border-bottom:2px solid transparent;color:var(--text-dim);cursor:pointer;font-size:13px;font-family:inherit">Soul Editor</button>
 </div>
 
-<div class="card" style="margin-top:20px">
-    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
-        <div>
-            <div class="card-title">Vorschläge</div>
-            <div class="card-sub">Änderungen händisch in soul.md übernehmen</div>
+<!-- Panel: Vorschläge -->
+<div id="panel-proposals">
+    <div class="stat-row" id="stats-row">
+        <div class="stat-card"><div class="stat-card-label">Offen</div><div class="stat-card-value" id="stat-open">—</div></div>
+        <div class="stat-card"><div class="stat-card-label">Übernommen</div><div class="stat-card-value" style="color:var(--accent)" id="stat-adopted">—</div></div>
+        <div class="stat-card"><div class="stat-card-label">Verworfen</div><div class="stat-card-value" style="color:var(--red)" id="stat-rejected">—</div></div>
+        <div class="stat-card"><div class="stat-card-label">Gesamt</div><div class="stat-card-value" id="stat-total">—</div></div>
+    </div>
+
+    <div class="card" style="margin-top:20px">
+        <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+            <div>
+                <div class="card-title">Vorschläge</div>
+                <div class="card-sub">Jeden Sonntag Abend generiert — zur Übernahme in den Editor</div>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center">
+                <select id="filter-status" onchange="loadProposals()" style="background:var(--bg-elevated);border:1px solid var(--border);color:var(--text-primary);padding:6px 10px;border-radius:6px;font-family:var(--font);font-size:12px">
+                    <option value="">Alle</option>
+                    <option value="open">Offen</option>
+                    <option value="adopted">Übernommen</option>
+                    <option value="rejected">Verworfen</option>
+                </select>
+                <button class="btn-refresh" onclick="loadProposals()">↺</button>
+            </div>
         </div>
-        <select id="filter-status" onchange="loadProposals()" style="background:var(--bg-elevated);border:1px solid var(--border);color:var(--text-primary);padding:6px 10px;border-radius:6px;font-family:var(--font);font-size:12px">
-            <option value="">Alle</option>
-            <option value="open">Offen</option>
-            <option value="adopted">Übernommen</option>
-            <option value="rejected">Verworfen</option>
-        </select>
+        <div id="proposals-list" style="margin-top:16px"></div>
     </div>
+</div>
 
-    <div id="proposals-list" style="margin-top:16px"></div>
+<!-- Panel: Editor -->
+<div id="panel-editor" style="display:none">
+    <div class="card">
+        <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+            <div>
+                <div class="card-title">soul.md Editor</div>
+                <div class="card-sub">Sektionen direkt bearbeiten — Speichern schreibt auf den Server</div>
+            </div>
+            <div style="display:flex;gap:8px">
+                <button onclick="addSection()" style="background:none;border:1px solid var(--border);color:var(--text-dim);padding:6px 14px;border-radius:6px;cursor:pointer;font-family:inherit;font-size:12px">+ Sektion</button>
+                <button onclick="saveSoul()" id="save-btn" style="background:var(--accent,#6366f1);border:none;color:#fff;padding:6px 16px;border-radius:6px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:600">Speichern</button>
+            </div>
+        </div>
+        <div id="save-status" style="font-size:12px;color:var(--text-dim);min-height:18px;margin-bottom:8px"></div>
+        <div id="sections-list"></div>
+    </div>
 </div>
 
 <style>
-.proposal-item {
-    background: var(--bg-elevated);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 16px;
-    margin-bottom: 12px;
-}
-.proposal-item.open { border-left: 3px solid var(--amber); }
-.proposal-item.adopted { border-left: 3px solid var(--accent); }
-.proposal-item.rejected { border-left: 3px solid var(--red); opacity: 0.6; }
+/* Proposals */
+.proposal-item { background:var(--bg-elevated);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:12px; }
+.proposal-item.open { border-left:3px solid var(--amber); }
+.proposal-item.adopted { border-left:3px solid var(--accent); }
+.proposal-item.rejected { border-left:3px solid var(--red);opacity:0.6; }
+.proposal-meta { display:flex;gap:12px;align-items:center;margin-bottom:10px;font-size:11px;color:var(--text-muted); }
+.proposal-date { color:var(--text-primary);font-weight:500; }
+.proposal-badge { padding:2px 8px;border-radius:4px;font-size:10px;text-transform:uppercase;letter-spacing:0.1em; }
+.badge-open { background:rgba(245,158,11,0.15);color:var(--amber); }
+.badge-adopted { background:rgba(34,197,94,0.12);color:var(--accent); }
+.badge-rejected { background:rgba(239,68,68,0.12);color:var(--red); }
+.proposal-text { font-size:13px;color:var(--text-primary);white-space:pre-wrap;line-height:1.6;margin-bottom:12px;background:var(--bg-surface);padding:12px;border-radius:6px;border:1px solid var(--border); }
+.proposal-actions { display:flex;gap:8px; }
+.btn-adopt { background:rgba(34,197,94,0.12);border:1px solid var(--accent);color:var(--accent);padding:5px 14px;border-radius:6px;font-family:var(--font);font-size:12px;cursor:pointer; }
+.btn-reject { background:rgba(239,68,68,0.08);border:1px solid var(--red);color:var(--red);padding:5px 14px;border-radius:6px;font-family:var(--font);font-size:12px;cursor:pointer; }
+.btn-adopt:hover { background:rgba(34,197,94,0.2); }
+.btn-reject:hover { background:rgba(239,68,68,0.15); }
+.empty-state { color:var(--text-dim);font-size:13px;padding:24px 0;text-align:center; }
 
-.proposal-meta {
-    display: flex;
-    gap: 12px;
-    align-items: center;
-    margin-bottom: 10px;
-    font-size: 11px;
-    color: var(--text-muted);
+/* Editor */
+.section-block {
+    border:1px solid var(--border);
+    border-radius:8px;
+    margin-bottom:12px;
+    overflow:hidden;
 }
-.proposal-date { color: var(--text-primary); font-weight: 500; }
-.proposal-badge {
-    padding: 2px 8px;
-    border-radius: 4px;
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
+.section-header {
+    display:flex;
+    align-items:center;
+    gap:10px;
+    padding:10px 14px;
+    background:var(--surface-2, #1a1a2e);
+    border-bottom:1px solid var(--border);
 }
-.badge-open { background: rgba(245,158,11,0.15); color: var(--amber); }
-.badge-adopted { background: rgba(34,197,94,0.12); color: var(--accent); }
-.badge-rejected { background: rgba(239,68,68,0.12); color: var(--red); }
-
-.proposal-text {
-    font-size: 13px;
-    color: var(--text-primary);
-    white-space: pre-wrap;
-    line-height: 1.6;
-    margin-bottom: 12px;
-    background: var(--bg-surface);
-    padding: 12px;
-    border-radius: 6px;
-    border: 1px solid var(--border);
+.section-title-input {
+    flex:1;
+    background:transparent;
+    border:none;
+    color:var(--text-primary);
+    font-size:13px;
+    font-weight:600;
+    font-family:inherit;
+    outline:none;
 }
-.proposal-actions { display: flex; gap: 8px; }
-.btn-adopt {
-    background: rgba(34,197,94,0.12);
-    border: 1px solid var(--accent);
-    color: var(--accent);
-    padding: 5px 14px;
-    border-radius: 6px;
-    font-family: var(--font);
-    font-size: 12px;
-    cursor: pointer;
+.section-title-input:focus { color:var(--accent,#6366f1); }
+.section-title-input[readonly] { color:var(--text-dim);cursor:default; }
+.section-delete-btn {
+    background:none;
+    border:none;
+    color:var(--text-dim);
+    cursor:pointer;
+    font-size:14px;
+    padding:2px 6px;
+    border-radius:4px;
+    line-height:1;
 }
-.btn-reject {
-    background: rgba(239,68,68,0.08);
-    border: 1px solid var(--red);
-    color: var(--red);
-    padding: 5px 14px;
-    border-radius: 6px;
-    font-family: var(--font);
-    font-size: 12px;
-    cursor: pointer;
+.section-delete-btn:hover { color:var(--red,#ef4444);background:rgba(239,68,68,0.1); }
+.section-content-input {
+    width:100%;
+    box-sizing:border-box;
+    background:var(--bg-deep, #0d0d1a);
+    border:none;
+    color:var(--text-secondary);
+    font-size:12px;
+    line-height:1.7;
+    font-family:inherit;
+    padding:14px;
+    resize:vertical;
+    min-height:80px;
+    outline:none;
 }
-.btn-adopt:hover { background: rgba(34,197,94,0.2); }
-.btn-reject:hover { background: rgba(239,68,68,0.15); }
-.empty-state { color: var(--text-dim); font-size: 13px; padding: 24px 0; text-align: center; }
+.section-content-input:focus { color:var(--text-primary); }
 </style>
 
 <script>
+// ===================== Tab Switch =====================
+function switchTab(tab) {
+    document.getElementById('panel-proposals').style.display = tab === 'proposals' ? '' : 'none';
+    document.getElementById('panel-editor').style.display = tab === 'editor' ? '' : 'none';
+    document.getElementById('tab-proposals').style.borderBottomColor = tab === 'proposals' ? 'var(--accent)' : 'transparent';
+    document.getElementById('tab-proposals').style.color = tab === 'proposals' ? 'var(--text-primary)' : 'var(--text-dim)';
+    document.getElementById('tab-editor').style.borderBottomColor = tab === 'editor' ? 'var(--accent)' : 'transparent';
+    document.getElementById('tab-editor').style.color = tab === 'editor' ? 'var(--text-primary)' : 'var(--text-dim)';
+    if (tab === 'editor' && !_sectionsLoaded) loadEditor();
+}
+
+// ===================== Proposals =====================
 async function loadProposals() {
     const status = document.getElementById('filter-status').value;
     const url = `/api/soul/proposals${status ? '?status=' + status : ''}`;
     const resp = await fetch(url);
     const data = await resp.json();
 
-    // Stats
     document.getElementById('stat-open').textContent = data.stats.open;
     document.getElementById('stat-adopted').textContent = data.stats.adopted;
     document.getElementById('stat-rejected').textContent = data.stats.rejected;
     document.getElementById('stat-total').textContent = data.stats.total;
 
-    // List
     const container = document.getElementById('proposals-list');
     if (!data.proposals.length) {
         container.innerHTML = '<div class="empty-state">Noch keine Vorschläge — erscheinen jeden Sonntag Abend.</div>';
         return;
     }
-
     container.innerHTML = data.proposals.map(p => `
         <div class="proposal-item ${p.status}" id="proposal-${p.id}">
             <div class="proposal-meta">
-                <span class="proposal-date">${p.timestamp.slice(0,16).replace('T', ' ')}</span>
+                <span class="proposal-date">${p.timestamp.slice(0,16).replace('T',' ')}</span>
                 <span class="proposal-badge badge-${p.status}">${statusLabel(p.status)}</span>
                 <span>${p.reflections_used} Reflexionen · ${p.diary_entries_used} Diary-Einträge</span>
                 ${p.status_changed_at ? `<span>· ${p.status_changed_at.slice(0,10)}</span>` : ''}
@@ -141,21 +184,106 @@ async function loadProposals() {
 }
 
 function statusLabel(s) {
-    return { open: 'Offen', adopted: 'Übernommen', rejected: 'Verworfen' }[s] || s;
-}
-
-function escHtml(t) {
-    return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    return {open:'Offen', adopted:'Übernommen', rejected:'Verworfen'}[s] || s;
 }
 
 async function updateStatus(id, status) {
     await fetch(`/api/soul/proposals/${id}/status`, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({status})
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({status})
     });
     loadProposals();
 }
+
+// ===================== Editor =====================
+let _sections = [];
+let _sectionsLoaded = false;
+
+async function loadEditor() {
+    const res = await fetch('/api/soul/md');
+    const data = await res.json();
+    _sections = data.sections || [];
+    _sectionsLoaded = true;
+    renderSections();
+}
+
+function renderSections() {
+    const list = document.getElementById('sections-list');
+    list.innerHTML = _sections.map((s, i) => `
+        <div class="section-block" id="sec-${i}">
+            <div class="section-header">
+                <span style="font-size:10px;color:var(--text-dim);min-width:20px">#${i+1}</span>
+                <input class="section-title-input"
+                    value="${escAttr(s.title === '__preamble__' ? 'Preamble (kein Heading)' : s.title)}"
+                    ${s.title === '__preamble__' ? 'readonly' : ''}
+                    onchange="updateTitle(${i}, this.value)"
+                    placeholder="Sektions-Titel...">
+                ${s.title !== '__preamble__' ? `<button class="section-delete-btn" onclick="deleteSection(${i})" title="Sektion löschen">✕</button>` : ''}
+            </div>
+            <textarea class="section-content-input"
+                rows="${Math.max(4, (s.content.match(/\n/g)||[]).length + 3)}"
+                onchange="updateContent(${i}, this.value)"
+                oninput="this.style.height='auto';this.style.height=this.scrollHeight+'px'"
+            >${escHtml(s.content)}</textarea>
+        </div>
+    `).join('');
+}
+
+function updateTitle(i, val) { _sections[i].title = val; }
+function updateContent(i, val) { _sections[i].content = val; }
+
+function deleteSection(i) {
+    if (!confirm(`Sektion "${_sections[i].title}" wirklich löschen?`)) return;
+    _sections.splice(i, 1);
+    renderSections();
+}
+
+function addSection() {
+    _sections.push({ index: _sections.length, title: 'Neue Sektion', content: '' });
+    renderSections();
+    // Zum neuen Block scrollen
+    setTimeout(() => {
+        const blocks = document.querySelectorAll('.section-block');
+        if (blocks.length) blocks[blocks.length-1].scrollIntoView({behavior:'smooth', block:'center'});
+        const inputs = blocks[blocks.length-1].querySelectorAll('input');
+        if (inputs.length) { inputs[0].select(); }
+    }, 100);
+}
+
+async function saveSoul() {
+    const btn = document.getElementById('save-btn');
+    const status = document.getElementById('save-status');
+    btn.disabled = true;
+    btn.textContent = 'Speichert...';
+
+    // Aktuelle Werte aus Textareas einlesen
+    _sections.forEach((s, i) => {
+        const ta = document.querySelector(`#sec-${i} textarea`);
+        if (ta) s.content = ta.value;
+        const inp = document.querySelector(`#sec-${i} .section-title-input`);
+        if (inp && s.title !== '__preamble__') s.title = inp.value;
+    });
+
+    const res = await fetch('/api/soul/md', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({sections: _sections})
+    });
+    const data = await res.json();
+    btn.disabled = false;
+    btn.textContent = 'Speichern';
+    if (data.ok) {
+        status.style.color = 'var(--green,#10b981)';
+        status.textContent = `✓ Gespeichert · ${data.chars} Zeichen · Backup angelegt`;
+        setTimeout(() => status.textContent = '', 4000);
+    } else {
+        status.style.color = 'var(--red,#ef4444)';
+        status.textContent = '✗ Fehler: ' + (data.error || 'unbekannt');
+    }
+}
+
+function escHtml(t) { return String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function escAttr(t) { return String(t).replace(/"/g,'&quot;'); }
 
 loadProposals();
 </script>

@@ -159,6 +159,17 @@ def webhook():
     # Kimi-Antwort + Fast-Track laufen asynchron im dedizierten Chat-Pool.
     # PDF-Dokument verarbeiten — Download SOFORT im Webhook (WAHA loescht Files schnell)
     if is_media_message(text):
+        # Tool-Status prüfen
+        try:
+            import json as _json
+            _tools_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "tools_config.json")
+            with open(_tools_path) as _tf:
+                _tools = {t["id"]: t for t in _json.load(_tf)}
+            if not _tools.get("pdf", {}).get("enabled", True):
+                send_message(phone_number, "PDF-Analyse ist gerade deaktiviert.\n\n[kimi]")
+                return jsonify({"status": "tool_disabled"}), 200
+        except (FileNotFoundError, Exception):
+            pass  # Kein Config = Standard = aktiv
         from config import WAHA_API_KEY as _waha_key
         lines = text.strip().split("\n", 1)
         parsed = parse_media_sentinel(lines[0].strip())

@@ -210,7 +210,10 @@ function renderTable(events) {
             '<td class="mono">' + escHtml(ev.timestamp_short) + '</td>' +
             '<td class="mono" style="color:var(--text-dim)">' + escHtml(ev.run_id) + '</td>' +
             '<td style="color:var(--text-secondary)">' + (ev.block_index + 1) + '</td>' +
-            '<td style="color:var(--text-secondary)">' + ev.turns_count + ' / ' + ev.block_size + '</td>' +
+            '<td style="color:var(--text-secondary)">' + ev.turns_count + ' Turns</td>' +
+            '<td style="font-size:11px;color:var(--text-dim)">' +
+                (ev.funnel ? ev.funnel.turns + '→' + ev.funnel.candidates_extracted + '→' + ev.funnel.actions : '—') +
+            '</td>' +
             '<td style="color:var(--text-primary);font-weight:600">' + ev.actions_count + '</td>' +
             '<td>' + summaryHtml + '</td>' +
             '<td>' + (flags.join(' ') || '—') + '</td>' +
@@ -262,6 +265,36 @@ async function showDetail(eventId) {
                 (!ev.retry_triggered && !ev.null_result && !ev.dropped_count && !ev.error ? '<span style="color:var(--text-dim)">—</span>' : '') +
             '</div></div>' +
         '</div>' +
+        // Funnel-Block
+        (ev.funnel ? '<div style="border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:16px;background:var(--surface-2,#1a1a2e)">' +
+            '<div style="font-size:11px;text-transform:uppercase;letter-spacing:0.1em;color:var(--text-dim);margin-bottom:10px">Funnel</div>' +
+            '<div style="display:flex;align-items:center;gap:8px;font-size:13px">' +
+                '<span>' + ev.funnel.turns + ' Turns</span>' +
+                '<span style="color:var(--text-dim)">→</span>' +
+                '<span>' + ev.funnel.candidates_extracted + ' Kandidaten</span>' +
+                '<span style="color:var(--text-dim)">→</span>' +
+                (ev.funnel.dropped > 0 ? '<span style="color:var(--red,#ef4444)">-' + ev.funnel.dropped + ' dropped</span><span style="color:var(--text-dim)">→</span>' : '') +
+                '<span style="color:var(--accent,#6366f1);font-weight:600">' + ev.funnel.actions + ' Aktionen</span>' +
+            '</div>' +
+        '</div>' : '') +
+
+        // No-Op Erklärung
+        (ev.noop_reason ? '<div style="border:1px solid var(--amber,#f59e0b);border-radius:8px;padding:10px 14px;margin-bottom:16px;background:rgba(245,158,11,0.07);font-size:13px">' +
+            '<span style="color:var(--amber,#f59e0b);font-weight:600">No-Op: </span>' +
+            '<span style="color:var(--text-secondary)">' + escHtml(ev.noop_reason) + '</span>' +
+        '</div>' : '') +
+
+        // Netto-Effekt
+        (ev.net_effect && (ev.net_effect.new + ev.net_effect.superseded + ev.net_effect.archived) > 0 ?
+            '<div style="border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:16px">' +
+                '<div style="font-size:11px;text-transform:uppercase;letter-spacing:0.1em;color:var(--text-dim);margin-bottom:8px">Netto-Effekt</div>' +
+                '<div style="display:flex;gap:12px;font-size:13px">' +
+                    (ev.net_effect.new > 0 ? '<span style="color:var(--green,#10b981)">+' + ev.net_effect.new + ' neu</span>' : '') +
+                    (ev.net_effect.superseded > 0 ? '<span style="color:var(--blue,#3b82f6)">~' + ev.net_effect.superseded + ' ersetzt</span>' : '') +
+                    (ev.net_effect.archived > 0 ? '<span style="color:var(--text-dim)">↓' + ev.net_effect.archived + ' archiviert</span>' : '') +
+                '</div>' +
+            '</div>' : '') +
+
         '<div class="card-title" style="margin-bottom:12px">Ausgeführte Aktionen (' + ev.actions_count + ')</div>' +
         actionsHtml;
 

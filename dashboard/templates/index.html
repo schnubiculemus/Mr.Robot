@@ -3,8 +3,8 @@
 
 {% block content %}
 <div class="page-header">
-    <h1>Übersicht</h1>
-    <p>Gedächtnis-Status auf einen Blick</p>
+    <h1>Overview</h1>
+    <p>Memory status at a glance</p>
 </div>
 
 <div class="stats-grid" id="stats-grid">
@@ -48,14 +48,16 @@
 <script>
 async function loadStats() {
     try {
-        const [res, ftRes, consRes] = await Promise.all([
+        const [res, ftRes, consRes, tokRes] = await Promise.all([
             fetch('/api/stats'),
             fetch('/api/fasttrack/stats'),
             fetch('/api/consolidator/stats'),
+            fetch('/api/tokens'),
         ]);
         const data = await res.json();
         const ft = ftRes.ok ? await ftRes.json() : null;
         const cons = consRes.ok ? await consRes.json() : null;
+        const tok = tokRes.ok ? await tokRes.json() : null;
 
         const ftRate = ft && ft.total > 0 ? Math.round((ft.stored / ft.total) * 100) : null;
         const ftCard = ft
@@ -71,6 +73,19 @@ async function loadStats() {
                 <div class="stat-card-label">Konsolidierer heute</div>
                 <div class="stat-card-value" style="color:var(--blue)">${cons.today_runs}</div>
                 <div class="stat-card-sub">${cons.null_runs} No-Op · ${cons.retry_runs} Retries</div>
+               </div>`
+            : '';
+
+        const tokCard = tok
+            ? `<div class="stat-card">
+                <div class="stat-card-label">Token heute</div>
+                <div class="stat-card-value" style="color:var(--purple, #a78bfa)">${tok.today.total.toLocaleString()}</div>
+                <div class="stat-card-sub">${tok.today.calls} Calls · ${tok.today_vs_yesterday !== null ? (tok.today_vs_yesterday > 0 ? '+' : '') + tok.today_vs_yesterday + '% vs gestern' : '—'}</div>
+               </div>
+               <div class="stat-card">
+                <div class="stat-card-label">Token diese Woche</div>
+                <div class="stat-card-value" style="color:var(--purple, #a78bfa)">${tok.week_total.toLocaleString()}</div>
+                <div class="stat-card-sub">${tok.week_vs_last_week !== null ? (tok.week_vs_last_week > 0 ? '+' : '') + tok.week_vs_last_week + '% vs Vorwoche' : '—'}</div>
                </div>`
             : '';
 
@@ -92,6 +107,7 @@ async function loadStats() {
             </div>
             ${ftCard}
             ${consCard}
+            ${tokCard}
             ${data.heartbeat_last_run ? `<div class="stat-card">
                 <div class="stat-card-label">Letzter Heartbeat</div>
                 <div class="stat-card-value" style="font-size:15px;color:${data.heartbeat_age_min > 240 ? 'var(--amber)' : 'var(--text-primary)'}">${data.heartbeat_last_run}</div>
@@ -158,6 +174,19 @@ async function loadStats() {
         document.getElementById('epistemic-distribution').innerHTML = epHtml;
 
     } catch (e) {
+        const tokCard = tok
+            ? `<div class="stat-card">
+                <div class="stat-card-label">Token heute</div>
+                <div class="stat-card-value" style="color:var(--purple, #a78bfa)">${tok.today.total.toLocaleString()}</div>
+                <div class="stat-card-sub">${tok.today.calls} Calls · ${tok.today_vs_yesterday !== null ? (tok.today_vs_yesterday > 0 ? '+' : '') + tok.today_vs_yesterday + '% vs gestern' : '—'}</div>
+               </div>
+               <div class="stat-card">
+                <div class="stat-card-label">Token diese Woche</div>
+                <div class="stat-card-value" style="color:var(--purple, #a78bfa)">${tok.week_total.toLocaleString()}</div>
+                <div class="stat-card-sub">${tok.week_vs_last_week !== null ? (tok.week_vs_last_week > 0 ? '+' : '') + tok.week_vs_last_week + '% vs Vorwoche' : '—'}</div>
+               </div>`
+            : '';
+
         document.getElementById('stats-grid').innerHTML = `<div class="loading">Fehler: ${e.message}</div>`;
     }
 }

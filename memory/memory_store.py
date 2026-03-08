@@ -297,10 +297,30 @@ def query_active(query_text, n_results=30, where_filter=None):
     if results["ids"] and results["ids"][0]:
         for i in range(len(results["ids"][0])):
             chunk = _result_to_chunk_from_query(results, i)
-            # Cosine distance -> similarity (ChromaDB gibt distance, nicht similarity)
             chunk["_semantic_distance"] = results["distances"][0][i]
             chunk["_semantic_similarity"] = 1.0 - results["distances"][0][i]
             chunks.append(chunk)
+
+    # retrieved_count + last_retrieved_at aktualisieren (fire-and-forget)
+    if chunks:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        try:
+            collection = get_active_collection()
+            for chunk in chunks:
+                old_meta = dict(chunk)
+                new_count = int(old_meta.get("retrieved_count", 0)) + 1
+                collection.update(
+                    ids=[chunk["id"]],
+                    metadatas=[{
+                        **{k: v for k, v in old_meta.items() if not k.startswith("_")},
+                        "retrieved_count": new_count,
+                        "last_retrieved_at": now_iso,
+                    }],
+                )
+                chunk["retrieved_count"] = new_count
+                chunk["last_retrieved_at"] = now_iso
+        except Exception as e:
+            logger.debug(f"retrieved_count Update fehlgeschlagen: {e}")
 
     return chunks
 

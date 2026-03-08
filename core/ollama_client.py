@@ -153,8 +153,8 @@ def build_system_prompt(context_name=None, user_id=None, user_message=None, doc_
     if global_rules:
         global_rule_ids = {c["id"] for c in global_rules}
 
-    # 5. Memory-Chunks (kontextabhängig) — ohne bereits geladene globale Regeln
-    if user_message:
+    # 5. Memory-Chunks (kontextabhängig) — bei Dokument-Kontext weglassen (spart Platz fuer doc_context)
+    if user_message and not doc_context:
         try:
             chunks = score_and_select(user_message)
             # Deduplizierung: Chunks die schon als globale Regeln geladen sind, rausfiltern
@@ -180,6 +180,32 @@ def build_system_prompt(context_name=None, user_id=None, user_message=None, doc_
         )
 
     return "\n\n---\n\n".join(parts)
+
+
+def _track_tokens(prompt_tokens, completion_tokens):
+    import json
+    from datetime import datetime, timezone
+    data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
+    os.makedirs(data_dir, exist_ok=True)
+    path = os.path.join(data_dir, "token_usage.json")
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    try:
+        with open(path, "r") as f:
+            usage = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        usage = {}
+    if today not in usage:
+        usage[today] = {"prompt": 0, "completion": 0, "total": 0, "calls": 0}
+    usage[today]["prompt"] += prompt_tokens
+    usage[today]["completion"] += completion_tokens
+    usage[today]["total"] += prompt_tokens + completion_tokens
+    usage[today]["calls"] += 1
+    keys = sorted(usage.keys())
+    if len(keys) > 90:
+        for k in keys[:-90]:
+            del usage[k]
+    with open(path, "w") as f:
+        json.dump(usage, f, indent=2)
 
 
 def chat(user_id, message, chat_history, context_name=None, doc_context=None):
@@ -208,5 +234,14 @@ def chat(user_id, message, chat_history, context_name=None, doc_context=None):
 
     if not result:
         return "Sorry, Kimi ist gerade nicht erreichbar. Versuch's gleich nochmal!"
+
+    # Token-Tracking
+    try:
+        _track_tokens(
+            prompt_tokens=result.get("prompt_eval_count", 0),
+            completion_tokens=result.get("eval_count", 0),
+        )
+    except Exception:
+        pass
 
     return result.get("message", {}).get("content", "Hmm, da kam keine Antwort zurueck.")

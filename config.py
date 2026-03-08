@@ -11,10 +11,15 @@ OLLAMA_EXTRACTION_MODEL = os.getenv("OLLAMA_EXTRACTION_MODEL", "ministral-3:8b")
 
 # WAHA
 WAHA_API_KEY = os.getenv("WAHA_API_KEY", "")
-WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")  # Optional: Auth für eingehende Webhooks
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
+if not WEBHOOK_SECRET:
+    import logging as _l
+    _l.getLogger(__name__).warning(
+        "WEBHOOK_SECRET ist nicht gesetzt — eingehende Webhooks werden nicht verifiziert."
+    )
 
 # Bot-Name (zentral)
-BOT_NAME = os.getenv("BOT_NAME", "Mr.Robot")
+BOT_NAME = os.getenv("BOT_NAME", "SchnuBot")
 
 # Datenbank
 DB_PATH = os.getenv("DB_PATH", "bot.db")
@@ -32,5 +37,22 @@ USER_CONTEXTS = {
 OWNER_ID = "221152228159675@lid"
 
 # Dashboard Auth
-# Token selbst setzen: python3 -c "import secrets; print(secrets.token_hex(32))"
-DASHBOARD_TOKEN = os.getenv("DASHBOARD_TOKEN", "97af1c5b59637b0372b9bee663720bb3a0c715749e09c6c9320f970e217fa0e9")
+# Token MUSS in .env gesetzt sein: DASHBOARD_TOKEN=<secrets.token_hex(32)>
+# Generieren: python3 -c "import secrets; print(secrets.token_hex(32))"
+_dashboard_token_raw = os.getenv("DASHBOARD_TOKEN", "")
+if not _dashboard_token_raw:
+    raise RuntimeError(
+        "DASHBOARD_TOKEN ist nicht gesetzt. Bitte in .env eintragen:\n"
+        "  python3 -c 'import secrets; print(secrets.token_hex(32))'"
+    )
+DASHBOARD_TOKEN = _dashboard_token_raw
+
+# Flask Secret Key (separat vom Dashboard-Token)
+# Generieren: python3 -c "import secrets; print(secrets.token_hex(32))"
+_flask_secret_raw = os.getenv("FLASK_SECRET_KEY", "")
+if not _flask_secret_raw:
+    raise RuntimeError(
+        "FLASK_SECRET_KEY ist nicht gesetzt. Bitte in .env eintragen:\n"
+        "  python3 -c 'import secrets; print(secrets.token_hex(32))'"
+    )
+FLASK_SECRET_KEY = _flask_secret_raw

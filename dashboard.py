@@ -32,7 +32,7 @@ from memory.memory_store import (
 from memory.memory_config import CHUNK_TYPES
 from core.datetime_utils import now_utc, now_berlin, safe_parse_dt
 from core.database import get_fast_track_events, get_fast_track_stats, get_consolidator_events, get_consolidator_stats, get_soul_proposals, update_soul_proposal_status
-from config import DASHBOARD_TOKEN
+from config import DASHBOARD_TOKEN, FLASK_SECRET_KEY
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [DASHBOARD] %(message)s")
 logger = logging.getLogger(__name__)
@@ -42,7 +42,7 @@ app = Flask(
     template_folder=os.path.join(PROJECT_DIR, "dashboard", "templates"),
     static_folder=os.path.join(PROJECT_DIR, "dashboard", "static"),
 )
-app.secret_key = DASHBOARD_TOKEN or "dev-secret-change-me"
+app.secret_key = FLASK_SECRET_KEY
 
 COOKIE_NAME = "dashboard_session"
 COOKIE_DAYS = 30
@@ -102,6 +102,8 @@ def _chunk_from_collection(collection, include_embeddings=False):
             "supersedes": meta.get("supersedes", ""),
             "last_confirmed_at": meta.get("last_confirmed_at", ""),
             "last_decay_at": meta.get("last_decay_at", ""),
+            "retrieved_count": int(meta.get("retrieved_count", 0)),
+            "last_retrieved_at": meta.get("last_retrieved_at", ""),
         }
         chunks.append(chunk)
 
@@ -109,10 +111,12 @@ def _chunk_from_collection(collection, include_embeddings=False):
 
 
 def _parse_tags(tags_str):
-    """Parst Tags-String zu Liste."""
+    """Parst Tags-String oder Liste zu Liste."""
     if not tags_str:
         return []
-    return [t.strip() for t in tags_str.split(",") if t.strip()]
+    if isinstance(tags_str, list):
+        return [t.strip() for t in tags_str if str(t).strip()]
+    return [t.strip() for t in str(tags_str).split(",") if t.strip()]
 
 
 def _age_str(iso_str):
@@ -274,6 +278,121 @@ def api_stats():
             "disk_total_gb": round(p.disk_usage('/').total / 1024**3, 1),
             "disk_percent": p.disk_usage('/').percent,
         })(),
+    })
+
+
+# =============================================================================
+# Tools
+# =============================================================================
+
+TOOLS_CONFIG_PATH = os.path.join(PROJECT_DIR, "data", "tools_config.json")
+
+DEFAULT_TOOLS = [
+    {"id": "pdf",        "name": "PDF-Analyse",      "icon": "📄", "description": "PDFs per WhatsApp hochladen und durchsuchen", "enabled": True,  "available": True},
+    {"id": "websearch",  "name": "Web Search",        "icon": "🌐", "description": "Aktuelle Informationen aus dem Web abrufen",  "enabled": False, "available": False},
+    {"id": "calendar",   "name": "Kalender",          "icon": "📅", "description": "Termine lesen und erstellen",                "enabled": False, "available": False},
+    {"id": "email",      "name": "E-Mail",            "icon": "✉️",  "description": "E-Mails lesen und senden",                  "enabled": False, "available": False},
+    {"id": "voice",      "name": "Sprachnachrichten", "icon": "🎙️", "description": "Sprachnachrichten transkribieren (Whisper)", "enabled": False, "available": False},
+    {"id": "tasks",      "name": "Aufgaben",          "icon": "✅", "description": "Aufgaben erstellen und verwalten",           "enabled": False, "available": False},
+    {"id": "images",     "name": "Bildanalyse",       "icon": "🖼️", "description": "Bilder beschreiben und analysieren",        "enabled": False, "available": False},
+    {"id": "contacts",   "name": "Kontakte",          "icon": "👤", "description": "WhatsApp-Kontakte als Kontext nutzen",      "enabled": False, "available": False},
+]
+
+def load_tools_config():
+    try:
+        with open(TOOLS_CONFIG_PATH, "r") as f:
+            saved = {t["id"]: t for t in json.load(f)}
+        tools = []
+        for t in DEFAULT_TOOLS:
+            merged = dict(t)
+            if t["id"] in saved:
+                merged["enabled"] = saved[t["id"]].get("enabled", t["enabled"])
+            tools.append(merged)
+        return tools
+    except (FileNotFoundError, json.JSONDecodeError):
+        return DEFAULT_TOOLS
+
+def save_tools_config(tools):
+    os.makedirs(os.path.dirname(TOOLS_CONFIG_PATH), exist_ok=True)
+    with open(TOOLS_CONFIG_PATH, "w") as f:
+        json.dump(tools, f, indent=2)
+
+
+@app.route("/tools")
+@require_auth
+def tools_page():
+    return render_template("tools.html")
+
+
+@app.route("/api/tools")
+@require_auth
+def api_tools_get():
+    return jsonify(load_tools_config())
+
+
+@app.route("/api/tools/<tool_id>", methods=["PATCH"])
+@require_auth
+def api_tools_patch(tool_id):
+    data = request.get_json()
+    tools = load_tools_config()
+    for t in tools:
+        if t["id"] == tool_id:
+            if not t["available"] and data.get("enabled"):
+                return jsonify({"error": "Tool noch nicht verfügbar"}), 400
+            t["enabled"] = bool(data.get("enabled", t["enabled"]))
+            break
+    else:
+        return jsonify({"error": "Tool nicht gefunden"}), 404
+    save_tools_config(tools)
+    return jsonify({"ok": True})
+
+
+# =============================================================================
+# API: Token-Tracking
+# =============================================================================
+
+@app.route("/api/tokens")
+@require_auth
+def api_tokens():
+    import json
+    from datetime import datetime, timezone, timedelta
+    path = os.path.join(PROJECT_DIR, "data", "token_usage.json")
+    try:
+        with open(path, "r") as f:
+            usage = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        usage = {}
+
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
+
+    # Letzte 7 Tage
+    week_days = [(datetime.now(timezone.utc) - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)]
+    last_week_days = [(datetime.now(timezone.utc) - timedelta(days=i+7)).strftime("%Y-%m-%d") for i in range(7)]
+
+    today_data = usage.get(today, {"prompt": 0, "completion": 0, "total": 0, "calls": 0})
+    yesterday_data = usage.get(yesterday, {"prompt": 0, "completion": 0, "total": 0, "calls": 0})
+
+    week_total = sum(usage.get(d, {}).get("total", 0) for d in week_days)
+    last_week_total = sum(usage.get(d, {}).get("total", 0) for d in last_week_days)
+
+    def pct_change(current, previous):
+        if previous == 0:
+            return None
+        return round((current - previous) / previous * 100, 1)
+
+    # Letzte 14 Tage fuer Chart
+    chart_days = sorted([(datetime.now(timezone.utc) - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(13, -1, -1)])
+    chart_data = [{"date": d, "total": usage.get(d, {}).get("total", 0), "calls": usage.get(d, {}).get("calls", 0)} for d in chart_days]
+
+    return jsonify({
+        "today": today_data,
+        "yesterday": yesterday_data,
+        "today_vs_yesterday": pct_change(today_data["total"], yesterday_data["total"]),
+        "week_total": week_total,
+        "last_week_total": last_week_total,
+        "week_vs_last_week": pct_change(week_total, last_week_total),
+        "chart": chart_data,
     })
 
 
@@ -512,11 +631,47 @@ def api_retrieval_simulate():
         s["selected"] = s["id"] in selected_ids
         s["rejection_reason"] = rejection_reasons.get(s["id"], None)
 
+    # Prompt-Vorschau bauen
+    from memory.prompt_builder import build_memory_prompt
+    prompt_block = build_memory_prompt(selected_chunks) or ""
+    prompt_chars = len(prompt_block)
+    prompt_tokens_est = round(prompt_chars / 4)  # ~4 Zeichen pro Token
+
+    # Chunk-Reihenfolge im finalen Prompt (nach Typ-Reihenfolge)
+    from memory.memory_config import PROMPT_TYPE_ORDER
+    def sort_key(c):
+        try:
+            return PROMPT_TYPE_ORDER.index(c.get("chunk_type", "hard_fact"))
+        except ValueError:
+            return 99
+    prompt_order = sorted(selected_chunks, key=sort_key)
+    prompt_order_ids = [c["id"] for c in prompt_order]
+
+    # Typen-Mix im finalen Prompt
+    type_mix = {}
+    for c in selected_chunks:
+        t = c.get("chunk_type", "?")
+        type_mix[t] = type_mix.get(t, 0) + 1
+
+    # Verdrängte Top-Kandidaten: guter Score aber rausgeflogen
+    displaced = [
+        s for s in scored
+        if not s["selected"]
+        and s["retrieval_score"] >= 0.65
+    ]
+    displaced.sort(key=lambda x: x["retrieval_score"], reverse=True)
+
     return jsonify({
         "query": query,
         "candidates_count": len(scored),
         "selected_count": len(selected_chunks),
         "candidates": scored,
+        "prompt_preview": prompt_block,
+        "prompt_chars": prompt_chars,
+        "prompt_tokens_est": prompt_tokens_est,
+        "prompt_order": prompt_order_ids,
+        "type_mix": type_mix,
+        "displaced_top": displaced[:5],
     })
 
 
@@ -631,6 +786,7 @@ def api_consolidator_events():
                 ev["actions"] = json.loads(ev.get("actions_json") or "[]")
             except Exception:
                 ev["actions"] = []
+
             # Zusammenfassung
             summary = {}
             for a in ev["actions"]:
@@ -638,6 +794,47 @@ def api_consolidator_events():
                 summary[k] = summary.get(k, 0) + 1
             ev["actions_summary"] = summary
             ev["actions_count"] = len(ev["actions"])
+
+            # Funnel-Daten
+            turns = ev.get("turns_count", 0)
+            # Kandidaten = block_size (Turns die an LLM gingen) minus dropped
+            candidates_extracted = ev.get("block_size", 0)
+            dropped = ev.get("dropped_count", 0)
+            actions_count = len(ev["actions"])
+            ev["funnel"] = {
+                "turns": turns,
+                "candidates_extracted": candidates_extracted,
+                "dropped": dropped,
+                "actions": actions_count,
+            }
+
+            # Netto-Effekt
+            net = {"new": 0, "superseded": 0, "archived": 0}
+            for a in ev["actions"]:
+                action = a.get("action", "")
+                if action == "store_new":
+                    net["new"] += 1
+                elif action == "supersede":
+                    net["superseded"] += 1
+                elif action == "archive":
+                    net["archived"] += 1
+            ev["net_effect"] = net
+
+            # No-Op Erklärung
+            if ev.get("null_result"):
+                if ev.get("error"):
+                    ev["noop_reason"] = "LLM-Fehler: " + ev["error"][:80]
+                elif turns == 0:
+                    ev["noop_reason"] = "Block war leer"
+                elif candidates_extracted == 0:
+                    ev["noop_reason"] = "Keine Kandidaten extrahiert"
+                elif actions_count == 0:
+                    ev["noop_reason"] = "LLM hat keine Aktionen erzeugt"
+                else:
+                    ev["noop_reason"] = "Alle Aktionen verworfen"
+            else:
+                ev["noop_reason"] = None
+
         return jsonify({"events": events, "total": len(events)})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -685,6 +882,95 @@ def api_consolidator_diff(chunk_id):
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+# =============================================================================
+# API: Soul Editor
+# =============================================================================
+
+SOUL_MD_PATH = os.path.join(PROJECT_DIR, "soul.md")
+
+
+def _parse_soul_sections(text):
+    """Zerlegt soul.md in Sektionen. Gibt Liste von {title, content, index} zurück."""
+    lines = text.split("\n")
+    sections = []
+    current_title = "__preamble__"
+    current_lines = []
+    idx = 0
+
+    for line in lines:
+        if line.startswith("## "):
+            if current_lines or current_title == "__preamble__":
+                sections.append({
+                    "index": idx,
+                    "title": current_title,
+                    "content": "\n".join(current_lines).strip(),
+                })
+                idx += 1
+            current_title = line[3:].strip()
+            current_lines = []
+        else:
+            current_lines.append(line)
+
+    # Letzte Sektion
+    if current_lines or current_title != "__preamble__":
+        sections.append({
+            "index": idx,
+            "title": current_title,
+            "content": "\n".join(current_lines).strip(),
+        })
+
+    return sections
+
+
+def _rebuild_soul_md(sections):
+    """Baut soul.md aus Sektionen-Liste wieder zusammen."""
+    parts = []
+    for s in sections:
+        if s["title"] == "__preamble__":
+            parts.append(s["content"])
+        else:
+            parts.append(f"## {s['title']}\n\n{s['content']}")
+    return "\n\n---\n\n".join(parts) + "\n"
+
+
+@app.route("/api/soul/md")
+@require_auth
+def api_soul_md_get():
+    """Gibt soul.md als Sektionen zurück."""
+    try:
+        with open(SOUL_MD_PATH, "r") as f:
+            text = f.read()
+        sections = _parse_soul_sections(text)
+        return jsonify({"sections": sections, "raw": text})
+    except FileNotFoundError:
+        return jsonify({"error": "soul.md nicht gefunden"}), 404
+
+
+@app.route("/api/soul/md", methods=["POST"])
+@require_auth
+def api_soul_md_save():
+    """Speichert soul.md — entweder als Rohtext oder als Sektionen-Liste."""
+    data = request.get_json()
+
+    # Backup anlegen
+    import shutil
+    backup_path = SOUL_MD_PATH + ".bak"
+    if os.path.exists(SOUL_MD_PATH):
+        shutil.copy2(SOUL_MD_PATH, backup_path)
+
+    if "raw" in data:
+        new_text = data["raw"]
+    elif "sections" in data:
+        new_text = _rebuild_soul_md(data["sections"])
+    else:
+        return jsonify({"error": "raw oder sections erforderlich"}), 400
+
+    with open(SOUL_MD_PATH, "w") as f:
+        f.write(new_text)
+
+    return jsonify({"ok": True, "chars": len(new_text)})
 
 
 # =============================================================================

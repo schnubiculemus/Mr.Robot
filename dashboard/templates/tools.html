@@ -1,0 +1,164 @@
+{% extends "base.html" %}
+{% block title %}Tools{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Tools</h1>
+    <p>Funktionen aktivieren und deaktivieren</p>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <div>
+            <div class="card-title">Verfügbare Tools</div>
+            <div class="card-subtitle">Aktive Tools stehen Kimi in WhatsApp zur Verfügung</div>
+        </div>
+    </div>
+    <div id="tools-list" style="display:flex;flex-direction:column;gap:0;">
+        <div class="loading">Lade Tools...</div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<style>
+.tool-row {
+    display: flex;
+    align-items: center;
+    padding: 16px 0;
+    border-bottom: 1px solid var(--border);
+    gap: 16px;
+}
+.tool-row:last-child {
+    border-bottom: none;
+}
+.tool-icon {
+    font-size: 24px;
+    width: 36px;
+    text-align: center;
+    flex-shrink: 0;
+}
+.tool-info {
+    flex: 1;
+}
+.tool-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.tool-desc {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-top: 3px;
+}
+.tool-badge {
+    font-size: 10px;
+    padding: 2px 7px;
+    border-radius: 10px;
+    font-weight: 500;
+    letter-spacing: 0.05em;
+}
+.badge-soon {
+    background: var(--surface-2, #2a2a3a);
+    color: var(--text-dim);
+}
+.badge-active {
+    background: rgba(16, 185, 129, 0.15);
+    color: var(--green, #10b981);
+}
+
+/* Toggle Switch */
+.toggle {
+    position: relative;
+    width: 44px;
+    height: 24px;
+    flex-shrink: 0;
+}
+.toggle input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+.toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    inset: 0;
+    background: var(--surface-2, #2a2a3a);
+    border-radius: 24px;
+    transition: 0.2s;
+    border: 1px solid var(--border);
+}
+.toggle-slider:before {
+    content: "";
+    position: absolute;
+    height: 16px;
+    width: 16px;
+    left: 3px;
+    bottom: 3px;
+    background: var(--text-dim);
+    border-radius: 50%;
+    transition: 0.2s;
+}
+.toggle input:checked + .toggle-slider {
+    background: var(--accent, #6366f1);
+    border-color: var(--accent, #6366f1);
+}
+.toggle input:checked + .toggle-slider:before {
+    transform: translateX(20px);
+    background: white;
+}
+.toggle input:disabled + .toggle-slider {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+</style>
+
+<script>
+async function loadTools() {
+    const res = await fetch('/api/tools');
+    const tools = await res.json();
+
+    document.getElementById('tools-list').innerHTML = tools.map(t => `
+        <div class="tool-row" id="row-${t.id}">
+            <div class="tool-icon">${t.icon}</div>
+            <div class="tool-info">
+                <div class="tool-name">
+                    ${t.name}
+                    ${!t.available ? '<span class="tool-badge badge-soon">Bald verfügbar</span>' : t.enabled ? '<span class="tool-badge badge-active">Aktiv</span>' : ''}
+                </div>
+                <div class="tool-desc">${t.description}</div>
+            </div>
+            <label class="toggle">
+                <input type="checkbox"
+                    id="toggle-${t.id}"
+                    ${t.enabled ? 'checked' : ''}
+                    ${!t.available ? 'disabled' : ''}
+                    onchange="toggleTool('${t.id}', this.checked)">
+                <span class="toggle-slider"></span>
+            </label>
+        </div>
+    `).join('');
+}
+
+async function toggleTool(id, enabled) {
+    const res = await fetch(`/api/tools/${id}`, {
+        method: 'PATCH',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({enabled})
+    });
+    if (!res.ok) {
+        const err = await res.json();
+        alert(err.error || 'Fehler');
+        document.getElementById(`toggle-${id}`).checked = !enabled;
+        return;
+    }
+    // Badge aktualisieren
+    loadTools();
+}
+
+loadTools();
+</script>
+{% endblock %}

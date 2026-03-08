@@ -214,8 +214,43 @@ async function showDetail(chunkId) {
         if (c.last_decay_at) extraRows += detailRow('Letzter Decay', c.last_decay_at);
         if (c.supersedes) extraRows += detailRow('Ersetzt', '<span style="font-size:11px">' + c.supersedes + '</span>');
 
+        // Lebenslauf / Zustand berechnen
+        const retrievedCount = c.retrieved_count || 0;
+        const lastRetrieved = c.last_retrieved_at ? c.last_retrieved_at.substring(0,19).replace('T',' ') : null;
+        const ageMs = c.created_at ? (Date.now() - new Date(c.created_at)) : null;
+        const ageDays = ageMs ? Math.floor(ageMs / 86400000) : null;
+        const lastRetMs = c.last_retrieved_at ? (Date.now() - new Date(c.last_retrieved_at)) : null;
+        const lastRetDays = lastRetMs ? Math.floor(lastRetMs / 86400000) : null;
+
+        let vitality, vitalityColor;
+        if (retrievedCount === 0) {
+            vitality = 'ungenutzt'; vitalityColor = 'var(--text-dim)';
+        } else if (lastRetDays !== null && lastRetDays <= 2) {
+            vitality = '🔥 hot'; vitalityColor = 'var(--accent,#6366f1)';
+        } else if (lastRetDays !== null && lastRetDays <= 7) {
+            vitality = '🌤 aging'; vitalityColor = 'var(--amber,#f59e0b)';
+        } else {
+            vitality = '🌫 stale'; vitalityColor = 'var(--text-dim)';
+        }
+
+        const lebenslaufBlock =
+            '<div style="border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:16px;background:var(--surface-2,#1a1a2e)">' +
+                '<div style="font-size:11px;text-transform:uppercase;letter-spacing:0.1em;color:var(--text-dim);margin-bottom:10px">Lebenslauf</div>' +
+                '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">' +
+                    '<div><div style="font-size:10px;color:var(--text-dim)">Zustand</div>' +
+                        '<div style="font-size:13px;font-weight:600;color:' + vitalityColor + '">' + vitality + '</div></div>' +
+                    '<div><div style="font-size:10px;color:var(--text-dim)">Retrievals</div>' +
+                        '<div style="font-size:13px;font-weight:600">' + retrievedCount + '</div></div>' +
+                    '<div><div style="font-size:10px;color:var(--text-dim)">Alter</div>' +
+                        '<div style="font-size:13px">' + (ageDays !== null ? ageDays + ' Tage' : '—') + '</div></div>' +
+                    '<div><div style="font-size:10px;color:var(--text-dim)">Zuletzt abgerufen</div>' +
+                        '<div style="font-size:13px">' + (lastRetrieved || '—') + '</div></div>' +
+                '</div>' +
+            '</div>';
+
         document.getElementById('detail-content').innerHTML =
             '<div class="detail-text" style="white-space:pre-wrap">' + escHtml(c.text) + '</div>' +
+            lebenslaufBlock +
             '<div style="margin-top:20px;display:flex;flex-direction:column;gap:10px">' +
                 detailRow('Weight',
                     '<input id="edit-weight" type="number" min="0" max="2" step="0.05" value="' + c.weight + '" ' +
