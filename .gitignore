@@ -9,3 +9,10 @@ logs/
 heartbeat_state.json
 legacy/*.json
 .DS_Store
+
+# Runtime-State
+arch_update_state.json
+soul_pr_pending.json
+
+# Backups
+backups/
