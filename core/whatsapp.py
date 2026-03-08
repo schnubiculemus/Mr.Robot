@@ -91,6 +91,18 @@ def extract_message(payload):
         if not text:
             text = message.get("_data", {}).get("body", "")
 
+        # Medien erkennen (PDF via hasMedia) — VOR Text-Return prüfen
+        if message.get("hasMedia"):
+            media = message.get("media", {})
+            mimetype = media.get("mimetype", "")
+            filename = media.get("filename", "document")
+            media_url = media.get("url", "")
+            if "pdf" in mimetype.lower() and media_url:
+                caption = text or ""
+                sentinel = f"[MEDIA:pdf:{media_url}:{filename}]"
+                combined = (sentinel + "\n" + caption).strip()
+                return from_id, combined, notify_name
+
         if text:
             return from_id, text, notify_name
 

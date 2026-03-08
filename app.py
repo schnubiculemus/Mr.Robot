@@ -7,6 +7,7 @@ from config import WAHA_API_KEY, BOT_NAME, WEBHOOK_SECRET, USER_CONTEXTS, OWNER_
 from core.database import init_db, get_or_create_user, save_message, get_chat_history
 from core.ollama_client import chat as ollama_chat
 from core.whatsapp import send_message, extract_message, init_waha
+from core.document import is_media_message, process_media_message, parse_media_sentinel, download_media, extract_pdf_text
 from core.tasks import (
     create_task, save_task, load_task, build_iteration_prompt, TASK_DONE_TOKEN,
     get_pending_tasks, claim_task, refresh_claim, release_task, generate_runner_id,
@@ -150,6 +151,18 @@ def webhook():
     # --- Chat-Verarbeitung im Chat-Pool ---
     # Sofort 200 an WAHA zurück, damit der Webhook nicht timeout'd.
     # Kimi-Antwort + Fast-Track laufen asynchron im dedizierten Chat-Pool.
+    # PDF-Dokument verarbeiten — Download SOFORT im Webhook (WAHA löscht Files schnell)
+    if is_media_message(text):
+        from config import WAHA_API_KEY as _waha_key
+        lines = text.strip().split("\n", 1)
+        parsed = parse_media_sentinel(lines[0].strip())
+        caption = lines[1].strip() if len(lines) > 1 else ""
+        if parsed:
+            _, media_url, filename = parsed
+            pdf_bytes = download_media(media_url, api_key=_waha_key)
+            _chat_pool.submit(_process_document, phone_number, pdf_bytes, filename, caption, display_name, context_name)
+        return jsonify({"status": "processing_document"}), 200
+
     _chat_pool.submit(_process_chat, phone_number, text, display_name, context_name)
 
     return jsonify({"status": "processing"}), 200
@@ -350,6 +363,52 @@ def _run_task_iterations(task_id, user_id, context_name):
     task["status"] = "done"
     save_task(task)
     deliver_task(task)
+
+
+def _process_document(phone_number, pdf_bytes, filename, caption, display_name, context_name):
+    """Verarbeitet ein eingehendes PDF-Dokument (bytes bereits heruntergeladen)."""
+    lock = _get_user_lock(phone_number)
+    with lock:
+        try:
+            if pdf_bytes:
+                extracted = extract_pdf_text(pdf_bytes)
+                doc_context = f"[DOKUMENT: {filename}]\n\n{extracted}" if extracted else None
+            else:
+                doc_context = None
+
+            if doc_context is None:
+                if filename:
+                    reply = f"Das PDF '{filename}' konnte ich leider nicht lesen."
+                else:
+                    reply = "Dieses Medienformat kann ich noch nicht verarbeiten."
+                send_message(phone_number, reply + "\n\n[kimi]")
+                save_message(phone_number, "assistant", reply)
+                return
+
+            # Dokument + Caption als User-Nachricht speichern
+            user_msg = f"[PDF: {filename}]" + (f" {caption}" if caption else "")
+            save_message(phone_number, "user", user_msg)
+
+            # Dokument-Call: History laden, vergiftete Nachrichten rausfiltern
+            raw_history = get_chat_history(phone_number)
+            bad = ["localhost:3000", "kein Zugriff", "PDF-Tool", "blind f", "nicht aktiv", "nicht lesen", "nicht parsen"]
+            history = [m for m in raw_history if not any(p in m.get("content", "") for p in bad)]
+
+            if caption:
+                doc_prompt = caption
+            else:
+                doc_prompt = f"Du hast ein Dokument erhalten: {filename}. Fass in 2-3 Saetzen zusammen worum es geht und frag ob ich etwas Bestimmtes wissen moechte."
+            import logging as _l; _l.getLogger("app").info(f"DOC_CTX_LEN: {len(doc_context) if doc_context else 0}"); reply = ollama_chat(phone_number, doc_prompt, history, context_name, doc_context=doc_context)
+            save_message(phone_number, "assistant", reply)
+            send_message(phone_number, reply + "\n\n[kimi]")
+            logger.info(f"Dokument verarbeitet: {filename} für {display_name}")
+
+        except Exception as e:
+            logger.error(f"Dokument-Verarbeitung fehlgeschlagen: {e}")
+            try:
+                send_message(phone_number, "Beim Lesen des Dokuments ist etwas schiefgelaufen.")
+            except Exception:
+                pass
 
 
 def _safe_fast_track(user_id, text):

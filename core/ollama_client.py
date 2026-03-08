@@ -122,7 +122,7 @@ def _load_global_rules():
     return global_chunks
 
 
-def build_system_prompt(context_name=None, user_id=None, user_message=None):
+def build_system_prompt(context_name=None, user_id=None, user_message=None, doc_context=None):
     """
     Baut den System-Prompt dynamisch zusammen.
 
@@ -173,10 +173,16 @@ def build_system_prompt(context_name=None, user_id=None, user_message=None):
         if rules_prompt:
             parts.append(rules_prompt)
 
+    # 7. Dokument-Kontext — ganz am Ende, höchste Recency-Priorität
+    if doc_context:
+        parts.append(
+            "DOKUMENT-KONTEXT (bereits extrahiert, liegt vollstaendig vor):\n\n" + doc_context
+        )
+
     return "\n\n---\n\n".join(parts)
 
 
-def chat(user_id, message, chat_history, context_name=None):
+def chat(user_id, message, chat_history, context_name=None, doc_context=None):
     """Sendet eine Nachricht an Kimi und gibt die Antwort zurück.
     
     WICHTIG: chat_history enthält die aktuelle User-Nachricht bereits
@@ -186,7 +192,7 @@ def chat(user_id, message, chat_history, context_name=None):
     """
     from api_utils import api_call_with_retry
 
-    system_prompt = build_system_prompt(context_name, user_id, user_message=message)
+    system_prompt = build_system_prompt(context_name, user_id, user_message=message, doc_context=doc_context)
     messages = [{"role": "system", "content": system_prompt}]
     messages.extend(chat_history)
 
