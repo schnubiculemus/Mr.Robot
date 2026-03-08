@@ -7,7 +7,7 @@ from config import WAHA_API_KEY, BOT_NAME, WEBHOOK_SECRET, USER_CONTEXTS, OWNER_
 from core.database import init_db, get_or_create_user, save_message, get_chat_history
 from core.ollama_client import chat as ollama_chat
 from core.whatsapp import send_message, extract_message, init_waha
-from core.document import is_media_message, process_media_message, parse_media_sentinel, download_media, extract_pdf_text
+from core.document import is_media_message, parse_media_sentinel, download_media, extract_pdf_text, build_doc_session, search_doc_session, get_doc_session
 from core.tasks import (
     create_task, save_task, load_task, build_iteration_prompt, TASK_DONE_TOKEN,
     get_pending_tasks, claim_task, refresh_claim, release_task, generate_runner_id,
@@ -97,6 +97,12 @@ def webhook():
     save_message(phone_number, "user", text)
 
     # /task Befehl erkennen
+    if text.strip().lower() in ["/doc stop", "/doc end", "/dokument stop"]:
+        from core.document import clear_doc_session
+        clear_doc_session(phone_number)
+        send_message(phone_number, "Dokument-Session beendet. Ich bin wieder im normalen Modus.\n\n[kimi]")
+        return jsonify({"status": "ok"}), 200
+
     if text.strip().lower().startswith("/task "):
         task_prompt = text.strip()[6:].strip()
         if task_prompt:
@@ -151,7 +157,7 @@ def webhook():
     # --- Chat-Verarbeitung im Chat-Pool ---
     # Sofort 200 an WAHA zurück, damit der Webhook nicht timeout'd.
     # Kimi-Antwort + Fast-Track laufen asynchron im dedizierten Chat-Pool.
-    # PDF-Dokument verarbeiten — Download SOFORT im Webhook (WAHA löscht Files schnell)
+    # PDF-Dokument verarbeiten — Download SOFORT im Webhook (WAHA loescht Files schnell)
     if is_media_message(text):
         from config import WAHA_API_KEY as _waha_key
         lines = text.strip().split("\n", 1)
@@ -160,8 +166,29 @@ def webhook():
         if parsed:
             _, media_url, filename = parsed
             pdf_bytes = download_media(media_url, api_key=_waha_key)
-            _chat_pool.submit(_process_document, phone_number, pdf_bytes, filename, caption, display_name, context_name)
+            if pdf_bytes:
+                if caption:
+                    # PDF + Frage: sofortige Meldung, dann Session aufbauen + antworten
+                    ack = "Einen Moment — ich schaue mir das Dokument an. 📄"
+                    send_message(phone_number, ack + "\n\n[kimi]")
+                    _chat_pool.submit(_process_document_search, phone_number, pdf_bytes, filename, caption, display_name, context_name)
+                else:
+                    # Nur PDF ohne Frage: Session aufbauen, dann bereit-Meldung
+                    ack = "Einen Moment — ich schaue mir das Dokument an. 📄"
+                    send_message(phone_number, ack + "\n\n[kimi]")
+                    _chat_pool.submit(_process_document_index, phone_number, pdf_bytes, filename, display_name)
+            else:
+                send_message(phone_number, f"Das Dokument konnte leider nicht heruntergeladen werden.\n\n[kimi]")
         return jsonify({"status": "processing_document"}), 200
+
+    # Aktive Doc-Session? Dann pruefen ob Frage zum Dokument gehoert
+    from core.document import get_doc_session as _get_doc_session
+    if _get_doc_session(phone_number):
+        if _is_doc_related(text):
+            save_message(phone_number, "user", text)
+            _chat_pool.submit(_handle_doc_followup, phone_number, text, context_name)
+            return jsonify({"status": "doc_query"}), 200
+        # Frage gehoert nicht zum Dokument — normaler Chat
 
     _chat_pool.submit(_process_chat, phone_number, text, display_name, context_name)
 
@@ -365,50 +392,172 @@ def _run_task_iterations(task_id, user_id, context_name):
     deliver_task(task)
 
 
-def _process_document(phone_number, pdf_bytes, filename, caption, display_name, context_name):
-    """Verarbeitet ein eingehendes PDF-Dokument (bytes bereits heruntergeladen)."""
+def _estimate_time(page_count):
+    """Grobe Zeitschaetzung fuer Embedding basierend auf Seitenzahl."""
+    seconds = max(5, page_count * 0.7)
+    if seconds < 15:
+        return "wenige Sekunden"
+    elif seconds < 40:
+        return "ca. 30 Sekunden"
+    elif seconds < 90:
+        return "ca. 1 Minute"
+    elif seconds < 150:
+        return "ca. 2 Minuten"
+    else:
+        return "einige Minuten"
+
+
+def _process_document_index(phone_number, pdf_bytes, filename, display_name):
+    """Nur PDF ohne Frage: Session aufbauen und Bereit-Meldung senden."""
+    try:
+        from core.document import extract_pages, chunk_pages, embed_chunks, set_doc_session
+        # Extraktion zuerst — schnell, liefert Seitenzahl
+        pages = extract_pages(pdf_bytes)
+        if not pages:
+            send_message(phone_number, "Das PDF konnte leider nicht gelesen werden.\n\n[kimi]")
+            return
+
+        # Zweite Meldung mit Zeitschaetzung
+        est = _estimate_time(len(pages))
+        eta_msg = f"📊 {len(pages)} Seiten — ich indexiere in {est}. Gleich kannst du Fragen stellen."
+        send_message(phone_number, eta_msg + "\n\n[kimi]")
+
+        # Chunking + Embedding — Session sofort mit leeren Embeddings setzen
+        chunks = chunk_pages(pages)
+        set_doc_session(phone_number, filename, chunks, [], len(pages))
+        embeddings = embed_chunks(chunks)
+        set_doc_session(phone_number, filename, chunks, embeddings, len(pages))
+
+        reply = f'✅ "{filename}" ist geladen — {len(pages)} Seiten, {len(chunks)} Abschnitte. Was willst du wissen?'
+        save_message(phone_number, "assistant", reply)
+        send_message(phone_number, reply + "\n\n[kimi]")
+        logger.info(f"Doc-Index aufgebaut: {filename} fuer {display_name}")
+    except Exception as e:
+        logger.error(f"Doc-Index fehlgeschlagen: {e}")
+        send_message(phone_number, "Beim Lesen des Dokuments ist etwas schiefgelaufen.")
+
+
+def _is_doc_related(text):
+    """
+    Schnelle Heuristik: gehoert die Frage zum aktiven Dokument?
+    Gibt False zurueck bei klaren Nicht-Dokument-Signalen.
+    """
+    t = text.lower().strip()
+
+    # Sehr kurze Nachrichten die keine Frage sind
+    if len(t) < 4:
+        return False
+
+    # Klare Small-Talk / persoenliche Signale
+    small_talk = [
+        "wie geht", "wie gehts", "wie geht's", "alles gut", "was machst du",
+        "bist du", "freust du", "magst du", "liebst du", "denkst du",
+        "diary", "tagebuch", "briefing", "morgen", "abend", "nacht", "schlafen",
+        "hallo", "hi ", "hey ", "moin", "servus", "ciao", "tschues",
+        "danke", "bitte", "okay", "ok ", "super", "toll", "nice",
+        "wetter", "essen", "trinken", "hunger", "sport", "musik",
+        "erinnere dich", "vergiss", "merk dir", "notiz",
+        "wie war", "was hast du", "heute", "gestern", "morgen fruh",
+    ]
+    if any(t.startswith(p) or f" {p}" in t for p in small_talk):
+        return False
+
+    # Dokument-Signale: explizit aufs Dokument bezogen
+    doc_signals = [
+        "seite", "abschnitt", "kapitel", "dokument", "pdf", "skript",
+        "steht da", "steht dort", "steht im", "findest du", "was sagt",
+        "erklaer", "erkläre", "beschreib", "zusammenfassung", "inhalt",
+        "was bedeutet", "wie wird", "wie ist", "was ist", "zeig mir",
+        "such nach", "finde", "wo steht",
+    ]
+    if any(p in t for p in doc_signals):
+        return True
+
+    # Fragesaetze ohne klare Zuordnung → eher Dokument wenn Session aktiv
+    if "?" in t or t.startswith("was ") or t.startswith("wie ") or t.startswith("wo ") or t.startswith("warum "):
+        return True
+
+    # Alles andere → normaler Chat
+    return False
+
+
+def _answer_doc_query(phone_number, query, context_name):
+    """Beantwortet eine Frage gegen die aktive Doc-Session."""
+    fundstellen, relevance, filename = search_doc_session(phone_number, query)
+
+    # Keine History bei Dokument-Calls — verhindert Halluzination durch alte Nachrichten
+    history = []
+
+    if relevance == "no_session":
+        return "Ich habe gerade kein Dokument geladen. Schick mir bitte zuerst ein PDF."
+
+    if relevance == "none" or not fundstellen:
+        no_result_ctx = (
+            f'Der Nutzer fragt zum Dokument "{filename}". '
+            f'Das Retrieval hat keine ausreichend relevanten Stellen gefunden. '
+            f'Antworte ehrlich dass du dazu nichts Belastbares im Dokument gefunden hast.'
+        )
+        return ollama_chat(phone_number, query, history, context_name, doc_context=no_result_ctx)
+
+    relevance_hint = "Die Treffer sind gut. Antworte direkt und nenne die Seitenzahlen." if relevance == "strong" else "Die Treffer sind nur indirekt relevant — weise darauf hin."
+    doc_ctx = (
+        f'Dokument geladen: "{filename}"\n'
+        f"REGEL: Pruefe zuerst ob die Frage des Nutzers inhaltlich zum Dokument passt.\n"
+        f"- Wenn JA: Antworte NUR auf Basis der Fundstellen. {relevance_hint} Nenne Seitenzahlen.\n"
+        f"- Wenn NEIN (z.B. persoenliche Frage, Small Talk, andere Themen): Ignoriere die Fundstellen komplett und antworte normal wie gewohnt.\n"
+        f"WICHTIG: Kein Markdown, keine fetten Hervorhebungen, kein Bold, keine Sternchen. Fliesstext.\n\n"
+        f"Fundstellen aus dem Dokument:\n\n{fundstellen}"
+    )
+    return ollama_chat(phone_number, query, history, context_name, doc_context=doc_ctx)
+
+
+def _handle_doc_followup(phone_number, query, context_name):
+    """Folgefrage bei aktiver Doc-Session."""
     lock = _get_user_lock(phone_number)
     with lock:
         try:
-            if pdf_bytes:
-                extracted = extract_pdf_text(pdf_bytes)
-                doc_context = f"[DOKUMENT: {filename}]\n\n{extracted}" if extracted else None
-            else:
-                doc_context = None
-
-            if doc_context is None:
-                if filename:
-                    reply = f"Das PDF '{filename}' konnte ich leider nicht lesen."
-                else:
-                    reply = "Dieses Medienformat kann ich noch nicht verarbeiten."
-                send_message(phone_number, reply + "\n\n[kimi]")
-                save_message(phone_number, "assistant", reply)
-                return
-
-            # Dokument + Caption als User-Nachricht speichern
-            user_msg = f"[PDF: {filename}]" + (f" {caption}" if caption else "")
-            save_message(phone_number, "user", user_msg)
-
-            # Dokument-Call: History laden, vergiftete Nachrichten rausfiltern
-            raw_history = get_chat_history(phone_number)
-            bad = ["localhost:3000", "kein Zugriff", "PDF-Tool", "blind f", "nicht aktiv", "nicht lesen", "nicht parsen"]
-            history = [m for m in raw_history if not any(p in m.get("content", "") for p in bad)]
-
-            if caption:
-                doc_prompt = caption
-            else:
-                doc_prompt = f"Du hast ein Dokument erhalten: {filename}. Fass in 2-3 Saetzen zusammen worum es geht und frag ob ich etwas Bestimmtes wissen moechte."
-            import logging as _l; _l.getLogger("app").info(f"DOC_CTX_LEN: {len(doc_context) if doc_context else 0}"); reply = ollama_chat(phone_number, doc_prompt, history, context_name, doc_context=doc_context)
+            reply = _answer_doc_query(phone_number, query, context_name)
             save_message(phone_number, "assistant", reply)
             send_message(phone_number, reply + "\n\n[kimi]")
-            logger.info(f"Dokument verarbeitet: {filename} für {display_name}")
+        except Exception as e:
+            logger.error(f"Doc-Followup fehlgeschlagen: {e}")
+            send_message(phone_number, "Beim Durchsuchen des Dokuments ist etwas schiefgelaufen.")
+
+
+def _process_document_search(phone_number, pdf_bytes, filename, caption, display_name, context_name):
+    """PDF + Frage: Session aufbauen, dann direkt suchen und antworten."""
+    lock = _get_user_lock(phone_number)
+    with lock:
+        try:
+            from core.document import extract_pages, chunk_pages, embed_chunks, set_doc_session
+            pages = extract_pages(pdf_bytes)
+            if not pages:
+                reply = "Das PDF konnte leider nicht gelesen werden."
+                save_message(phone_number, "assistant", reply)
+                send_message(phone_number, reply + "\n\n[kimi]")
+                return
+
+            est = _estimate_time(len(pages))
+            send_message(phone_number, f"📊 {len(pages)} Seiten — ich bin in {est} bereit.\n\n[kimi]")
+
+            chunks = chunk_pages(pages)
+            # Session sofort mit leeren Embeddings setzen — verhindert dass Folgefragen
+            # durch normales Memory-Retrieval laufen waehrend Embedding noch laeuft
+            set_doc_session(phone_number, filename, chunks, [], len(pages))
+            embeddings = embed_chunks(chunks)
+            set_doc_session(phone_number, filename, chunks, embeddings, len(pages))
+            page_count = len(pages)
+
+            user_msg = f"[PDF: {filename}] {caption}"
+            save_message(phone_number, "user", user_msg)
+            reply = _answer_doc_query(phone_number, caption, context_name)
+            save_message(phone_number, "assistant", reply)
+            send_message(phone_number, reply + "\n\n[kimi]")
+            logger.info(f"Dokument-Suche: {filename} / '{caption[:50]}' fuer {display_name}")
 
         except Exception as e:
-            logger.error(f"Dokument-Verarbeitung fehlgeschlagen: {e}")
-            try:
-                send_message(phone_number, "Beim Lesen des Dokuments ist etwas schiefgelaufen.")
-            except Exception:
-                pass
+            logger.error(f"Dokument-Suche fehlgeschlagen: {e}")
+            send_message(phone_number, "Beim Lesen des Dokuments ist etwas schiefgelaufen.")
 
 
 def _safe_fast_track(user_id, text):
