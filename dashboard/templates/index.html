@@ -11,6 +11,9 @@
     <div class="loading">Lade Stats...</div>
 </div>
 
+<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.15em;color:var(--text-dim);margin-bottom:10px;margin-top:4px">System</div>
+<div class="stats-grid" id="system-grid"></div>
+
 <div class="card">
     <div class="card-header">
         <div>
@@ -99,6 +102,25 @@ async function loadStats() {
                 <div class="stat-card-value" style="font-size:16px">${data.timestamp}</div>
                 <div class="stat-card-sub">zuletzt aktualisiert</div>
             </div>
+        `;
+
+        document.getElementById('system-grid').innerHTML = `
+            <div class="stat-card">
+                <div class="stat-card-label">CPU</div>
+                <div class="stat-card-value" style="color:${data.system.cpu>80?'var(--red)':data.system.cpu>50?'var(--amber)':'var(--text-primary)'}">${data.system.cpu}%</div>
+                <div class="stat-card-sub">Auslastung</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-card-label">RAM</div>
+                <div class="stat-card-value" style="color:${data.system.ram_percent>85?'var(--red)':data.system.ram_percent>70?'var(--amber)':'var(--text-primary)'}">${data.system.ram_used_gb} GB</div>
+                <div class="stat-card-sub">von ${data.system.ram_total_gb} GB · ${data.system.ram_percent}%</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-card-label">Disk</div>
+                <div class="stat-card-value" style="color:${data.system.disk_percent>85?'var(--red)':data.system.disk_percent>70?'var(--amber)':'var(--text-primary)'}">${data.system.disk_used_gb} GB</div>
+                <div class="stat-card-sub">von ${data.system.disk_total_gb} GB · ${data.system.disk_percent}%</div>
+            </div>
+            <div class="stat-card"><div class="stat-card-label">Uptime</div><div class="stat-card-value" style="font-size:14px">${data.system.uptime}</div><div class="stat-card-sub">Server läuft</div></div>
         `;
 
         // Type distribution

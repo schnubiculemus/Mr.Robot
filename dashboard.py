@@ -265,6 +265,15 @@ def api_stats():
         "timestamp": now_berlin().strftime("%d.%m.%Y %H:%M"),
         "heartbeat_last_run": heartbeat_last_run,
         "heartbeat_age_min": heartbeat_age_min,
+        "system": (lambda p=__import__('psutil'): {
+            "cpu": round(p.cpu_percent(interval=0.5), 1),
+            "ram_used_gb": round(p.virtual_memory().used / 1024**3, 1),
+            "ram_total_gb": round(p.virtual_memory().total / 1024**3, 1),
+            "ram_percent": p.virtual_memory().percent,
+            "disk_used_gb": round(p.disk_usage('/').used / 1024**3, 1),
+            "disk_total_gb": round(p.disk_usage('/').total / 1024**3, 1),
+            "disk_percent": p.disk_usage('/').percent,
+        })(),
     })
 
 
@@ -400,17 +409,25 @@ def api_retrieval_simulate():
 
     scored.sort(key=lambda x: x["retrieval_score"], reverse=True)
 
-    # Finale Auswahl
-    selected = score_and_select(query)
-    selected_ids = {c["id"] for c in selected}
+    # Finale Auswahl mit Ablehnungsgründen
+    from memory.retrieval import apply_caps
+    for chunk in candidates:
+        score, details = compute_score(chunk)
+        chunk["_retrieval_score"] = round(score, 4)
+        chunk["_score_details"] = details
+
+    selected_chunks, rejected_chunks = apply_caps(candidates)
+    selected_ids = {c["id"] for c in selected_chunks}
+    rejection_reasons = {c["id"]: reason for c, reason in rejected_chunks}
 
     for s in scored:
         s["selected"] = s["id"] in selected_ids
+        s["rejection_reason"] = rejection_reasons.get(s["id"], None)
 
     return jsonify({
         "query": query,
         "candidates_count": len(scored),
-        "selected_count": len(selected),
+        "selected_count": len(selected_chunks),
         "candidates": scored,
     })
 

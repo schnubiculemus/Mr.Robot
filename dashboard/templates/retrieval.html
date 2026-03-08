@@ -49,6 +49,7 @@
                         <th style="width:55px">Conf.</th>
                         <th style="width:55px">Weight</th>
                         <th style="width:50px">Alter</th>
+                        <th style="width:110px">Grund</th>
                     </tr>
                 </thead>
                 <tbody id="result-table"></tbody>
@@ -84,19 +85,29 @@
 <script>
 let lastCandidates = [];
 
+const REJECTION_LABELS = {
+    'global_cap': { label: 'Global Cap', color: 'var(--red)' },
+    'type_cap_hard_fact':      { label: 'Cap: hard_fact', color: 'var(--amber)' },
+    'type_cap_preference':     { label: 'Cap: preference', color: 'var(--amber)' },
+    'type_cap_decision':       { label: 'Cap: decision', color: 'var(--amber)' },
+    'type_cap_working_state':  { label: 'Cap: working_state', color: 'var(--amber)' },
+    'type_cap_knowledge':      { label: 'Cap: knowledge', color: 'var(--amber)' },
+    'type_cap_self_reflection':{ label: 'Cap: self_reflection', color: 'var(--amber)' },
+    'type_cap_diary':          { label: 'Cap: diary', color: 'var(--amber)' },
+};
+
 async function runQuery() {
     const query = document.getElementById('query-input').value.trim();
     if (!query) return;
 
     document.getElementById('query-result').style.display = 'block';
-    document.getElementById('result-table').innerHTML = '<tr><td colspan="9" class="loading">Simuliere Retrieval...</td></tr>';
+    document.getElementById('result-table').innerHTML = '<tr><td colspan="10" class="loading">Simuliere Retrieval...</td></tr>';
 
     try {
         const res = await fetch('/api/retrieval/simulate?q=' + encodeURIComponent(query));
         const data = await res.json();
 
         lastCandidates = data.candidates;
-        const selected = data.candidates.filter(c => c.selected);
         const dropped = data.candidates.filter(c => !c.selected);
 
         document.getElementById('res-candidates').textContent = data.candidates_count;
@@ -106,6 +117,12 @@ async function runQuery() {
         const html = data.candidates.map((c, idx) => {
             const semBar = `<span class="score-bar"><span class="score-bar-fill" style="width:${c.semantic_similarity * 100}%"></span></span>`;
             const scoreBar = `<span class="score-bar"><span class="score-bar-fill" style="width:${c.retrieval_score * 100}%;background:${c.selected ? 'var(--accent)' : 'var(--text-dim)'}"></span></span>`;
+
+            let rejCell = '<span style="color:var(--text-dim)">—</span>';
+            if (!c.selected && c.rejection_reason) {
+                const info = REJECTION_LABELS[c.rejection_reason] || { label: c.rejection_reason, color: 'var(--text-muted)' };
+                rejCell = `<span style="font-size:10px;color:${info.color}">${info.label}</span>`;
+            }
 
             return `<tr style="cursor:pointer;${c.selected ? '' : 'opacity:0.5'}" onclick="showScoreDetail(${idx})">
                 <td>${c.selected ? '<span style="color:var(--accent)">✓</span>' : '<span style="color:var(--text-dim)">✗</span>'}</td>
@@ -117,13 +134,14 @@ async function runQuery() {
                 <td class="mono">${c.confidence}</td>
                 <td class="mono">${c.weight}</td>
                 <td class="mono">${c.age}</td>
+                <td>${rejCell}</td>
             </tr>`;
         }).join('');
 
         document.getElementById('result-table').innerHTML = html;
     } catch (e) {
         document.getElementById('result-table').innerHTML =
-            `<tr><td colspan="9" class="loading">Fehler: ${e.message}</td></tr>`;
+            `<tr><td colspan="10" class="loading">Fehler: ${e.message}</td></tr>`;
     }
 }
 
@@ -133,35 +151,37 @@ function showScoreDetail(idx) {
 
     const d = c.score_details;
     const factors = [
-        { name: 'Semantic', value: d.semantic, weight: 0.45, contribution: (d.semantic * 0.45).toFixed(3) },
-        { name: 'Epistemic', value: d.epistemic, weight: 0.15, contribution: (d.epistemic * 0.15).toFixed(3) },
-        { name: 'Weight', value: d.weight, weight: 0.13, contribution: (d.weight * 0.13).toFixed(3) },
-        { name: 'Recency', value: d.recency, weight: 0.12, contribution: (d.recency * 0.12).toFixed(3) },
-        { name: 'Confidence', value: d.confidence, weight: 0.08, contribution: (d.confidence * 0.08).toFixed(3) },
-        { name: 'Type Factor', value: d.type_factor, weight: 0.07, contribution: (d.type_factor * 0.07).toFixed(3) },
+        { name: 'Semantic',     value: d.semantic,     weight: 0.45, contribution: (d.semantic * 0.45).toFixed(3) },
+        { name: 'Epistemic',    value: d.epistemic,    weight: 0.15, contribution: (d.epistemic * 0.15).toFixed(3) },
+        { name: 'Weight',       value: d.weight,       weight: 0.13, contribution: (d.weight * 0.13).toFixed(3) },
+        { name: 'Recency',      value: d.recency,      weight: 0.12, contribution: (d.recency * 0.12).toFixed(3) },
+        { name: 'Confidence',   value: d.confidence,   weight: 0.08, contribution: (d.confidence * 0.08).toFixed(3) },
+        { name: 'Type Factor',  value: d.type_factor,  weight: 0.07, contribution: (d.type_factor * 0.07).toFixed(3) },
     ];
 
     if (d.decay !== undefined && d.decay < 1.0) {
         factors.push({ name: 'Decay', value: d.decay, weight: '—', contribution: 'multipliziert auf Recency' });
     }
 
+    let rejInfo = '';
+    if (!c.selected && c.rejection_reason) {
+        const info = REJECTION_LABELS[c.rejection_reason] || { label: c.rejection_reason, color: 'var(--text-muted)' };
+        rejInfo = `<div style="margin:8px 0;padding:6px 10px;background:var(--bg-elevated);border-radius:4px;font-size:11px;color:${info.color}">Verworfen: ${info.label}</div>`;
+    }
+
     document.getElementById('score-detail-title').textContent = `Score-Details: ${c.id.substring(0, 12)}`;
     document.getElementById('score-detail-content').innerHTML = `
-        <div style="margin-bottom:12px;font-size:12px;color:var(--text-secondary)">
+        <div style="margin-bottom:8px;font-size:12px">
             <span class="badge badge-${c.chunk_type}">${c.chunk_type}</span>
-            ${c.selected ? '<span class="badge badge-active" style="margin-left:4px">im Prompt</span>' : '<span class="badge badge-archived" style="margin-left:4px">verworfen</span>'}
+            ${c.selected
+                ? '<span class="badge badge-active" style="margin-left:4px">im Prompt</span>'
+                : '<span class="badge badge-archived" style="margin-left:4px">verworfen</span>'}
             <span style="float:right;font-size:16px;font-weight:600;color:var(--text-primary)">${c.retrieval_score}</span>
         </div>
+        ${rejInfo}
         <div class="table-wrap">
             <table>
-                <thead>
-                    <tr>
-                        <th>Faktor</th>
-                        <th>Wert</th>
-                        <th>Gewicht</th>
-                        <th>Beitrag</th>
-                    </tr>
-                </thead>
+                <thead><tr><th>Faktor</th><th>Wert</th><th>Gewicht</th><th>Beitrag</th></tr></thead>
                 <tbody>
                     ${factors.map(f => `<tr>
                         <td>${f.name}</td>
@@ -189,15 +209,20 @@ async function loadRetrievalLog() {
 
         const html = data.entries.map(e => {
             const chunks = (e.chunks || []).map(c =>
-                `<span class="badge badge-${c.type}" style="margin:1px">${c.id} (${c.score})</span>`
+                `<span class="badge badge-${c.type}" style="margin:1px" title="${c.id}">${c.type} (${c.score})</span>`
             ).join(' ');
 
+            const rejReasons = (e.rejected_reasons || []).map(r => {
+                const info = REJECTION_LABELS[r] || { label: r, color: 'var(--text-muted)' };
+                return `<span style="font-size:10px;color:${info.color};margin-left:8px">${info.label} ×${e.rejected_count}</span>`;
+            }).join('');
+
             return `<div style="padding:10px 0;border-bottom:1px solid var(--border);font-size:12px">
-                <div style="display:flex;justify-content:space-between">
+                <div style="display:flex;justify-content:space-between;align-items:center">
                     <span style="color:var(--text-primary)">${escHtml(e.query || '?')}</span>
-                    <span style="color:var(--text-dim)">${e.selected || 0} / ${e.candidates || 0} Chunks</span>
+                    <span style="color:var(--text-dim);white-space:nowrap;margin-left:12px">${e.selected || 0} / ${e.candidates || 0}${rejReasons}</span>
                 </div>
-                <div style="margin-top:4px">${chunks || '<span style="color:var(--text-dim)">keine</span>'}</div>
+                <div style="margin-top:6px">${chunks || '<span style="color:var(--text-dim)">keine</span>'}</div>
                 ${e.fallback ? '<span class="tag" style="margin-top:4px">Fallback</span>' : ''}
             </div>`;
         }).join('');

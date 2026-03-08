@@ -51,8 +51,8 @@ logger = logging.getLogger(__name__)
 # --- Konfiguration ---
 ACTIVE_HOURS_START = 8
 ACTIVE_HOURS_END = 22
-SILENCE_THRESHOLD_HOURS = 12
-HEARTBEAT_COOLDOWN_HOURS = 18
+SILENCE_THRESHOLD_HOURS = 3
+HEARTBEAT_COOLDOWN_HOURS = 4
 
 HEARTBEAT_STATE_PATH = os.path.join(PROJECT_DIR, "heartbeat_state.json")
 

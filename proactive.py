@@ -4,9 +4,9 @@ Referenz: Konzeptdokument V1.1
 
 Intelligente proaktive Nachrichten basierend auf Memory-Chunks.
 Drei Stufen:
-  1. Zeitbasiert (Stille-Check) — bestehende Logik
+  1. Zeitbasiert (Stille-Check) — heartbeat.py Logik
   2. Eventbasiert — Deadlines, Morgen-Briefing, offene Tasks
-  3. Impulsbasiert — Widersprüche, Muster (vorbereitet)
+  3. Impulsbasiert — Gedanken, Widersprüche, Erinnerungen
 
 Wird vom Heartbeat aufgerufen.
 """
@@ -31,13 +31,6 @@ HEARTBEAT_OK_TOKEN = "HEARTBEAT_OK"
 # =============================================================================
 
 def check_triggers(user_id, now):
-    """
-    Prüft alle Event-Trigger und sammelt aktive Anlässe.
-    Returns: Liste von Trigger-Dicts mit typ und kontext.
-
-    now kann UTC oder Berlin sein — Zeitfenster werden intern
-    mit Berliner Zeit geprüft (P1.10).
-    """
     berlin = now_berlin()
     triggers = []
 
@@ -79,44 +72,57 @@ def check_triggers(user_id, now):
             "prioritaet": 3,
         })
 
+    # --- Stufe 3: Impuls-Trigger ---
+    impuls = _check_gedanken_impuls()
+    if impuls:
+        triggers.append({
+            "typ": "gedanken-impuls",
+            "kontext": impuls,
+            "prioritaet": 4,
+        })
+
+    erinnerung = _check_erinnerung()
+    if erinnerung:
+        triggers.append({
+            "typ": "erinnerung",
+            "kontext": erinnerung,
+            "prioritaet": 4,
+        })
+
+    widerspruch = _check_widerspruch()
+    if widerspruch:
+        triggers.append({
+            "typ": "widerspruch",
+            "kontext": widerspruch,
+            "prioritaet": 3,
+        })
+
     return triggers
 
 
 def _is_morning_briefing_time(berlin):
-    """Morgen-Briefing zwischen 7:00 und 10:00 Berliner Zeit."""
     return 7 <= berlin.hour < 10
 
 
 def _is_evening_briefing_time(berlin):
-    """Abend-Briefing zwischen 20:00 und 22:00 Berliner Zeit."""
     return 20 <= berlin.hour < 22
 
 
 def _build_morning_context(user_id):
-    """
-    Baut den Kontext für das Morgen-Briefing:
-    - Aktuelle working_states
-    - Offene Entscheidungen
-    - Letzte Selbstreflexion
-    (System-Stats sind über /status abrufbar, nicht im Briefing.)
-    """
     context_parts = []
 
-    # Working States abrufen
     ws_results = query_active("aktuelle Arbeit Projekt Phase Status", n_results=5)
     working_states = [r for r in ws_results if r.get("chunk_type") == "working_state"]
     if working_states:
         ws_texts = [f"- {c['text']}" for c in working_states[:5]]
         context_parts.append("Aktuelle Arbeitsstände:\n" + "\n".join(ws_texts))
 
-    # Offene Decisions
     dec_results = query_active("Entscheidung geplant nächster Schritt", n_results=5)
     decisions = [r for r in dec_results if r.get("chunk_type") == "decision"]
     if decisions:
         dec_texts = [f"- {c['text']}" for c in decisions[:3]]
         context_parts.append("Aktive Entscheidungen:\n" + "\n".join(dec_texts))
 
-    # Letzte Selbstreflexion
     ref_results = query_active("Selbstreflexion Erkenntnis Verbesserung", n_results=3)
     reflections = [r for r in ref_results if r.get("chunk_type") == "self_reflection"]
     if reflections:
@@ -126,30 +132,20 @@ def _build_morning_context(user_id):
 
 
 def _build_evening_context(user_id):
-    """
-    Baut den Kontext für das Abend-Briefing:
-    - Tages-Zusammenfassung: was wurde heute besprochen/entschieden
-    - Offene Arbeitsstände
-    - Letzte Selbstreflexion
-    (System-Stats und Chunk-Zahlen sind über /status abrufbar.)
-    """
     context_parts = []
 
-    # Heutige Entscheidungen
     dec_results = query_active("Entscheidung heute festgelegt beschlossen", n_results=5)
     decisions = [r for r in dec_results if r.get("chunk_type") == "decision"]
     if decisions:
         dec_texts = [f"- {c['text']}" for c in decisions[:5]]
         context_parts.append("Aktive Entscheidungen:\n" + "\n".join(dec_texts))
 
-    # Working States
     ws_results = query_active("aktuelle Arbeit Projekt Phase Status", n_results=5)
     working_states = [r for r in ws_results if r.get("chunk_type") == "working_state"]
     if working_states:
         ws_texts = [f"- {c['text']}" for c in working_states[:5]]
         context_parts.append("Aktuelle Arbeitsstände:\n" + "\n".join(ws_texts))
 
-    # Letzte Selbstreflexion
     ref_results = query_active("Selbstreflexion Erkenntnis Verbesserung", n_results=3)
     reflections = [r for r in ref_results if r.get("chunk_type") == "self_reflection"]
     if reflections:
@@ -159,11 +155,6 @@ def _build_evening_context(user_id):
 
 
 def _check_deadlines(now):
-    """
-    Sucht working_state Chunks die zeitliche Hinweise enthalten.
-    Einfache Heuristik: Chunks mit Wörtern wie 'morgen', 'diese Woche',
-    'Deadline', 'Frist', 'bis zum' etc.
-    """
     results = query_active("Deadline Frist morgen diese Woche bis zum Termin", n_results=10)
     deadline_chunks = []
 
@@ -186,10 +177,6 @@ def _check_deadlines(now):
 
 
 def _check_stale_working_states():
-    """
-    Findet working_state Chunks die älter als 7 Tage sind.
-    Diese könnten veraltet sein oder Erinnerung brauchen.
-    """
     results = query_active("Projekt Phase Status Arbeit aktuell", n_results=15)
     stale = []
 
@@ -214,40 +201,110 @@ def _check_stale_working_states():
 
 
 # =============================================================================
+# Stufe 3: Impuls-Trigger
+# =============================================================================
+
+def _check_gedanken_impuls():
+    """
+    Prüft ob aktuelle self_reflection oder diary Chunks ein Thema haben
+    das Kimi beschäftigt und das er von sich aus ansprechen könnte.
+    Nur wenn mind. 2 Reflexionen vorhanden sind.
+    """
+    results = query_active("Gedanke Frage offen beschäftigt unklar", n_results=5)
+    reflexionen = [r for r in results if r.get("chunk_type") in ("self_reflection", "diary")]
+
+    if len(reflexionen) >= 2:
+        texts = [f"- {r['text']}" for r in reflexionen[:3]]
+        return "Eigene Gedanken/Reflexionen die mich beschäftigen:\n" + "\n".join(texts)
+
+    return None
+
+
+def _check_erinnerung():
+    """
+    Findet Entscheidungen oder working_states die länger nicht
+    im Gespräch erwähnt wurden (älter als 5 Tage, noch aktiv).
+    """
+    results = query_active("offen geplant noch ausstehend todo nächster Schritt", n_results=10)
+    now = now_utc()
+    erinnerungen = []
+
+    for chunk in results:
+        if chunk.get("chunk_type") not in ("decision", "working_state"):
+            continue
+        created = chunk.get("created_at", "")
+        if not created:
+            continue
+        created_dt = safe_parse_dt(created)
+        if created_dt is None:
+            continue
+        age_days = (now - created_dt).days
+        if 5 <= age_days <= 30:
+            erinnerungen.append(f"- [{age_days}d] {chunk['text']}")
+
+    if erinnerungen:
+        return "Dinge die ich schon länger nicht angesprochen habe:\n" + "\n".join(erinnerungen[:3])
+
+    return None
+
+
+def _check_widerspruch():
+    """
+    Sucht nach Chunks die sich potenziell widersprechen könnten —
+    einfache Heuristik: hard_facts mit ähnlichem Thema aber unterschiedlichem Inhalt.
+    """
+    results = query_active("geändert aktualisiert überholt anders früher jetzt", n_results=10)
+    kandidaten = [r for r in results if r.get("chunk_type") in ("hard_fact", "decision", "preference")]
+
+    if len(kandidaten) >= 2:
+        texts = [f"- {r['text']}" for r in kandidaten[:3]]
+        return "Mögliche Widersprüche im Gedächtnis:\n" + "\n".join(texts)
+
+    return None
+
+
+# =============================================================================
 # Nachricht generieren und senden
 # =============================================================================
 
 def generate_proactive_message(user_id, context_name, triggers, now):
-    """
-    Lässt Kimi basierend auf den Triggern eine proaktive Nachricht formulieren.
-    Kimi entscheidet ob eine Nachricht sinnvoll ist (HEARTBEAT_OK wenn nicht).
-    """
     if not triggers:
         return None
 
-    # Trigger nach Priorität sortieren
     triggers.sort(key=lambda t: t["prioritaet"])
 
-    # Trigger-Kontext zusammenbauen
     trigger_text = ""
     for t in triggers:
         trigger_text += f"\n### Trigger: {t['typ']}\n{t['kontext']}\n"
 
-    # System-Prompt mit Memory-Chunks
+    berlin = now_berlin()
+    is_morning = 7 <= berlin.hour < 10
+
     system_prompt = build_system_prompt(context_name, user_id)
     history = get_chat_history(user_id, limit=5)
+
+    morgen_hinweis = ""
+    if is_morning:
+        morgen_hinweis = """
+MORGEN-BRIEFING HINWEIS:
+Du meldest dich als erstes heute Morgen. Formuliere einen natürlichen, persönlichen Einstieg —
+frag wie die Nacht war, mach eine kurze Bemerkung zur Tageszeit, oder steig direkt mit etwas
+Relevantem ein das dich beschäftigt. Nicht immer dasselbe. Kein "Guten Morgen Tommy, hier ist
+dein Briefing:" — das klingt wie ein Newsletter. Du bist ein Gegenüber, kein Assistent.
+"""
 
     prompt = f"""Du bist Mr. Robot im Heartbeat-Modus. Du hast gerade dein Gedächtnis durchsucht und folgende Anlässe gefunden:
 
 {trigger_text}
 
 Aktuelle Zeit: {format_berlin(now)}
-
+{morgen_hinweis}
 REGELN:
 - Schreib eine kurze, natürliche WhatsApp-Nachricht an Tommy.
-- Kein "Guten Morgen" wenn es nicht morgens ist.
-- Keine Aufzählung aller Trigger — wähle das Wichtigste.
-- Ton: direkt, kumpelhaft, auf Augenhöhe. Keine Floskeln.
+- Wähle das Wichtigste — keine Aufzählung aller Trigger.
+- Ton: locker, direkt, persönlich. Wie jemand der dich kennt und sich einfach meldet.
+- Bei gedanken-impuls oder erinnerung: ruhig etwas Persönliches einbringen — "Ich hab grad gedacht..."
+- Bei widerspruch: kurz und neugierig fragen, nicht anklagend.
 - Wenn KEINER der Trigger eine Nachricht rechtfertigt: antworte NUR mit HEARTBEAT_OK.
 - Max 3-4 Sätze."""
 
@@ -285,7 +342,6 @@ REGELN:
 
 
 def send_proactive(user_id, message):
-    """Sendet eine proaktive Nachricht und speichert sie."""
     tagged = message + "\n\n[kimi/proaktiv]"
     send_message(user_id, tagged)
     save_message(user_id, "assistant", message)
@@ -293,14 +349,10 @@ def send_proactive(user_id, message):
 
 
 # =============================================================================
-# Hauptfunktion (wird vom Heartbeat aufgerufen)
+# Hauptfunktion
 # =============================================================================
 
 def run_proactive(user_id, context_name, now):
-    """
-    Prüft Event-Trigger, generiert ggf. eine proaktive Nachricht.
-    Returns: True wenn Nachricht gesendet, False sonst.
-    """
     triggers = check_triggers(user_id, now)
 
     if not triggers:
