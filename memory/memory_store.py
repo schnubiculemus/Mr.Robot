@@ -448,3 +448,24 @@ def _safe_float(value, default):
         return float(value)
     except (ValueError, TypeError):
         return default
+
+
+def get_all_active():
+    """Gibt alle aktiven Chunks zurück (für Curiosity-Analyse)."""
+    try:
+        collection = get_active_collection()
+        result = collection.get(include=["documents", "metadatas"])
+        chunks = []
+        for i, chunk_id in enumerate(result["ids"]):
+            meta = result["metadatas"][i]
+            chunks.append({
+                "id": chunk_id,
+                "text": result["documents"][i],
+                "chunk_type": meta.get("chunk_type", ""),
+                "confidence": _safe_float(meta.get("confidence", 0.5), 0.5),
+                "tags": meta.get("tags", ""),
+            })
+        return chunks
+    except Exception as e:
+        logger.error(f"get_all_active Fehler: {e}")
+        return []

@@ -373,6 +373,94 @@ def api_chunk_detail(chunk_id):
 
 
 # =============================================================================
+# API: Chunk Edit + Archive
+# =============================================================================
+
+@app.route("/api/chunks/<chunk_id>", methods=["PATCH"])
+@require_auth
+def api_chunk_update(chunk_id):
+    """Aktualisiert weight, confidence und/oder tags eines Chunks."""
+    data = request.get_json(silent=True) or {}
+    collection = get_active_collection()
+    try:
+        result = collection.get(ids=[chunk_id], include=["documents", "metadatas"])
+        if not result["ids"]:
+            return jsonify({"error": "Chunk nicht gefunden"}), 404
+        meta = dict(result["metadatas"][0])
+        if "weight" in data:
+            meta["weight"] = float(data["weight"])
+        if "confidence" in data:
+            meta["confidence"] = float(data["confidence"])
+        if "tags" in data:
+            meta["tags"] = str(data["tags"])
+        collection.update(ids=[chunk_id], metadatas=[meta])
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/chunks/<chunk_id>/archive", methods=["POST"])
+@require_auth
+def api_chunk_archive(chunk_id):
+    """Verschiebt einen Chunk in die Archive-Collection."""
+    active = get_active_collection()
+    archive = get_archive_collection()
+    try:
+        result = active.get(ids=[chunk_id], include=["documents", "metadatas", "embeddings"])
+        if not result["ids"]:
+            return jsonify({"error": "Chunk nicht gefunden"}), 404
+        meta = dict(result["metadatas"][0])
+        meta["status"] = "archived"
+        from core.datetime_utils import now_utc
+        meta["archived_at"] = now_utc().isoformat()
+        archive.add(
+            ids=[chunk_id],
+            documents=result["documents"],
+            metadatas=[meta],
+            embeddings=result["embeddings"] if result.get("embeddings") else None,
+        )
+        active.delete(ids=[chunk_id])
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/chunks/bulk-archive", methods=["POST"])
+@require_auth
+def api_chunks_bulk_archive():
+    """Archiviert mehrere Chunks auf einmal."""
+    data = request.get_json(silent=True) or {}
+    ids = data.get("ids", [])
+    if not ids:
+        return jsonify({"error": "Keine IDs übergeben"}), 400
+    active = get_active_collection()
+    archive = get_archive_collection()
+    done = []
+    errors = []
+    for chunk_id in ids:
+        try:
+            result = active.get(ids=[chunk_id], include=["documents", "metadatas", "embeddings"])
+            if not result["ids"]:
+                errors.append(chunk_id)
+                continue
+            meta = dict(result["metadatas"][0])
+            meta["status"] = "archived"
+            from core.datetime_utils import now_utc
+            meta["archived_at"] = now_utc().isoformat()
+            archive.add(
+                ids=[chunk_id],
+                documents=result["documents"],
+                metadatas=[meta],
+                embeddings=result["embeddings"] if result.get("embeddings") else None,
+            )
+            active.delete(ids=[chunk_id])
+            done.append(chunk_id)
+        except Exception as e:
+            errors.append(chunk_id)
+    return jsonify({"archived": len(done), "errors": errors})
+
+
+# =============================================================================
 # API: Retrieval Simulation
 # =============================================================================
 
@@ -551,6 +639,50 @@ def api_consolidator_events():
             ev["actions_summary"] = summary
             ev["actions_count"] = len(ev["actions"])
         return jsonify({"events": events, "total": len(events)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+
+@app.route("/api/consolidator/diff/<chunk_id>")
+@require_auth
+def api_consolidator_diff(chunk_id):
+    """Gibt alten und neuen Text für einen supersede-Chunk zurück."""
+    try:
+        # Neuer Chunk (active)
+        active = get_active_collection()
+        result = active.get(ids=[chunk_id], include=["documents", "metadatas"])
+        if result["ids"]:
+            new_text = result["documents"][0]
+            supersedes = result["metadatas"][0].get("supersedes", "")
+        else:
+            # Im Archiv suchen
+            archive = get_archive_collection()
+            result = archive.get(ids=[chunk_id], include=["documents", "metadatas"])
+            if not result["ids"]:
+                return jsonify({"error": "Chunk nicht gefunden"}), 404
+            new_text = result["documents"][0]
+            supersedes = result["metadatas"][0].get("supersedes", "")
+
+        old_text = None
+        if supersedes:
+            # Alten Chunk im Archiv suchen
+            archive = get_archive_collection()
+            old_result = archive.get(ids=[supersedes], include=["documents"])
+            if old_result["ids"]:
+                old_text = old_result["documents"][0]
+            else:
+                # Evtl. noch aktiv
+                old_result = active.get(ids=[supersedes], include=["documents"])
+                if old_result["ids"]:
+                    old_text = old_result["documents"][0]
+
+        return jsonify({
+            "chunk_id": chunk_id,
+            "new_text": new_text,
+            "old_text": old_text,
+            "supersedes": supersedes,
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

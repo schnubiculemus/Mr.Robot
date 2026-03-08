@@ -31,6 +31,24 @@
     </div>
 </div>
 
+<!-- Zeitstrahl -->
+<div class="card" style="margin-bottom:16px">
+    <div class="card-header">
+        <div class="card-title">Zeitstrahl</div>
+        <div class="card-subtitle">Aktionen der letzten Läufe</div>
+    </div>
+    <div id="timeline" style="display:flex;flex-wrap:wrap;gap:4px;padding:4px 0;min-height:32px">
+        <span style="color:var(--text-dim);font-size:12px">Lade…</span>
+    </div>
+    <div style="display:flex;gap:16px;margin-top:10px;font-size:11px;color:var(--text-muted)">
+        <span><span class="badge badge-knowledge" style="font-size:10px">create</span> Neu</span>
+        <span><span class="badge badge-working_state" style="font-size:10px">update</span> Update</span>
+        <span><span class="badge badge-decision" style="font-size:10px">supersede</span> Ersetzt</span>
+        <span><span class="badge badge-active" style="font-size:10px">confirm</span> Bestätigt</span>
+        <span><span class="badge badge-archived" style="font-size:10px">archive</span> Archiviert</span>
+    </div>
+</div>
+
 <!-- Event-Tabelle -->
 <div class="card">
     <div class="card-header">
@@ -38,7 +56,15 @@
             <div class="card-title">Heartbeat-Läufe</div>
             <div class="card-subtitle">Letzte Konsolidierungs-Events</div>
         </div>
-        <div style="display:flex;gap:8px;align-items:center">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <select class="filter-select" id="f-action" onchange="applyFilter()">
+                <option value="">Alle Aktionen</option>
+                <option value="create">create</option>
+                <option value="update">update</option>
+                <option value="supersede">supersede</option>
+                <option value="confirm">confirm</option>
+                <option value="archive">archive</option>
+            </select>
             <select class="filter-select" id="f-limit" onchange="loadEvents()">
                 <option value="20">20 Einträge</option>
                 <option value="30" selected>30 Einträge</option>
@@ -72,7 +98,7 @@
 <div class="detail-panel" id="cons-detail">
     <div class="card-header" style="margin-bottom:12px">
         <div class="card-title">Lauf-Detail</div>
-        <button onclick="closeDetail()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:18px">✕</button>
+        <button onclick="closeDetail()" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:18px">&#x2715;</button>
     </div>
     <div id="cons-detail-content"></div>
 </div>
@@ -81,13 +107,14 @@
 {% block scripts %}
 <script>
 let _allEvents = [];
+let _filtered = [];
 
 async function loadStats() {
     const r = await fetch('/api/consolidator/stats');
     const d = await r.json();
     if (d.error) return;
     document.getElementById('s-total').textContent = d.total_runs ?? '—';
-    document.getElementById('s-today').textContent = `${d.today_runs ?? 0} heute`;
+    document.getElementById('s-today').textContent = (d.today_runs ?? 0) + ' heute';
     document.getElementById('s-null').textContent = d.null_runs ?? '—';
     document.getElementById('s-retry').textContent = d.retry_runs ?? '—';
     document.getElementById('s-dropped').textContent = d.total_dropped ?? '—';
@@ -98,114 +125,192 @@ async function loadEvents() {
     const tbody = document.getElementById('cons-tbody');
     tbody.innerHTML = '<tr><td colspan="7" class="loading">Lade…</td></tr>';
 
-    const r = await fetch(`/api/consolidator/events?limit=${limit}`);
+    const r = await fetch('/api/consolidator/events?limit=' + limit);
     const d = await r.json();
     if (d.error) {
-        tbody.innerHTML = `<tr><td colspan="7" class="loading" style="color:var(--red)">${d.error}</td></tr>`;
+        tbody.innerHTML = '<tr><td colspan="7" class="loading" style="color:var(--red)">' + d.error + '</td></tr>';
         return;
     }
 
     _allEvents = d.events || [];
+    renderTimeline(_allEvents);
+    applyFilter();
+}
 
-    if (_allEvents.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" class="loading">Keine Events — warte auf nächsten Heartbeat.</td></tr>';
+function applyFilter() {
+    const actionFilter = document.getElementById('f-action').value;
+    if (!actionFilter) {
+        _filtered = _allEvents;
+    } else {
+        _filtered = _allEvents.filter(function(ev) {
+            return (ev.actions || []).some(function(a) { return a.action === actionFilter; });
+        });
+    }
+    renderTable(_filtered);
+}
+
+function renderTimeline(events) {
+    const tl = document.getElementById('timeline');
+    if (!events.length) {
+        tl.innerHTML = '<span style="color:var(--text-dim);font-size:12px">Keine Daten</span>';
         return;
     }
 
-    tbody.innerHTML = _allEvents.map(ev => {
+    // Neueste zuerst, max 40
+    const slice = events.slice(0, 40).reverse();
+    const items = slice.map(function(ev) {
+        const summary = ev.actions_summary || {};
+        const total = ev.actions_count || 0;
+        const hasSupersede = summary['supersede'] > 0;
+        const hasCreate = summary['create'] > 0;
+        const isNoop = ev.null_result;
+
+        let color = 'var(--text-dim)';
+        if (isNoop) color = 'var(--amber)';
+        else if (hasSupersede) color = 'var(--blue)';
+        else if (hasCreate) color = '#2ecc71';
+        else if (total > 0) color = 'var(--accent)';
+
+        const tip = ev.timestamp_short + ' | ' + total + ' Aktionen' +
+            Object.entries(summary).map(function(e) { return ' ' + e[0] + ':' + e[1]; }).join('');
+
+        return '<span onclick="showDetail(' + ev.id + ')" title="' + escHtml(tip) + '" ' +
+            'style="display:inline-flex;align-items:center;justify-content:center;' +
+            'width:28px;height:28px;border-radius:4px;cursor:pointer;font-size:11px;font-weight:600;' +
+            'background:var(--bg-elevated);border:1px solid var(--border);color:' + color + ';' +
+            'transition:transform 0.1s" ' +
+            'onmouseover="this.style.transform=\'scale(1.2)\'" onmouseout="this.style.transform=\'scale(1)\'">' +
+            (isNoop ? '·' : total) +
+            '</span>';
+    });
+
+    tl.innerHTML = items.join('');
+}
+
+function renderTable(events) {
+    const tbody = document.getElementById('cons-tbody');
+    if (!events.length) {
+        tbody.innerHTML = '<tr><td colspan="7" class="loading">Keine Events gefunden.</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = events.map(function(ev) {
         const flags = [];
-        if (ev.retry_triggered) flags.push(`<span class="badge" style="background:var(--blue-dim);color:var(--blue)">retry</span>`);
-        if (ev.null_result) flags.push(`<span class="badge" style="background:var(--amber-dim);color:var(--amber)">no-op</span>`);
-        if (ev.dropped_count > 0) flags.push(`<span class="badge" style="background:var(--red-dim);color:var(--red)">-${ev.dropped_count} dropped</span>`);
-        if (ev.error) flags.push(`<span class="badge" style="background:var(--red-dim);color:var(--red)">error</span>`);
+        if (ev.retry_triggered) flags.push('<span class="badge" style="background:var(--blue-dim);color:var(--blue)">retry</span>');
+        if (ev.null_result) flags.push('<span class="badge" style="background:var(--amber-dim);color:var(--amber)">no-op</span>');
+        if (ev.dropped_count > 0) flags.push('<span class="badge" style="background:var(--red-dim);color:var(--red)">-' + ev.dropped_count + ' dropped</span>');
+        if (ev.error) flags.push('<span class="badge" style="background:var(--red-dim);color:var(--red)">error</span>');
 
         const summary = ev.actions_summary || {};
         const summaryHtml = Object.entries(summary)
-            .map(([a, n]) => `<span class="badge badge-${actionColor(a)}" style="margin:1px">${a} ${n}</span>`)
+            .map(function(e) { return '<span class="badge badge-' + actionColor(e[0]) + '" style="margin:1px">' + e[0] + ' ' + e[1] + '</span>'; })
             .join(' ') || '<span style="color:var(--text-dim)">—</span>';
 
-        return `<tr onclick="showDetail(${ev.id})" style="cursor:pointer">
-            <td class="mono">${escHtml(ev.timestamp_short)}</td>
-            <td class="mono" style="color:var(--text-dim)">${escHtml(ev.run_id)}</td>
-            <td style="color:var(--text-secondary)">${ev.block_index + 1}</td>
-            <td style="color:var(--text-secondary)">${ev.turns_count} / ${ev.block_size}</td>
-            <td style="color:var(--text-primary);font-weight:600">${ev.actions_count}</td>
-            <td>${summaryHtml}</td>
-            <td>${flags.join(' ') || '—'}</td>
-        </tr>`;
+        return '<tr onclick="showDetail(' + ev.id + ')" style="cursor:pointer">' +
+            '<td class="mono">' + escHtml(ev.timestamp_short) + '</td>' +
+            '<td class="mono" style="color:var(--text-dim)">' + escHtml(ev.run_id) + '</td>' +
+            '<td style="color:var(--text-secondary)">' + (ev.block_index + 1) + '</td>' +
+            '<td style="color:var(--text-secondary)">' + ev.turns_count + ' / ' + ev.block_size + '</td>' +
+            '<td style="color:var(--text-primary);font-weight:600">' + ev.actions_count + '</td>' +
+            '<td>' + summaryHtml + '</td>' +
+            '<td>' + (flags.join(' ') || '—') + '</td>' +
+            '</tr>';
     }).join('');
 }
 
 function actionColor(action) {
-    const map = { create: 'knowledge', confirm: 'active', update: 'working_state', supersede: 'decision' };
+    const map = {create: 'knowledge', confirm: 'active', update: 'working_state', supersede: 'decision', archive: 'archived'};
     return map[action] || 'archived';
 }
 
-function showDetail(eventId) {
-    const ev = _allEvents.find(e => e.id === eventId);
+async function showDetail(eventId) {
+    const ev = _allEvents.find(function(e) { return e.id === eventId; });
     if (!ev) return;
 
     const panel = document.getElementById('cons-detail');
     const content = document.getElementById('cons-detail-content');
 
-    const actionsHtml = (ev.actions || []).length === 0
+    // Aktionen rendern — supersede bekommt Diff-Button
+    const actionsHtml = !(ev.actions || []).length
         ? '<div style="color:var(--text-dim);padding:8px 0">Keine Aktionen ausgeführt.</div>'
-        : (ev.actions || []).map((a, i) => `
-            <div style="border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;margin-bottom:8px;background:var(--bg-deep)">
-                <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
-                    <span style="color:var(--text-dim);font-size:10px">#${i+1}</span>
-                    <span class="badge badge-${actionColor(a.action)}">${a.action}</span>
-                    ${a.chunk_type ? `<span class="badge badge-${a.chunk_type}">${a.chunk_type}</span>` : ''}
-                    ${a.confidence != null ? `<span style="color:var(--text-muted);font-size:10px">conf ${Number(a.confidence).toFixed(2)}</span>` : ''}
-                    <span class="mono" style="color:var(--text-dim);font-size:10px;margin-left:auto">${a.chunk_id || ''}</span>
-                </div>
-                ${a.text_preview ? `<div style="color:var(--text-secondary);font-size:12px;line-height:1.5">${escHtml(a.text_preview)}</div>` : ''}
-                ${a.existing_chunk_id ? `<div style="margin-top:4px;font-size:10px;color:var(--text-dim)">↩ ${escHtml(a.existing_chunk_id)}</div>` : ''}
-            </div>`).join('');
+        : (ev.actions || []).map(function(a, i) {
+            const isSupersede = a.action === 'supersede' && a.chunk_id;
+            return '<div id="action-' + i + '" style="border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;margin-bottom:8px;background:var(--bg-deep)">' +
+                '<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">' +
+                    '<span style="color:var(--text-dim);font-size:10px">#' + (i+1) + '</span>' +
+                    '<span class="badge badge-' + actionColor(a.action) + '">' + a.action + '</span>' +
+                    (a.chunk_type ? '<span class="badge badge-' + a.chunk_type + '">' + a.chunk_type + '</span>' : '') +
+                    (a.confidence != null ? '<span style="color:var(--text-muted);font-size:10px">conf ' + Number(a.confidence).toFixed(2) + '</span>' : '') +
+                    (isSupersede ? '<button onclick="loadDiff(\'' + a.chunk_id + '\', ' + i + ')" style="margin-left:auto;background:var(--bg-elevated);color:var(--accent);border:1px solid var(--border);border-radius:4px;padding:2px 8px;cursor:pointer;font-size:11px;font-family:inherit">Diff anzeigen</button>' : '<span class="mono" style="color:var(--text-dim);font-size:10px;margin-left:auto">' + (a.chunk_id || '') + '</span>') +
+                '</div>' +
+                (a.text_preview ? '<div style="color:var(--text-secondary);font-size:12px;line-height:1.5">' + escHtml(a.text_preview) + '</div>' : '') +
+                (a.existing_chunk_id ? '<div style="margin-top:4px;font-size:10px;color:var(--text-dim)">&#x21A9; ' + escHtml(a.existing_chunk_id) + '</div>' : '') +
+                '<div id="diff-' + i + '"></div>' +
+            '</div>';
+        }).join('');
 
-    content.innerHTML = `
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;margin-bottom:16px">
-            <div class="stat-card">
-                <div class="stat-card-label">Zeitpunkt</div>
-                <div style="font-size:12px;margin-top:6px;color:var(--text-primary)">${escHtml(ev.timestamp_short)}</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-card-label">Run-ID</div>
-                <div class="mono" style="font-size:12px;margin-top:6px;color:var(--text-primary)">${escHtml(ev.run_id)}</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-card-label">Block / Turns</div>
-                <div style="font-size:12px;margin-top:6px;color:var(--text-primary)">Block ${ev.block_index + 1} · ${ev.turns_count} User-Turns (${ev.block_size} gesamt)</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-card-label">Flags</div>
-                <div style="margin-top:6px">
-                    ${ev.retry_triggered ? '<span class="badge" style="background:var(--blue-dim);color:var(--blue)">retry</span> ' : ''}
-                    ${ev.null_result ? '<span class="badge" style="background:var(--amber-dim);color:var(--amber)">no-op</span> ' : ''}
-                    ${ev.dropped_count > 0 ? `<span class="badge" style="background:var(--red-dim);color:var(--red)">-${ev.dropped_count} dropped</span>` : ''}
-                    ${ev.error ? `<span class="badge" style="background:var(--red-dim);color:var(--red)">${escHtml(ev.error)}</span>` : ''}
-                    ${!ev.retry_triggered && !ev.null_result && !ev.dropped_count && !ev.error ? '<span style="color:var(--text-dim)">—</span>' : ''}
-                </div>
-            </div>
-        </div>
-        <div class="card-title" style="margin-bottom:12px">Ausgeführte Aktionen (${ev.actions_count})</div>
-        ${actionsHtml}
-    `;
+    content.innerHTML =
+        '<div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;margin-bottom:16px">' +
+            '<div class="stat-card"><div class="stat-card-label">Zeitpunkt</div><div style="font-size:12px;margin-top:6px;color:var(--text-primary)">' + escHtml(ev.timestamp_short) + '</div></div>' +
+            '<div class="stat-card"><div class="stat-card-label">Run-ID</div><div class="mono" style="font-size:12px;margin-top:6px;color:var(--text-primary)">' + escHtml(ev.run_id) + '</div></div>' +
+            '<div class="stat-card"><div class="stat-card-label">Block / Turns</div><div style="font-size:12px;margin-top:6px;color:var(--text-primary)">Block ' + (ev.block_index+1) + ' · ' + ev.turns_count + ' User-Turns (' + ev.block_size + ' gesamt)</div></div>' +
+            '<div class="stat-card"><div class="stat-card-label">Flags</div><div style="margin-top:6px">' +
+                (ev.retry_triggered ? '<span class="badge" style="background:var(--blue-dim);color:var(--blue)">retry</span> ' : '') +
+                (ev.null_result ? '<span class="badge" style="background:var(--amber-dim);color:var(--amber)">no-op</span> ' : '') +
+                (ev.dropped_count > 0 ? '<span class="badge" style="background:var(--red-dim);color:var(--red)">-' + ev.dropped_count + ' dropped</span>' : '') +
+                (ev.error ? '<span class="badge" style="background:var(--red-dim);color:var(--red)">' + escHtml(ev.error) + '</span>' : '') +
+                (!ev.retry_triggered && !ev.null_result && !ev.dropped_count && !ev.error ? '<span style="color:var(--text-dim)">—</span>' : '') +
+            '</div></div>' +
+        '</div>' +
+        '<div class="card-title" style="margin-bottom:12px">Ausgeführte Aktionen (' + ev.actions_count + ')</div>' +
+        actionsHtml;
 
     panel.classList.add('visible');
-    panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    panel.scrollIntoView({behavior: 'smooth', block: 'nearest'});
 
-    document.querySelectorAll('#cons-tbody tr').forEach(r => r.classList.remove('selected'));
-    document.querySelectorAll('#cons-tbody tr').forEach(r => {
+    document.querySelectorAll('#cons-tbody tr').forEach(function(r) { r.classList.remove('selected'); });
+    document.querySelectorAll('#cons-tbody tr').forEach(function(r) {
         if (r.getAttribute('onclick') && r.getAttribute('onclick').includes(String(eventId))) {
             r.classList.add('selected');
         }
     });
 }
 
+async function loadDiff(chunkId, actionIndex) {
+    const container = document.getElementById('diff-' + actionIndex);
+    container.innerHTML = '<div style="color:var(--text-muted);font-size:11px;padding:8px 0">Lade Diff…</div>';
+
+    try {
+        const r = await fetch('/api/consolidator/diff/' + chunkId);
+        const d = await r.json();
+
+        if (d.error) {
+            container.innerHTML = '<div style="color:var(--red);font-size:11px;padding:4px 0">Fehler: ' + escHtml(d.error) + '</div>';
+            return;
+        }
+
+        const oldText = d.old_text || '(nicht gefunden)';
+        const newText = d.new_text || '';
+
+        container.innerHTML =
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">' +
+                '<div>' +
+                    '<div style="font-size:10px;text-transform:uppercase;color:var(--red);margin-bottom:4px;letter-spacing:0.08em">Alt (' + escHtml(d.supersedes ? d.supersedes.substring(0,8) : '?') + ')</div>' +
+                    '<div style="background:var(--bg-deep);border:1px solid #c0392b44;border-radius:4px;padding:10px;font-size:12px;line-height:1.6;color:var(--text-secondary);white-space:pre-wrap">' + escHtml(oldText) + '</div>' +
+                '</div>' +
+                '<div>' +
+                    '<div style="font-size:10px;text-transform:uppercase;color:#2ecc71;margin-bottom:4px;letter-spacing:0.08em">Neu (' + escHtml(chunkId.substring(0,8)) + ')</div>' +
+                    '<div style="background:var(--bg-deep);border:1px solid #2ecc7144;border-radius:4px;padding:10px;font-size:12px;line-height:1.6;color:var(--text-secondary);white-space:pre-wrap">' + escHtml(newText) + '</div>' +
+                '</div>' +
+            '</div>';
+    } catch(e) {
+        container.innerHTML = '<div style="color:var(--red);font-size:11px;padding:4px 0">Fehler: ' + e.message + '</div>';
+    }
+}
+
 function closeDetail() {
     document.getElementById('cons-detail').classList.remove('visible');
-    document.querySelectorAll('#cons-tbody tr').forEach(r => r.classList.remove('selected'));
+    document.querySelectorAll('#cons-tbody tr').forEach(function(r) { r.classList.remove('selected'); });
 }
 
 function escHtml(s) {

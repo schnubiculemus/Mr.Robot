@@ -4,7 +4,7 @@
 {% block content %}
 <div class="page-header">
     <h1>Chunk Explorer</h1>
-    <p>Alle Erinnerungen durchsuchen und inspizieren</p>
+    <p>Alle Erinnerungen durchsuchen, bearbeiten und archivieren</p>
 </div>
 
 <div class="filters">
@@ -16,6 +16,7 @@
         <option value="working_state">working_state</option>
         <option value="knowledge">knowledge</option>
         <option value="self_reflection">self_reflection</option>
+        <option value="diary">diary</option>
     </select>
     <select class="filter-select" id="filter-source" onchange="loadChunks()">
         <option value="">Alle Quellen</option>
@@ -32,11 +33,18 @@
     <span id="chunk-count" style="color:var(--text-muted);font-size:11px;align-self:center;margin-left:auto"></span>
 </div>
 
+<div id="bulk-bar" style="display:none;align-items:center;gap:12px;padding:8px 16px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;margin-bottom:12px">
+    <span id="bulk-count" style="font-size:13px;color:var(--text-muted)"></span>
+    <button onclick="bulkArchive()" style="background:#c0392b;color:#fff;border:none;padding:6px 16px;border-radius:6px;cursor:pointer;font-family:inherit;font-size:13px">Archivieren</button>
+    <button onclick="clearSelection()" style="background:transparent;color:var(--text-muted);border:1px solid var(--border);padding:6px 16px;border-radius:6px;cursor:pointer;font-family:inherit;font-size:13px">Abbrechen</button>
+</div>
+
 <div class="card" style="padding:0;overflow:hidden">
     <div class="table-wrap">
         <table>
             <thead>
                 <tr>
+                    <th style="width:36px"><input type="checkbox" id="select-all" onchange="toggleSelectAll(this)" title="Alle auswählen"></th>
                     <th style="width:80px">ID</th>
                     <th style="width:110px">Typ</th>
                     <th>Text</th>
@@ -48,7 +56,7 @@
                 </tr>
             </thead>
             <tbody id="chunk-table">
-                <tr><td colspan="8" class="loading">Lade Chunks...</td></tr>
+                <tr><td colspan="9" class="loading">Lade Chunks...</td></tr>
             </tbody>
         </table>
     </div>
@@ -60,7 +68,7 @@
             <div class="card-title" id="detail-title">Chunk-Details</div>
             <div class="card-subtitle" id="detail-subtitle"></div>
         </div>
-        <span style="cursor:pointer;color:var(--text-muted);font-size:18px" onclick="closeDetail()">✕</span>
+        <span style="cursor:pointer;color:var(--text-muted);font-size:18px" onclick="closeDetail()">&#x2715;</span>
     </div>
     <div id="detail-content"></div>
 </div>
@@ -71,6 +79,7 @@
 let searchTimeout = null;
 let allChunks = [];
 let selectedChunkId = null;
+let selectedIds = new Set();
 
 function debounceSearch() {
     clearTimeout(searchTimeout);
@@ -95,41 +104,93 @@ async function loadChunks() {
         const res = await fetch('/api/chunks?' + params.toString());
         const data = await res.json();
         allChunks = data.chunks;
-
-        document.getElementById('chunk-count').textContent = `${data.total} Chunks`;
+        selectedIds.clear();
+        updateBulkBar();
+        document.getElementById('chunk-count').textContent = data.total + ' Chunks';
         renderTable(data.chunks);
     } catch (e) {
         document.getElementById('chunk-table').innerHTML =
-            `<tr><td colspan="8" class="loading">Fehler: ${e.message}</td></tr>`;
+            '<tr><td colspan="9" class="loading">Fehler: ' + e.message + '</td></tr>';
     }
 }
 
 function renderTable(chunks) {
     if (!chunks.length) {
         document.getElementById('chunk-table').innerHTML =
-            '<tr><td colspan="8" class="loading">Keine Chunks gefunden</td></tr>';
+            '<tr><td colspan="9" class="loading">Keine Chunks gefunden</td></tr>';
         return;
     }
 
-    const html = chunks.map(c => {
+    const rows = chunks.map(function(c) {
         const isSelected = c.id === selectedChunkId;
-        const confBar = `<span class="score-bar"><span class="score-bar-fill" style="width:${c.confidence * 100}%"></span></span>`;
-        const weightBar = `<span class="score-bar"><span class="score-bar-fill" style="width:${(c.weight / 2) * 100}%"></span></span>`;
-        const tags = c.tags_list.map(t => `<span class="tag">${t}</span>`).join('');
+        const isChecked = selectedIds.has(c.id);
+        const confBar = '<span class="score-bar"><span class="score-bar-fill" style="width:' + (c.confidence * 100) + '%"></span></span>';
+        const weightBar = '<span class="score-bar"><span class="score-bar-fill" style="width:' + ((c.weight / 2) * 100) + '%"></span></span>';
+        const tags = c.tags_list.map(function(t) { return '<span class="tag">' + t + '</span>'; }).join('');
 
-        return `<tr class="${isSelected ? 'selected' : ''}" style="cursor:pointer" onclick="showDetail('${c.id}')">
-            <td class="mono">${c.id.substring(0, 8)}</td>
-            <td><span class="badge badge-${c.chunk_type}">${c.chunk_type}</span></td>
-            <td class="text-col" style="white-space:normal;word-break:break-word">${escHtml(c.text)}${tags ? '<br>' + tags : ''}</td>
-            <td class="mono">${c.confidence} ${confBar}</td>
-            <td class="mono">${c.weight} ${weightBar}</td>
-            <td class="mono">${c.age}</td>
-            <td>${c.source}</td>
-            <td>${c.epistemic_status}</td>
-        </tr>`;
-    }).join('');
+        return '<tr class="' + (isSelected ? 'selected' : '') + '">' +
+            '<td onclick="event.stopPropagation()">' +
+                '<input type="checkbox" ' + (isChecked ? 'checked' : '') + ' onchange="toggleCheck(\'' + c.id + '\', this)">' +
+            '</td>' +
+            '<td class="mono" style="cursor:pointer" onclick="showDetail(\'' + c.id + '\')">' + c.id.substring(0, 8) + '</td>' +
+            '<td style="cursor:pointer" onclick="showDetail(\'' + c.id + '\')"><span class="badge badge-' + c.chunk_type + '">' + c.chunk_type + '</span></td>' +
+            '<td class="text-col" style="white-space:normal;word-break:break-word;cursor:pointer" onclick="showDetail(\'' + c.id + '\')">' + escHtml(c.text) + (tags ? '<br>' + tags : '') + '</td>' +
+            '<td class="mono">' + c.confidence + ' ' + confBar + '</td>' +
+            '<td class="mono">' + c.weight + ' ' + weightBar + '</td>' +
+            '<td class="mono">' + c.age + '</td>' +
+            '<td>' + c.source + '</td>' +
+            '<td>' + c.epistemic_status + '</td>' +
+            '</tr>';
+    });
 
-    document.getElementById('chunk-table').innerHTML = html;
+    document.getElementById('chunk-table').innerHTML = rows.join('');
+}
+
+function toggleCheck(id, cb) {
+    if (cb.checked) selectedIds.add(id);
+    else selectedIds.delete(id);
+    updateBulkBar();
+}
+
+function toggleSelectAll(cb) {
+    allChunks.forEach(function(c) {
+        if (cb.checked) selectedIds.add(c.id);
+        else selectedIds.delete(c.id);
+    });
+    renderTable(allChunks);
+    updateBulkBar();
+}
+
+function clearSelection() {
+    selectedIds.clear();
+    document.getElementById('select-all').checked = false;
+    renderTable(allChunks);
+    updateBulkBar();
+}
+
+function updateBulkBar() {
+    const bar = document.getElementById('bulk-bar');
+    const count = document.getElementById('bulk-count');
+    if (selectedIds.size > 0) {
+        bar.style.display = 'flex';
+        count.textContent = selectedIds.size + ' Chunk(s) ausgewaehlt';
+    } else {
+        bar.style.display = 'none';
+    }
+}
+
+async function bulkArchive() {
+    if (!selectedIds.size) return;
+    if (!confirm(selectedIds.size + ' Chunk(s) archivieren?')) return;
+    const res = await fetch('/api/chunks/bulk-archive', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ids: Array.from(selectedIds)})
+    });
+    const data = await res.json();
+    alert(data.archived + ' archiviert' + (data.errors.length ? ', ' + data.errors.length + ' Fehler' : '') + '.');
+    closeDetail();
+    loadChunks();
 }
 
 async function showDetail(chunkId) {
@@ -137,76 +198,100 @@ async function showDetail(chunkId) {
     renderTable(allChunks);
 
     try {
-        const res = await fetch(`/api/chunks/${chunkId}`);
+        const res = await fetch('/api/chunks/' + chunkId);
         const c = await res.json();
 
         if (c.error) {
-            document.getElementById('detail-content').innerHTML = `<div class="loading">${c.error}</div>`;
+            document.getElementById('detail-content').innerHTML = '<div class="loading">' + c.error + '</div>';
             return;
         }
 
-        const tags = c.tags_list.map(t => `<span class="tag">${t}</span>`).join(' ') || '—';
+        document.getElementById('detail-title').textContent = c.chunk_type + ' \u2014 ' + c.id.substring(0, 12);
+        document.getElementById('detail-subtitle').textContent = 'Erstellt: ' + (c.created_at ? c.created_at.substring(0, 19).replace('T', ' ') : '?') + ' (' + c.age + ')';
 
-        document.getElementById('detail-title').textContent = `${c.chunk_type} — ${c.id.substring(0, 12)}`;
-        document.getElementById('detail-subtitle').textContent = `Erstellt: ${c.created_at ? c.created_at.substring(0, 19).replace('T', ' ') : '?'} (${c.age})`;
+        let extraRows = '';
+        if (c.last_confirmed_at) extraRows += detailRow('Bestaetigt', c.last_confirmed_at);
+        if (c.last_decay_at) extraRows += detailRow('Letzter Decay', c.last_decay_at);
+        if (c.supersedes) extraRows += detailRow('Ersetzt', '<span style="font-size:11px">' + c.supersedes + '</span>');
 
-        document.getElementById('detail-content').innerHTML = `
-            <div class="detail-text">${escHtml(c.text)}</div>
-            <div style="margin-top:16px">
-                <div class="detail-row">
-                    <div class="detail-label">ID</div>
-                    <div class="detail-value" style="font-size:11px">${c.id}</div>
-                </div>
-                <div class="detail-row">
-                    <div class="detail-label">Typ</div>
-                    <div class="detail-value"><span class="badge badge-${c.chunk_type}">${c.chunk_type}</span></div>
-                </div>
-                <div class="detail-row">
-                    <div class="detail-label">Source</div>
-                    <div class="detail-value">${c.source}</div>
-                </div>
-                <div class="detail-row">
-                    <div class="detail-label">Epistemic</div>
-                    <div class="detail-value">${c.epistemic_status}</div>
-                </div>
-                <div class="detail-row">
-                    <div class="detail-label">Confidence</div>
-                    <div class="detail-value">${c.confidence}</div>
-                </div>
-                <div class="detail-row">
-                    <div class="detail-label">Weight</div>
-                    <div class="detail-value">${c.weight}</div>
-                </div>
-                <div class="detail-row">
-                    <div class="detail-label">Status</div>
-                    <div class="detail-value"><span class="badge badge-${c.status}">${c.status}</span></div>
-                </div>
-                <div class="detail-row">
-                    <div class="detail-label">Tags</div>
-                    <div class="detail-value">${tags}</div>
-                </div>
-                <div class="detail-row">
-                    <div class="detail-label">Erstellt</div>
-                    <div class="detail-value">${c.created_at || '—'}</div>
-                </div>
-                ${c.last_confirmed_at ? `<div class="detail-row">
-                    <div class="detail-label">Bestätigt</div>
-                    <div class="detail-value">${c.last_confirmed_at}</div>
-                </div>` : ''}
-                ${c.last_decay_at ? `<div class="detail-row">
-                    <div class="detail-label">Letzter Decay</div>
-                    <div class="detail-value">${c.last_decay_at}</div>
-                </div>` : ''}
-                ${c.supersedes ? `<div class="detail-row">
-                    <div class="detail-label">Ersetzt</div>
-                    <div class="detail-value" style="font-size:11px">${c.supersedes}</div>
-                </div>` : ''}
-            </div>
-        `;
+        document.getElementById('detail-content').innerHTML =
+            '<div class="detail-text" style="white-space:pre-wrap">' + escHtml(c.text) + '</div>' +
+            '<div style="margin-top:20px;display:flex;flex-direction:column;gap:10px">' +
+                detailRow('Weight',
+                    '<input id="edit-weight" type="number" min="0" max="2" step="0.05" value="' + c.weight + '" ' +
+                    'style="width:70px;background:var(--bg-input,#1e1e2e);color:var(--text-primary);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-family:inherit;font-size:13px">') +
+                detailRow('Confidence',
+                    '<input id="edit-confidence" type="number" min="0" max="1" step="0.05" value="' + c.confidence + '" ' +
+                    'style="width:70px;background:var(--bg-input,#1e1e2e);color:var(--text-primary);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-family:inherit;font-size:13px">') +
+                detailRow('Tags',
+                    '<input id="edit-tags" type="text" value="' + escAttr(c.tags) + '" placeholder="tag1, tag2, ..." ' +
+                    'style="width:100%;background:var(--bg-input,#1e1e2e);color:var(--text-primary);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-family:inherit;font-size:13px">') +
+                '<div style="display:flex;gap:8px;margin-top:4px">' +
+                    '<button onclick="saveChunk(\'' + c.id + '\')" style="background:var(--accent,#00e5ff);color:#000;border:none;padding:6px 16px;border-radius:6px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:600">Speichern</button>' +
+                    '<button onclick="archiveChunk(\'' + c.id + '\')" style="background:#c0392b;color:#fff;border:none;padding:6px 16px;border-radius:6px;cursor:pointer;font-family:inherit;font-size:13px">Archivieren</button>' +
+                '</div>' +
+                '<div id="save-status" style="font-size:12px;color:var(--text-muted);min-height:18px"></div>' +
+                '<div style="border-top:1px solid var(--border);padding-top:12px;margin-top:4px">' +
+                    detailRow('ID', '<span style="font-size:11px">' + c.id + '</span>') +
+                    detailRow('Typ', '<span class="badge badge-' + c.chunk_type + '">' + c.chunk_type + '</span>') +
+                    detailRow('Source', c.source) +
+                    detailRow('Epistemic', c.epistemic_status) +
+                    detailRow('Status', '<span class="badge badge-' + c.status + '">' + c.status + '</span>') +
+                    detailRow('Erstellt', c.created_at || '\u2014') +
+                    extraRows +
+                '</div>' +
+            '</div>';
 
         document.getElementById('detail-panel').classList.add('visible');
     } catch (e) {
-        document.getElementById('detail-content').innerHTML = `<div class="loading">Fehler: ${e.message}</div>`;
+        document.getElementById('detail-content').innerHTML = '<div class="loading">Fehler: ' + e.message + '</div>';
+    }
+}
+
+function detailRow(label, val) {
+    return '<div class="detail-row"><div class="detail-label">' + label + '</div><div class="detail-value">' + val + '</div></div>';
+}
+
+async function saveChunk(id) {
+    const weight = parseFloat(document.getElementById('edit-weight').value);
+    const confidence = parseFloat(document.getElementById('edit-confidence').value);
+    const tags = document.getElementById('edit-tags').value;
+    const status = document.getElementById('save-status');
+
+    status.textContent = 'Speichern...';
+    status.style.color = 'var(--text-muted)';
+    try {
+        const res = await fetch('/api/chunks/' + id, {
+            method: 'PATCH',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({weight: weight, confidence: confidence, tags: tags})
+        });
+        const data = await res.json();
+        if (data.ok) {
+            status.textContent = '\u2713 Gespeichert';
+            status.style.color = '#2ecc71';
+            const chunk = allChunks.find(function(c) { return c.id === id; });
+            if (chunk) { chunk.weight = weight; chunk.confidence = confidence; chunk.tags = tags; }
+            renderTable(allChunks);
+        } else {
+            status.textContent = 'Fehler: ' + (data.error || '?');
+            status.style.color = '#e74c3c';
+        }
+    } catch (e) {
+        status.textContent = 'Fehler: ' + e.message;
+        status.style.color = '#e74c3c';
+    }
+}
+
+async function archiveChunk(id) {
+    if (!confirm('Chunk archivieren?')) return;
+    const res = await fetch('/api/chunks/' + id + '/archive', {method: 'POST'});
+    const data = await res.json();
+    if (data.ok) {
+        closeDetail();
+        loadChunks();
+    } else {
+        alert('Fehler: ' + (data.error || '?'));
     }
 }
 
@@ -217,9 +302,15 @@ function closeDetail() {
 }
 
 function escHtml(str) {
+    if (!str) return '';
     const div = document.createElement('div');
     div.textContent = str;
     return div.innerHTML;
+}
+
+function escAttr(str) {
+    if (!str) return '';
+    return str.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 loadChunks();

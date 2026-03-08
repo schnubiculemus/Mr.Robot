@@ -19,7 +19,8 @@ from core.database import get_chat_history, save_message
 from core.whatsapp import send_message
 from core.ollama_client import build_system_prompt
 from core.datetime_utils import now_utc, now_berlin, safe_parse_dt, format_berlin
-from memory.memory_store import query_active
+import random
+from memory.memory_store import query_active, get_all_active
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +96,15 @@ def check_triggers(user_id, now):
             "typ": "widerspruch",
             "kontext": widerspruch,
             "prioritaet": 3,
+        })
+
+    # --- Stufe 4: Curiosity-Frage ---
+    curiosity = _check_curiosity(user_id, now)
+    if curiosity:
+        triggers.append({
+            "typ": "neugier-frage",
+            "kontext": curiosity,
+            "prioritaet": 5,
         })
 
     return triggers
@@ -261,6 +271,65 @@ def _check_widerspruch():
         return "Mögliche Widersprüche im Gedächtnis:\n" + "\n".join(texts)
 
     return None
+
+
+# =============================================================================
+# Stufe 4: Curiosity-Trigger
+# =============================================================================
+
+def _check_curiosity(user_id, now):
+    """
+    Prüft ob eine Curiosity-Frage fällig ist.
+    Cooldown: 2-3 Tage (zufällig). Zeitfenster: 9-21h.
+    Kimi entscheidet frei welche Frage sie stellt — basierend auf
+    vorhandenen Chunks und was noch fehlt.
+    """
+    from heartbeat import load_state, save_state, to_iso
+    berlin = now_berlin()
+
+    # Nur tagsüber
+    if not (9 <= berlin.hour < 21):
+        return None
+
+    # Cooldown prüfen
+    state = load_state()
+    last_q = state.get(f"{user_id}_last_curiosity")
+    if last_q:
+        last_dt = safe_parse_dt(last_q)
+        if last_dt:
+            age_hours = (now - last_dt).total_seconds() / 3600
+            cooldown_hours = state.get(f"{user_id}_curiosity_cooldown", 48)
+            if age_hours < cooldown_hours:
+                return None
+
+    # Alle aktiven Chunks sammeln als Überblick für Kimi
+    try:
+        all_chunks = get_all_active()
+    except Exception:
+        all_chunks = []
+
+    # Kompakte Zusammenfassung: was weiß ich schon?
+    known_summary = []
+    for c in all_chunks:
+        ctype = c.get("chunk_type", "")
+        if ctype in ("hard_fact", "preference", "decision"):
+            known_summary.append(f"[{ctype}] {c['text'][:80]}")
+
+    known_text = "\n".join(known_summary[:30]) if known_summary else "Noch kaum etwas gespeichert."
+
+    context = f"""Was ich über Tommy weiß (Auszug):
+{known_text}
+
+Entscheide selbst: Worüber möchtest du mehr erfahren? 
+Stell eine einzige, natürliche Frage — über etwas das dir fehlt oder dich interessiert.
+Kein Thema ist vorgegeben. Du kannst völlig frei wählen."""
+
+    # Cooldown setzen
+    state[f"{user_id}_last_curiosity"] = to_iso(now)
+    state[f"{user_id}_curiosity_cooldown"] = random.randint(48, 72)
+    save_state(state)
+
+    return context
 
 
 # =============================================================================

@@ -49,14 +49,10 @@ _DIRECTIVE_PATTERNS = [
 # Wenn ein Directive-Trigger UND eines dieser Keywords matcht → preference
 _STYLE_KEYWORDS = [
     re.compile(r"\b(fett|bold|hervorheb|markdown|formatier)", re.I),
-    re.compile(r"\b(fließtext|fliesstext|prosa|ohne liste)", re.I),
-    re.compile(r"\b(emoji|smiley|emoticon)", re.I),
-    re.compile(r"\b(duzen|siezen|du\b|sie\b|anrede)", re.I),
-    re.compile(r"\b(kurz|knapp|ausführlich|lang|wortreich|kompakt)", re.I),
-    re.compile(r"\b(ton|tonfall|stil|schreibstil|antwortst)", re.I),
-    re.compile(r"\b(überschrift|header|bullet|aufzählung|nummerier)", re.I),
-    re.compile(r"\b(smalltalk|floskeln?|höflichkeit)", re.I),
-    re.compile(r"\b(sprache|deutsch|englisch|denglisch)", re.I),
+    re.compile(r"\b(fließtext|fliesstext|prosa|ohne liste)\b", re.I),
+    re.compile(r"\b(emoji|smiley|emoticon)\b", re.I),
+    re.compile(r"\b(bullet|aufzählung|nummerier|überschrift|header)\b", re.I),
+    re.compile(r"\b(schreibstil|antwortst|tonfall)\b", re.I),
 ]
 
 # Hard-Fact-Signale: direkte Aufforderungen zur Speicherung
@@ -128,10 +124,12 @@ def detect_fast_track(user_message):
             else:
                 return "decision", match.group(), ["fast-track"]
 
-    # 2. Hard-Fact-Trigger prüfen
+    # 2. Hard-Fact-Trigger prüfen (mit Style-Check)
     for pattern in _HARD_FACT_PATTERNS:
         match = pattern.search(user_message)
         if match:
+            if _is_style_related(user_message):
+                return "preference", match.group(), ["fast-track", "global-preference", "response-style"]
             return "hard_fact", match.group(), ["fast-track"]
 
     return None
