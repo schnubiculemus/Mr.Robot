@@ -203,7 +203,13 @@ def diary_page():
 @app.route("/soul")
 @require_auth
 def soul_page():
-    return render_template("soul.html")
+    return redirect("/essence")
+
+
+@app.route("/essence")
+@require_auth
+def essence_page():
+    return render_template("essence.html")
 
 
 # =============================================================================
@@ -289,13 +295,11 @@ TOOLS_CONFIG_PATH = os.path.join(PROJECT_DIR, "data", "tools_config.json")
 
 DEFAULT_TOOLS = [
     {"id": "pdf",        "name": "PDF-Analyse",      "icon": "📄", "description": "PDFs per WhatsApp hochladen und durchsuchen", "enabled": True,  "available": True},
-    {"id": "websearch",  "name": "Web Search",        "icon": "🌐", "description": "Aktuelle Informationen aus dem Web abrufen",  "enabled": False, "available": False},
     {"id": "calendar",   "name": "Kalender",          "icon": "📅", "description": "Termine lesen und erstellen",                "enabled": False, "available": False},
     {"id": "email",      "name": "E-Mail",            "icon": "✉️",  "description": "E-Mails lesen und senden",                  "enabled": False, "available": False},
     {"id": "voice",      "name": "Sprachnachrichten", "icon": "🎙️", "description": "Sprachnachrichten transkribieren (Whisper)", "enabled": False, "available": False},
     {"id": "tasks",      "name": "Aufgaben",          "icon": "✅", "description": "Aufgaben erstellen und verwalten",           "enabled": False, "available": False},
     {"id": "images",     "name": "Bildanalyse",       "icon": "🖼️", "description": "Bilder beschreiben und analysieren",        "enabled": False, "available": False},
-    {"id": "contacts",   "name": "Kontakte",          "icon": "👤", "description": "WhatsApp-Kontakte als Kontext nutzen",      "enabled": False, "available": False},
 ]
 
 def load_tools_config():
@@ -747,7 +751,7 @@ def api_fasttrack_events():
 
         # Aufbereiten für Frontend
         for ev in events:
-            ev["tags_list"] = [t.strip() for t in (ev.get("tags") or "").split(",") if t.strip()]
+            ev["tags_list"] = _parse_tags(ev.get("tags", ""))
             ev["timestamp_short"] = ev["timestamp"][:16].replace("T", " ") if ev["timestamp"] else "?"
             ev["message_short"] = (ev.get("message_preview") or "")[:100]
             ev["chunk_text_short"] = (ev.get("chunk_text") or "")[:120]
@@ -889,6 +893,9 @@ def api_consolidator_diff(chunk_id):
 # =============================================================================
 
 SOUL_MD_PATH = os.path.join(PROJECT_DIR, "soul.md")
+RULES_MD_PATH = os.path.join(PROJECT_DIR, "rules.md")
+TOOLS_MD_PATH = os.path.join(PROJECT_DIR, "tools.md")
+ARCHITECTURE_MD_PATH = os.path.join(PROJECT_DIR, "architecture.md")
 
 
 def _parse_soul_sections(text):
@@ -900,6 +907,8 @@ def _parse_soul_sections(text):
     idx = 0
 
     for line in lines:
+        if line.strip() == "---":
+            continue  # Trennlinien ignorieren — werden beim Rebuild neu gesetzt
         if line.startswith("## "):
             if current_lines or current_title == "__preamble__":
                 sections.append({
@@ -970,6 +979,84 @@ def api_soul_md_save():
     with open(SOUL_MD_PATH, "w") as f:
         f.write(new_text)
 
+    return jsonify({"ok": True, "chars": len(new_text)})
+
+
+# =============================================================================
+# API: Essence — generischer File-Editor für rules/tools/architecture
+# =============================================================================
+
+_ESSENCE_FILES = {
+    "rules": RULES_MD_PATH,
+    "tools": TOOLS_MD_PATH,
+    "architecture": ARCHITECTURE_MD_PATH,
+}
+
+@app.route("/api/essence/<file_key>")
+@require_auth
+def api_essence_get(file_key):
+    """Gibt eine Essence-Datei als Rohtext zurück."""
+    if file_key not in _ESSENCE_FILES:
+        return jsonify({"error": "Unbekannte Datei"}), 404
+    try:
+        with open(_ESSENCE_FILES[file_key], "r") as f:
+            text = f.read()
+        return jsonify({"raw": text})
+    except FileNotFoundError:
+        return jsonify({"raw": "", "missing": True})
+
+
+@app.route("/api/essence/<file_key>", methods=["POST"])
+@require_auth
+def api_essence_save(file_key):
+    """Speichert eine Essence-Datei."""
+    if file_key not in _ESSENCE_FILES:
+        return jsonify({"error": "Unbekannte Datei"}), 404
+    data = request.get_json()
+    if "raw" not in data:
+        return jsonify({"error": "raw erforderlich"}), 400
+    path = _ESSENCE_FILES[file_key]
+    import shutil
+    if os.path.exists(path):
+        shutil.copy2(path, path + ".bak")
+    with open(path, "w") as f:
+        f.write(data["raw"])
+    return jsonify({"ok": True, "chars": len(data["raw"])})
+
+
+# =============================================================================
+# API: Essence — Sektionen-Editor für rules/tools/architecture
+# =============================================================================
+
+@app.route("/api/essence/<file_key>/sections")
+@require_auth
+def api_essence_sections_get(file_key):
+    if file_key not in _ESSENCE_FILES:
+        return jsonify({"error": "Unbekannte Datei"}), 404
+    try:
+        with open(_ESSENCE_FILES[file_key], "r") as f:
+            text = f.read()
+        sections = _parse_soul_sections(text)
+        return jsonify({"sections": sections, "raw": text})
+    except FileNotFoundError:
+        return jsonify({"sections": [], "raw": "", "missing": True})
+
+
+@app.route("/api/essence/<file_key>/sections", methods=["POST"])
+@require_auth
+def api_essence_sections_save(file_key):
+    if file_key not in _ESSENCE_FILES:
+        return jsonify({"error": "Unbekannte Datei"}), 404
+    data = request.get_json()
+    if "sections" not in data:
+        return jsonify({"error": "sections erforderlich"}), 400
+    path = _ESSENCE_FILES[file_key]
+    import shutil
+    if os.path.exists(path):
+        shutil.copy2(path, path + ".bak")
+    new_text = _rebuild_soul_md(data["sections"])
+    with open(path, "w") as f:
+        f.write(new_text)
     return jsonify({"ok": True, "chars": len(new_text)})
 
 

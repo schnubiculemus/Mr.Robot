@@ -1,0 +1,274 @@
+{% extends "base.html" %}
+{% block title %}Essence{% endblock %}
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1 class="page-title">Essence</h1>
+        <p class="page-subtitle">Verfassung, Regeln, Tools und Architektur</p>
+    </div>
+</div>
+
+<!-- Haupt-Tabs -->
+<div style="display:flex;gap:0;margin-bottom:24px;border-bottom:1px solid var(--border)">
+    <button class="etab active" id="etab-soul"         onclick="switchETab('soul')"         style="padding:9px 22px;background:none;border:none;border-bottom:2px solid var(--accent);color:var(--text-primary);cursor:pointer;font-size:13px;font-family:inherit;font-weight:600">Soul</button>
+    <button class="etab"        id="etab-rules"        onclick="switchETab('rules')"        style="padding:9px 22px;background:none;border:none;border-bottom:2px solid transparent;color:var(--text-dim);cursor:pointer;font-size:13px;font-family:inherit">Rules</button>
+    <button class="etab"        id="etab-tools"        onclick="switchETab('tools')"        style="padding:9px 22px;background:none;border:none;border-bottom:2px solid transparent;color:var(--text-dim);cursor:pointer;font-size:13px;font-family:inherit">Tools</button>
+    <button class="etab"        id="etab-architecture" onclick="switchETab('architecture')" style="padding:9px 22px;background:none;border:none;border-bottom:2px solid transparent;color:var(--text-dim);cursor:pointer;font-size:13px;font-family:inherit">Architecture</button>
+</div>
+
+<!-- SOUL -->
+<div id="epanel-soul">
+    <div style="display:flex;gap:0;margin-bottom:20px;border-bottom:1px solid var(--border)">
+        <button class="stab active" id="stab-proposals" onclick="switchSoulTab('proposals')" style="padding:7px 16px;background:none;border:none;border-bottom:2px solid var(--accent);color:var(--text-primary);cursor:pointer;font-size:12px;font-family:inherit;font-weight:600">Vorschl&#228;ge</button>
+        <button class="stab"        id="stab-editor"    onclick="switchSoulTab('editor')"    style="padding:7px 16px;background:none;border:none;border-bottom:2px solid transparent;color:var(--text-dim);cursor:pointer;font-size:12px;font-family:inherit">Editor</button>
+    </div>
+    <div id="spanel-proposals">
+        <div class="stat-row">
+            <div class="stat-card"><div class="stat-card-label">Offen</div><div class="stat-card-value" id="stat-open">&#8212;</div></div>
+            <div class="stat-card"><div class="stat-card-label">&#220;bernommen</div><div class="stat-card-value" style="color:var(--accent)" id="stat-adopted">&#8212;</div></div>
+            <div class="stat-card"><div class="stat-card-label">Verworfen</div><div class="stat-card-value" style="color:var(--red)" id="stat-rejected">&#8212;</div></div>
+            <div class="stat-card"><div class="stat-card-label">Gesamt</div><div class="stat-card-value" id="stat-total">&#8212;</div></div>
+        </div>
+        <div class="card" style="margin-top:20px">
+            <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+                <div>
+                    <div class="card-title">Vorschl&#228;ge</div>
+                    <div class="card-sub">Jeden Sonntag generiert &#8212; h&#228;ndisch in den Editor &#252;bernehmen</div>
+                </div>
+                <div style="display:flex;gap:8px;align-items:center">
+                    <select id="filter-status" onchange="loadProposals()" style="background:var(--bg-elevated);border:1px solid var(--border);color:var(--text-primary);padding:6px 10px;border-radius:6px;font-family:var(--font);font-size:12px">
+                        <option value="">Alle</option>
+                        <option value="open">Offen</option>
+                        <option value="adopted">&#220;bernommen</option>
+                        <option value="rejected">Verworfen</option>
+                    </select>
+                    <button class="btn-refresh" onclick="loadProposals()">&#8635;</button>
+                </div>
+            </div>
+            <div id="proposals-list" style="margin-top:16px"></div>
+        </div>
+    </div>
+    <div id="spanel-editor" style="display:none">
+        <div class="card">
+            <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+                <div><div class="card-title">soul.md</div><div class="card-sub">Sektionen direkt bearbeiten</div></div>
+                <div style="display:flex;gap:8px;align-items:center">
+                    <span id="soul-save-status" style="font-size:12px;color:var(--text-dim)"></span>
+                    <button onclick="addSection('soul')" style="background:none;border:1px solid var(--border);color:var(--text-dim);padding:6px 14px;border-radius:6px;cursor:pointer;font-family:inherit;font-size:12px">+ Sektion</button>
+                    <button onclick="saveFile('soul')" style="background:var(--accent,#6366f1);border:none;color:#fff;padding:6px 16px;border-radius:6px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:600">Speichern</button>
+                </div>
+            </div>
+            <div id="soul-sections" style="margin-top:12px"></div>
+        </div>
+    </div>
+</div>
+
+<!-- RULES -->
+<div id="epanel-rules" style="display:none">
+    <div class="card">
+        <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+            <div><div class="card-title">rules.md</div><div class="card-sub">Verhaltensregeln und Leitplanken</div></div>
+            <div style="display:flex;gap:8px;align-items:center">
+                <span id="rules-save-status" style="font-size:12px;color:var(--text-dim)"></span>
+                <button onclick="addSection('rules')" style="background:none;border:1px solid var(--border);color:var(--text-dim);padding:6px 14px;border-radius:6px;cursor:pointer;font-family:inherit;font-size:12px">+ Sektion</button>
+                <button onclick="saveFile('rules')" style="background:var(--accent,#6366f1);border:none;color:#fff;padding:6px 16px;border-radius:6px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:600">Speichern</button>
+            </div>
+        </div>
+        <div id="rules-sections" style="margin-top:12px"></div>
+    </div>
+</div>
+
+<!-- TOOLS -->
+<div id="epanel-tools" style="display:none">
+    <div class="card">
+        <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+            <div><div class="card-title">tools.md</div><div class="card-sub">Verf&#252;gbare Tools und Nutzungshinweise</div></div>
+            <div style="display:flex;gap:8px;align-items:center">
+                <span id="tools-save-status" style="font-size:12px;color:var(--text-dim)"></span>
+                <button onclick="addSection('tools')" style="background:none;border:1px solid var(--border);color:var(--text-dim);padding:6px 14px;border-radius:6px;cursor:pointer;font-family:inherit;font-size:12px">+ Sektion</button>
+                <button onclick="saveFile('tools')" style="background:var(--accent,#6366f1);border:none;color:#fff;padding:6px 16px;border-radius:6px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:600">Speichern</button>
+            </div>
+        </div>
+        <div id="tools-sections" style="margin-top:12px"></div>
+    </div>
+</div>
+
+<!-- ARCHITECTURE -->
+<div id="epanel-architecture" style="display:none">
+    <div class="card">
+        <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+            <div><div class="card-title">architecture.md</div><div class="card-sub">Technisches Selbstwissen</div></div>
+            <div style="display:flex;gap:8px;align-items:center">
+                <span id="architecture-save-status" style="font-size:12px;color:var(--text-dim)"></span>
+                <button onclick="addSection('architecture')" style="background:none;border:1px solid var(--border);color:var(--text-dim);padding:6px 14px;border-radius:6px;cursor:pointer;font-family:inherit;font-size:12px">+ Sektion</button>
+                <button onclick="saveFile('architecture')" style="background:var(--accent,#6366f1);border:none;color:#fff;padding:6px 16px;border-radius:6px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:600">Speichern</button>
+            </div>
+        </div>
+        <div id="architecture-sections" style="margin-top:12px"></div>
+    </div>
+</div>
+
+<style>
+.etab.active { border-bottom-color:var(--accent)!important; color:var(--text-primary)!important; font-weight:600!important; }
+.stab.active { border-bottom-color:var(--accent)!important; color:var(--text-primary)!important; font-weight:600!important; }
+.section-block { background:var(--bg-elevated);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:12px; }
+.section-block-header { display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px; }
+.section-title-input { flex:1;background:var(--bg-surface);border:1px solid var(--border);color:var(--text-primary);padding:7px 10px;border-radius:6px;font-family:var(--font);font-size:13px;font-weight:600;box-sizing:border-box; }
+.section-content-input { width:100%;background:var(--bg-surface);border:1px solid var(--border);color:var(--text-primary);padding:8px 10px;border-radius:6px;font-family:var(--font-mono,'monospace');font-size:12px;line-height:1.6;resize:vertical;min-height:80px;box-sizing:border-box; }
+.section-preamble-label { font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.08em; }
+.btn-remove-section { background:none;border:none;color:var(--red);cursor:pointer;font-size:18px;padding:0 4px;line-height:1;flex-shrink:0; }
+.proposal-item { background:var(--bg-elevated);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:12px; }
+.proposal-item.open { border-left:3px solid var(--amber); }
+.proposal-item.adopted { border-left:3px solid var(--accent); }
+.proposal-item.rejected { border-left:3px solid var(--red);opacity:0.6; }
+.proposal-meta { display:flex;gap:12px;align-items:center;margin-bottom:10px;font-size:11px;color:var(--text-muted); }
+.proposal-badge { padding:2px 8px;border-radius:4px;font-size:10px;text-transform:uppercase;letter-spacing:0.1em; }
+.badge-open { background:rgba(245,158,11,0.15);color:var(--amber); }
+.badge-adopted { background:rgba(34,197,94,0.12);color:var(--accent); }
+.badge-rejected { background:rgba(239,68,68,0.12);color:var(--red); }
+.proposal-text { font-size:13px;color:var(--text-primary);white-space:pre-wrap;line-height:1.6;margin-bottom:12px;background:var(--bg-surface);padding:12px;border-radius:6px;border:1px solid var(--border); }
+</style>
+
+<script>
+const state  = { soul: [], rules: [], tools: [], architecture: [] };
+const loaded = { soul: false, rules: false, tools: false, architecture: false };
+
+// Tab-Steuerung
+function switchETab(key) {
+    ['soul','rules','tools','architecture'].forEach(k => {
+        document.getElementById('epanel-' + k).style.display = k === key ? '' : 'none';
+        const btn = document.getElementById('etab-' + k);
+        btn.classList.toggle('active', k === key);
+        btn.style.borderBottomColor = k === key ? 'var(--accent)' : 'transparent';
+        btn.style.color = k === key ? 'var(--text-primary)' : 'var(--text-dim)';
+        btn.style.fontWeight = k === key ? '600' : 'normal';
+    });
+    if (key !== 'soul' && !loaded[key]) loadFileSections(key);
+}
+
+function switchSoulTab(sub) {
+    ['proposals','editor'].forEach(k => {
+        document.getElementById('spanel-' + k).style.display = k === sub ? '' : 'none';
+        const btn = document.getElementById('stab-' + k);
+        btn.classList.toggle('active', k === sub);
+        btn.style.borderBottomColor = k === sub ? 'var(--accent)' : 'transparent';
+        btn.style.color = k === sub ? 'var(--text-primary)' : 'var(--text-dim)';
+        btn.style.fontWeight = k === sub ? '600' : 'normal';
+    });
+    if (sub === 'editor' && !loaded.soul) loadFileSections('soul');
+}
+
+// Laden
+async function loadFileSections(key) {
+    const url = key === 'soul' ? '/api/soul/md' : '/api/essence/' + key + '/sections';
+    try {
+        const r = await fetch(url);
+        const d = await r.json();
+        state[key] = d.sections || [];
+        loaded[key] = true;
+        renderSections(key);
+    } catch(e) { console.error('Laden fehlgeschlagen:', key, e); }
+}
+
+// Rendern
+function renderSections(key) {
+    const container = document.getElementById(key + '-sections');
+    if (!container) return;
+    container.innerHTML = '';
+    state[key].forEach((s, i) => {
+        const isPreamble = s.title === '__preamble__';
+        const div = document.createElement('div');
+        div.className = 'section-block';
+        div.innerHTML =
+            '<div class="section-block-header">' +
+                (isPreamble
+                    ? '<span class="section-preamble-label">Pr&#228;ambel</span>'
+                    : '<input class="section-title-input" value="' + esc(s.title) + '" oninput="state[\'' + key + '\'][' + i + '].title=this.value" placeholder="Titel der Sektion">'
+                ) +
+                (!isPreamble
+                    ? '<button class="btn-remove-section" onclick="removeSection(\'' + key + '\',' + i + ')" title="Sektion l&#246;schen">&#215;</button>'
+                    : ''
+                ) +
+            '</div>' +
+            '<textarea class="section-content-input" oninput="state[\'' + key + '\'][' + i + '].content=this.value" rows="' + Math.max(3, (s.content.match(/\n/g)||[]).length + 2) + '">' + esc(s.content) + '</textarea>';
+        container.appendChild(div);
+    });
+}
+
+function esc(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function addSection(key) {
+    state[key].push({ index: state[key].length, title: 'Neue Sektion', content: '' });
+    renderSections(key);
+}
+
+function removeSection(key, i) {
+    state[key].splice(i, 1);
+    renderSections(key);
+}
+
+// Speichern
+async function saveFile(key) {
+    const statusEl = document.getElementById(key + '-save-status');
+    statusEl.textContent = 'Speichern\u2026';
+    const url = key === 'soul' ? '/api/soul/md' : '/api/essence/' + key + '/sections';
+    try {
+        const r = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sections: state[key] })
+        });
+        const d = await r.json();
+        statusEl.textContent = d.ok ? '\u2713 Gespeichert (' + d.chars + ' Zeichen)' : '\u2717 Fehler';
+        setTimeout(() => statusEl.textContent = '', 4000);
+    } catch(e) { statusEl.textContent = '\u2717 Fehler'; }
+}
+
+// Vorschlaege
+async function loadProposals() {
+    const status = document.getElementById('filter-status').value;
+    try {
+        const r = await fetch('/api/soul/proposals' + (status ? '?status=' + status : ''));
+        const d = await r.json();
+        document.getElementById('stat-open').textContent     = d.stats.open;
+        document.getElementById('stat-adopted').textContent  = d.stats.adopted;
+        document.getElementById('stat-rejected').textContent = d.stats.rejected;
+        document.getElementById('stat-total').textContent    = d.stats.total;
+        const list = document.getElementById('proposals-list');
+        if (!d.proposals.length) {
+            list.innerHTML = '<div style="color:var(--text-dim);font-size:13px;padding:16px">Keine Vorschl\u00e4ge.</div>';
+            return;
+        }
+        list.innerHTML = d.proposals.map(p =>
+            '<div class="proposal-item ' + p.status + '">' +
+                '<div class="proposal-meta">' +
+                    '<span style="color:var(--text-primary);font-weight:500">' + new Date(p.created_at).toLocaleString('de-DE') + '</span>' +
+                    '<span class="proposal-badge badge-' + p.status + '">' + p.status + '</span>' +
+                '</div>' +
+                '<div class="proposal-text">' + esc(p.proposal_text) + '</div>' +
+                (p.status === 'open'
+                    ? '<div style="display:flex;gap:8px">' +
+                        '<button onclick="setProposalStatus(' + p.id + ',\'adopted\')" style="background:rgba(34,197,94,0.12);border:1px solid var(--accent);color:var(--accent);padding:5px 14px;border-radius:6px;font-family:var(--font);font-size:12px;cursor:pointer">\u00dcbernehmen</button>' +
+                        '<button onclick="setProposalStatus(' + p.id + ',\'rejected\')" style="background:rgba(239,68,68,0.08);border:1px solid var(--red);color:var(--red);padding:5px 14px;border-radius:6px;font-family:var(--font);font-size:12px;cursor:pointer">Verwerfen</button>' +
+                      '</div>'
+                    : '') +
+            '</div>'
+        ).join('');
+    } catch(e) { console.error(e); }
+}
+
+async function setProposalStatus(id, status) {
+    await fetch('/api/soul/proposals/' + id + '/status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status })
+    });
+    loadProposals();
+}
+
+// Init
+loadProposals();
+</script>
+{% endblock %}

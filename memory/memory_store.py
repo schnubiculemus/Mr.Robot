@@ -22,6 +22,7 @@ from memory.memory_config import (
     COLLECTION_ARCHIVE,
     EMBEDDING_MODEL,
     EMBEDDING_DIM,
+    EMBEDDING_BATCH_SIZE,
     MERGE_SIMILARITY_THRESHOLD,
     MERGE_MAX_CANDIDATES,
 )
@@ -126,6 +127,73 @@ def embed_query(query):
     prefixed = f"search_query: {query}"
     vector = model.encode(prefixed, normalize_embeddings=True)
     return vector.tolist()
+
+
+def embed_texts(texts, batch_size=None, prefix="search_document"):
+    """
+    Batch-Embedding fuer eine Liste von Texten.
+
+    Zentrale Funktion fuer alle Embedding-Bedarfe ausser Queries:
+    Dokument-Chunks, Voice-Transkripte, Mail-Inhalte, Web-Snippets.
+
+    Args:
+        texts:      Liste von Strings. Reihenfolge bleibt garantiert erhalten.
+        batch_size: Chunks pro Batch. Default: EMBEDDING_BATCH_SIZE aus Config.
+        prefix:     Task-Prefix fuer nomic-embed-text. Standard: search_document.
+
+    Returns:
+        Liste von Embedding-Vektoren (list[float]). Laenge == len(texts).
+        Leere Liste [] bei Fehler eines einzelnen Chunks (kein Abbruch des Rests).
+    """
+    if not texts:
+        return []
+
+    if batch_size is None:
+        batch_size = EMBEDDING_BATCH_SIZE
+
+    embedder = get_embedder()
+    total = len(texts)
+    n_batches = (total + batch_size - 1) // batch_size
+    logger.info(f"Batch-Embedding: {total} Texte in {n_batches} Batches (batch_size={batch_size})")
+
+    # Prefixe vorbereiten — einmalig, konsistent
+    prefixed = [f"{prefix}: {t}" for t in texts]
+
+    results = [None] * total  # Reihenfolge-stabile Ergebnisliste
+    t_start = __import__("time").time()
+
+    for batch_idx in range(n_batches):
+        start = batch_idx * batch_size
+        end = min(start + batch_size, total)
+        batch_texts = prefixed[start:end]
+
+        try:
+            batch_vectors = embedder.encode(
+                batch_texts,
+                batch_size=batch_size,
+                normalize_embeddings=True,
+                show_progress_bar=False,
+            )
+            for i, vec in enumerate(batch_vectors):
+                results[start + i] = vec.tolist() if hasattr(vec, "tolist") else list(vec)
+            logger.debug(f"Batch {batch_idx + 1}/{n_batches} fertig ({end - start} Chunks)")
+
+        except Exception as e:
+            logger.warning(f"Batch {batch_idx + 1}/{n_batches} fehlgeschlagen: {e} — Fallback auf Einzelverarbeitung")
+            # Fallback: Chunk fuer Chunk, damit der Rest nicht verloren geht
+            for i, text in enumerate(batch_texts):
+                try:
+                    vec = embedder.encode(text, normalize_embeddings=True)
+                    results[start + i] = vec.tolist() if hasattr(vec, "tolist") else list(vec)
+                except Exception as e2:
+                    logger.error(f"Einzelembedding fehlgeschlagen (Chunk {start + i}): {e2}")
+                    results[start + i] = []  # Leere Liste markiert Fehler
+
+    elapsed = __import__("time").time() - t_start
+    success = sum(1 for r in results if r)
+    logger.info(f"Batch-Embedding abgeschlossen: {success}/{total} erfolgreich in {elapsed:.2f}s")
+
+    return results
 
 
 # =============================================================================

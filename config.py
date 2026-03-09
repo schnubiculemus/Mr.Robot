@@ -11,6 +11,9 @@ OLLAMA_EXTRACTION_MODEL = os.getenv("OLLAMA_EXTRACTION_MODEL", "ministral-3:8b")
 
 # WAHA
 WAHA_API_KEY = os.getenv("WAHA_API_KEY", "")
+
+# Web Search (Tavily)
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
 if not WEBHOOK_SECRET:
     import logging as _l
@@ -19,7 +22,7 @@ if not WEBHOOK_SECRET:
     )
 
 # Bot-Name (zentral)
-BOT_NAME = os.getenv("BOT_NAME", "SchnuBot")
+BOT_NAME = os.getenv("BOT_NAME", "Mr.Robot")
 
 # Datenbank
 DB_PATH = os.getenv("DB_PATH", "bot.db")

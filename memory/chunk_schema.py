@@ -258,4 +258,6 @@ def metadata_to_tags(tags_str):
     """Wandelt den komma-separierten Tag-String aus ChromaDB zurueck in eine Liste."""
     if not tags_str:
         return []
-    return [t.strip() for t in tags_str.split(",") if t.strip()]
+    if isinstance(tags_str, list):
+        return [str(t).strip() for t in tags_str if str(t).strip()]
+    return [t.strip() for t in str(tags_str).split(",") if t.strip()]

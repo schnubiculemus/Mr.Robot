@@ -8,14 +8,6 @@
     "available": true
   },
   {
-    "id": "websearch",
-    "name": "Web Search",
-    "icon": "\ud83c\udf10",
-    "description": "Aktuelle Informationen aus dem Web abrufen",
-    "enabled": false,
-    "available": false
-  },
-  {
     "id": "calendar",
     "name": "Kalender",
     "icon": "\ud83d\udcc5",
@@ -52,14 +44,6 @@
     "name": "Bildanalyse",
     "icon": "\ud83d\uddbc\ufe0f",
     "description": "Bilder beschreiben und analysieren",
-    "enabled": false,
-    "available": false
-  },
-  {
-    "id": "contacts",
-    "name": "Kontakte",
-    "icon": "\ud83d\udc64",
-    "description": "WhatsApp-Kontakte als Kontext nutzen",
     "enabled": false,
     "available": false
   }

@@ -1,9 +1,11 @@
 import logging
+import re
 import threading
 import os
 from concurrent.futures import ThreadPoolExecutor
 from flask import Flask, request, jsonify
 from config import WAHA_API_KEY, BOT_NAME, WEBHOOK_SECRET, USER_CONTEXTS, OWNER_ID
+from core.websearch import search as web_search, format_for_kimi as format_search_result
 from core.database import init_db, get_or_create_user, save_message, get_chat_history
 from core.ollama_client import chat as ollama_chat
 from core.whatsapp import send_message, extract_message, init_waha
@@ -97,7 +99,8 @@ def webhook():
     save_message(phone_number, "user", text)
 
     # /task Befehl erkennen
-    if text.strip().lower() in ["/doc stop", "/doc end", "/dokument stop"]:
+    _t = text.strip().lower()
+    if _t in ["/doc stop", "/doc end", "/dokument stop", "stop", "fertig", "ende", "/stop"]:
         from core.document import clear_doc_session
         clear_doc_session(phone_number)
         send_message(phone_number, "Dokument-Session beendet. Ich bin wieder im normalen Modus.\n\n[kimi]")
@@ -192,18 +195,55 @@ def webhook():
                 send_message(phone_number, f"Das Dokument konnte leider nicht heruntergeladen werden.\n\n[kimi]")
         return jsonify({"status": "processing_document"}), 200
 
-    # Aktive Doc-Session? Dann pruefen ob Frage zum Dokument gehoert
+    # Aktive Doc-Session? Immer Dokument-Modus bis User explizit "stop" schreibt.
+    # Kein Classifier — der war unzuverlaessig und hat persoenliche Fragen falsch klassifiziert.
     from core.document import get_doc_session as _get_doc_session
     if _get_doc_session(phone_number):
-        if _is_doc_related(text):
-            save_message(phone_number, "user", text)
-            _chat_pool.submit(_handle_doc_followup, phone_number, text, context_name)
-            return jsonify({"status": "doc_query"}), 200
-        # Frage gehoert nicht zum Dokument — normaler Chat
+        save_message(phone_number, "user", text)
+        _chat_pool.submit(_handle_doc_followup, phone_number, text, context_name)
+        return jsonify({"status": "doc_query"}), 200
 
     _chat_pool.submit(_process_chat, phone_number, text, display_name, context_name)
 
     return jsonify({"status": "processing"}), 200
+
+
+def _handle_web_search(reply: str):
+    """
+    Prueft ob Kimi in seiner Antwort [SEARCH: query] geschrieben hat.
+    Wenn ja: Suche ausfuehren, Kontext-String zurueckgeben.
+
+    Returns:
+        (reply_cleaned, search_context_or_None)
+    """
+    import re
+    matches = re.findall(r"\[SEARCH:\s*(.+?)\]", reply, re.IGNORECASE)
+    if not matches:
+        return reply, None
+
+    # Erste Query fuer die Suche verwenden, ALLE [SEARCH:...] Bloecke entfernen
+    query = matches[0].strip()
+    logger.info(f"Kimi moechte suchen: '{query}' ({len(matches)} SEARCH-Block(e) gefunden)")
+
+    # Alle [SEARCH:...] Vorkommen entfernen — auch wenn Kimi mehrere geschrieben hat
+    reply_cleaned = re.sub(r"\[SEARCH:\s*.+?\]", "", reply, flags=re.IGNORECASE).strip()
+    # Doppelte Leerzeilen bereinigen
+    reply_cleaned = re.sub(r"\n{3,}", "\n\n", reply_cleaned).strip()
+
+    # Web Search ausfuehren
+    result = web_search(query)
+    if not result["success"]:
+        logger.warning(f"Web Search fehlgeschlagen: {result.get('error')}")
+        return reply_cleaned, None
+
+    search_ctx = (
+        "WEBSEARCH ERGEBNIS — bereits abgerufen, keine weitere Suche noetig:\n\n"
+        + format_search_result(result)
+        + "\n\nBeantworte jetzt die Frage des Nutzers direkt auf Basis dieser Informationen. "
+        "Schreibe KEIN [SEARCH:...] mehr. Kein Markdown, keine Sternchen. Fliesstext."
+    )
+    logger.info(f"Web Search erfolgreich: {len(result['answer'])} Zeichen")
+    return reply_cleaned, search_ctx
 
 
 def _process_chat(phone_number, text, display_name, context_name):
@@ -226,6 +266,27 @@ def _process_chat(phone_number, text, display_name, context_name):
 
             # Kimi-Antwort generieren (kann bis zu 120s dauern)
             reply = ollama_chat(phone_number, text, history, context_name)
+
+            # Web Search: Kimi signalisiert Suchbedarf mit [SEARCH: query]
+            reply, search_ctx = _handle_web_search(reply)
+            if search_ctx:
+                # Kimi nochmal aufrufen — mit Suchergebnis als Kontext
+                # WICHTIG: Original-History + Original-Frage, kein leerer Erstantwort-Stub
+                logger.info(f"Web Search: starte zweiten Kimi-Call mit Suchergebnis")
+                try:
+                    search_reply = ollama_chat(phone_number, text, history, context_name,
+                                        doc_context=search_ctx)
+                    # Sicherstellen dass der zweite Call nicht nochmal sucht
+                    search_reply = re.sub(r"\[SEARCH:\s*.+?\]", "", search_reply or "", flags=re.IGNORECASE).strip()
+                    search_reply = re.sub(r"\n{3,}", "\n\n", search_reply).strip()
+                    if search_reply:
+                        reply = search_reply
+                        logger.info(f"Web Search: zweiter Call erfolgreich ({len(reply)} Zeichen)")
+                    else:
+                        logger.warning("Web Search: zweiter Call leer — behalte bereinigte Erstantwort")
+                except Exception as e:
+                    logger.error(f"Web Search: zweiter Kimi-Call fehlgeschlagen: {e}")
+
             save_message(phone_number, "assistant", reply)
             send_message(phone_number, reply + "\n\n[kimi]")
 
@@ -439,7 +500,7 @@ def _process_document_index(phone_number, pdf_bytes, filename, display_name):
         embeddings = embed_chunks(chunks)
         set_doc_session(phone_number, filename, chunks, embeddings, len(pages))
 
-        reply = f'✅ "{filename}" ist geladen — {len(pages)} Seiten, {len(chunks)} Abschnitte. Was willst du wissen?'
+        reply = f'✅ "{filename}" ist geladen — {len(pages)} Seiten, {len(chunks)} Abschnitte.\n\nIch bin jetzt im Dokument-Modus. Stell mir deine Fragen dazu. Schreib "stop" wenn du wieder normal chatten möchtest.'
         save_message(phone_number, "assistant", reply)
         send_message(phone_number, reply + "\n\n[kimi]")
         logger.info(f"Doc-Index aufgebaut: {filename} fuer {display_name}")
@@ -448,48 +509,57 @@ def _process_document_index(phone_number, pdf_bytes, filename, display_name):
         send_message(phone_number, "Beim Lesen des Dokuments ist etwas schiefgelaufen.")
 
 
-def _is_doc_related(text):
+def _is_doc_related(text, filename="Dokument"):
     """
-    Schnelle Heuristik: gehoert die Frage zum aktiven Dokument?
-    Gibt False zurueck bei klaren Nicht-Dokument-Signalen.
+    LLM-Classifier: Gehoert die Nachricht zum aktiven Dokument oder ist es normaler Chat?
+    Mini-Call mit max_tokens=5 — schnell und zuverlaessig.
+    Fallback auf True (Dokument) bei API-Fehler, damit keine Frage verloren geht.
     """
-    t = text.lower().strip()
-
-    # Sehr kurze Nachrichten die keine Frage sind
+    # Sehr kurze Nachrichten ohne Fragecharakter direkt als Chat klassifizieren
+    t = text.strip()
     if len(t) < 4:
         return False
 
-    # Klare Small-Talk / persoenliche Signale
-    small_talk = [
-        "wie geht", "wie gehts", "wie geht's", "alles gut", "was machst du",
-        "bist du", "freust du", "magst du", "liebst du", "denkst du",
-        "diary", "tagebuch", "briefing", "morgen", "abend", "nacht", "schlafen",
-        "hallo", "hi ", "hey ", "moin", "servus", "ciao", "tschues",
-        "danke", "bitte", "okay", "ok ", "super", "toll", "nice",
-        "wetter", "essen", "trinken", "hunger", "sport", "musik",
-        "erinnere dich", "vergiss", "merk dir", "notiz",
-        "wie war", "was hast du", "heute", "gestern", "morgen fruh",
-    ]
-    if any(t.startswith(p) or f" {p}" in t for p in small_talk):
+    # Harter Small-Talk-Filter vor dem API-Call (spart Token)
+    small_talk_starts = ("hallo", "hi ", "hey ", "moin", "servus", "danke", "ok ", "okay",
+                         "ciao", "tschüss", "tschues", "gute nacht", "guten morgen")
+    if t.lower().startswith(small_talk_starts):
         return False
 
-    # Dokument-Signale: explizit aufs Dokument bezogen
-    doc_signals = [
-        "seite", "abschnitt", "kapitel", "dokument", "pdf", "skript",
-        "steht da", "steht dort", "steht im", "findest du", "was sagt",
-        "erklaer", "erkläre", "beschreib", "zusammenfassung", "inhalt",
-        "was bedeutet", "wie wird", "wie ist", "was ist", "zeig mir",
-        "such nach", "finde", "wo steht",
-    ]
-    if any(p in t for p in doc_signals):
-        return True
+    try:
+        classifier_prompt = (
+            f'Ein Nutzer hat ein Dokument namens "{filename}" hochgeladen. '
+            f'Entscheide ob die folgende Nachricht eine inhaltliche Frage zum Dokument ist.\n\n'
+            f'IMMER "chat" wenn:\n'
+            f'- Fragen ueber Personen, Erinnerungen, Beziehungen (z.B. "Erinnerst du dich an X?")\n'
+            f'- Small Talk, Begruessungen, Gespraeche ueber den Bot selbst\n'
+            f'- Persoenliche Fragen die nichts mit dem Dokumentinhalt zu tun haben\n'
+            f'- Aufgaben wie "merk dir", "vergiss", "notiere"\n\n'
+            f'IMMER "doc" wenn:\n'
+            f'- Fragen zum Inhalt, Seiten, Abschnitten oder Konzepten des Dokuments\n'
+            f'- Zusammenfassungen, Erklaerungen, Suche im Dokument\n\n'
+            f'Nachricht: "{text}"\n\n'
+            f'Antworte NUR mit einem Wort: doc oder chat'
+        )
+        result = api_call_with_retry(
+            url=f"{OLLAMA_API_URL}/api/chat",
+            headers={"Authorization": f"Bearer {OLLAMA_API_KEY}", "Content-Type": "application/json"},
+            json_payload={
+                "model": OLLAMA_MODEL,
+                "messages": [{"role": "user", "content": classifier_prompt}],
+                "stream": False,
+                "options": {"num_predict": 5, "temperature": 0},
+            },
+            timeout=15,
+        )
+        if result:
+            answer = result.get("message", {}).get("content", "").strip().lower()
+            logger.debug(f"Doc-Classifier: '{text[:40]}' → '{answer}'")
+            return "doc" in answer
+    except Exception as e:
+        logger.warning(f"Doc-Classifier fehlgeschlagen: {e} — Fallback: doc")
 
-    # Fragesaetze ohne klare Zuordnung → eher Dokument wenn Session aktiv
-    if "?" in t or t.startswith("was ") or t.startswith("wie ") or t.startswith("wo ") or t.startswith("warum "):
-        return True
-
-    # Alles andere → normaler Chat
-    return False
+    return True  # Fallback: lieber Dokument als Frage verlieren
 
 
 def _answer_doc_query(phone_number, query, context_name):
@@ -510,15 +580,23 @@ def _answer_doc_query(phone_number, query, context_name):
         )
         return ollama_chat(phone_number, query, history, context_name, doc_context=no_result_ctx)
 
-    relevance_hint = "Die Treffer sind gut. Antworte direkt und nenne die Seitenzahlen." if relevance == "strong" else "Die Treffer sind nur indirekt relevant — weise darauf hin."
+    relevance_hint = "Die Treffer sind sehr relevant." if relevance == "strong" else "Die Treffer sind nur indirekt relevant — nutze sie als Hintergrund, aber beantworte die Frage direkt."
+
     doc_ctx = (
-        f'Dokument geladen: "{filename}"\n'
-        f"REGEL: Pruefe zuerst ob die Frage des Nutzers inhaltlich zum Dokument passt.\n"
-        f"- Wenn JA: Antworte NUR auf Basis der Fundstellen. {relevance_hint} Nenne Seitenzahlen.\n"
-        f"- Wenn NEIN (z.B. persoenliche Frage, Small Talk, andere Themen): Ignoriere die Fundstellen komplett und antworte normal wie gewohnt.\n"
-        f"WICHTIG: Kein Markdown, keine fetten Hervorhebungen, kein Bold, keine Sternchen. Fliesstext.\n\n"
-        f"Fundstellen aus dem Dokument:\n\n{fundstellen}"
+        f'Aktives Dokument: "{filename}"\n'
+        f"Unten stehen Fundstellen aus dem Dokument die zur Frage passen.\n\n"
+        f"WICHTIG: Beantworte die Frage des Nutzers direkt und vollstaendig. "
+        f"Wenn er eine Meinung, Einschaetzung oder Diskussion will — gib sie. "
+        f"Nutze die Fundstellen als Grundlage und Belege, nicht als Antwort-Ersatz. "
+        f"Wenn die Frage persoenlich oder nicht dokumentbezogen ist, antworte normal aus deinem Gedaechtnis.\n"
+        f"{relevance_hint}\n"
+        f"Keine Sternchen, kein Markdown, kein Bold. Fliesstext.\n\n"
+        f"Fundstellen:\n\n{fundstellen}"
     )
+
+    # History laden damit Kimi Kontext ueber den User hat (letzte 6 Nachrichten)
+    history = get_chat_history(phone_number)[-6:] if get_chat_history(phone_number) else []
+
     return ollama_chat(phone_number, query, history, context_name, doc_context=doc_ctx)
 
 

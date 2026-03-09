@@ -10,6 +10,7 @@ Bestehende config.py bleibt unangetastet - diese Datei ergaenzt sie.
 # Embedding
 # =============================================================================
 EMBEDDING_MODEL = "nomic-ai/nomic-embed-text-v1.5"
+EMBEDDING_BATCH_SIZE = 32  # Chunks pro Batch — bei RAM-Engpass auf 16 reduzieren
 EMBEDDING_DIM = 768
 
 # =============================================================================

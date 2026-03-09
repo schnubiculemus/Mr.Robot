@@ -30,6 +30,8 @@ logger = logging.getLogger(__name__)
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(PROJECT_DIR)
 SOUL_PATH = os.path.join(ROOT_DIR, "soul.md")
+RULES_PATH = os.path.join(ROOT_DIR, "rules.md")
+TOOLS_PATH = os.path.join(ROOT_DIR, "tools.md")
 ARCHITECTURE_PATH = os.path.join(ROOT_DIR, "architecture.md")
 
 
@@ -46,6 +48,16 @@ def load_file(path):
 def load_soul():
     """Lädt die Verfassung (soul.md). Fallback auf Minimal-Prompt."""
     return load_file(SOUL_PATH) or f"Du bist {BOT_NAME}, ein hilfreicher Assistent."
+
+
+def load_rules():
+    """Lädt die Verhaltensregeln (rules.md)."""
+    return load_file(RULES_PATH)
+
+
+def load_tools():
+    """Lädt die Tool-Übersicht (tools.md)."""
+    return load_file(TOOLS_PATH)
 
 
 def load_architecture():
@@ -107,7 +119,7 @@ def _load_global_rules():
                     "confidence": confidence,
                     "epistemic_status": meta.get("epistemic_status", "stated"),
                     "created_at": meta.get("created_at", ""),
-                    "tags": meta.get("tags", "").split(",") if meta.get("tags") else [],
+                    "tags": meta.get("tags") if isinstance(meta.get("tags"), list) else [t.strip() for t in str(meta.get("tags", "")).split(",") if t.strip()],
                 })
 
             global_chunks.sort(key=lambda c: c["weight"] * c["confidence"], reverse=True)
@@ -142,18 +154,28 @@ def build_system_prompt(context_name=None, user_id=None, user_message=None, doc_
     # 2. Verfassung
     parts.append(load_soul())
 
-    # 3. Selbstwissen
+    # 3. Verhaltensregeln
+    rules = load_rules()
+    if rules:
+        parts.append(rules)
+
+    # 4. Tool-Übersicht
+    tools = load_tools()
+    if tools:
+        parts.append(tools)
+
+    # 5. Selbstwissen
     arch = load_architecture()
     if arch:
         parts.append(arch)
 
-    # 4. Globale Regeln laden (IDs merken für Deduplizierung)
+    # 6. Globale Regeln laden (IDs merken für Deduplizierung)
     global_rules = _load_global_rules()
     global_rule_ids = set()
     if global_rules:
         global_rule_ids = {c["id"] for c in global_rules}
 
-    # 5. Memory-Chunks (kontextabhängig) — bei Dokument-Kontext weglassen (spart Platz fuer doc_context)
+    # 7. Memory-Chunks (kontextabhängig) — bei Dokument-Kontext weglassen (spart Platz fuer doc_context)
     if user_message and not doc_context:
         try:
             chunks = score_and_select(user_message)
@@ -166,14 +188,23 @@ def build_system_prompt(context_name=None, user_id=None, user_message=None, doc_
         except Exception as e:
             logger.warning(f"Memory-Retrieval fehlgeschlagen: {e}")
 
-    # 6. Globale Regeln am ENDE — nach Memory, vor der User-Nachricht
+    # 8. Globale Regeln am ENDE — nach Memory, vor der User-Nachricht
     # Recency Bias: das Letzte im System-Prompt bekommt das meiste Gewicht.
     if global_rules:
         rules_prompt = build_global_rules_prompt(global_rules)
         if rules_prompt:
             parts.append(rules_prompt)
 
-    # 7. Dokument-Kontext — ganz am Ende, höchste Recency-Priorität
+    # 9. Web Search — immer aktiv, ist Kimis Zugang zur Außenwelt
+    parts.append(
+        "WEB SEARCH VERFUEGBAR:\n"
+        "Wenn du aktuelle Informationen benoenigst (News, Preise, aktuelle Ereignisse, Fakten die du nicht sicher kennst), "
+        "schreibe in deine Antwort: [SEARCH: deine suchanfrage]\n"
+        "Beispiel: [SEARCH: aktueller Bitcoin Preis]\n"
+        "Nur EINEN Search-Block pro Antwort. Nur wenn wirklich noetig — nicht bei allgemeinem Wissen."
+    )
+
+    # 10. Dokument-Kontext — ganz am Ende, höchste Recency-Priorität
     if doc_context:
         parts.append(
             "DOKUMENT-KONTEXT (bereits extrahiert, liegt vollstaendig vor):\n\n" + doc_context

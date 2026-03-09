@@ -53,16 +53,18 @@ def get_doc_session(user_id):
         return None
 
 
-def set_doc_session(user_id, filename, chunks, embeddings, page_count):
+def set_doc_session(user_id, filename, chunks, embeddings, page_count, status="ready"):
     with _doc_sessions_lock:
         _doc_sessions[user_id] = {
             "filename": filename,
             "chunks": chunks,
             "embeddings": embeddings,
             "page_count": page_count,
+            "status": status,  # indexing | ready | failed
+            "embedded_count": len([e for e in embeddings if e]),
             "expires_at": time.time() + DOC_SESSION_TTL,
         }
-    logger.info(f"Doc-Session gesetzt: {filename} ({len(chunks)} Chunks, {page_count} Seiten) fuer {user_id}")
+    logger.info(f"Doc-Session gesetzt: {filename} ({len(chunks)} Chunks, {page_count} Seiten, status={status}) fuer {user_id}")
 
 
 def clear_doc_session(user_id):
@@ -188,27 +190,48 @@ def chunk_pages(pages, chunk_size=1200, overlap=150):
 # ---------------------------------------------------------------------------
 
 def embed_chunks(chunks):
-    from memory.memory_store import embed_text
-    texts = [c["text"] for c in chunks]
-    logger.info(f"Embedding starte: {len(texts)} Chunks...")
-    embeddings = []
-    for i, text in enumerate(texts):
-        try:
-            emb = embed_text(text)
-            embeddings.append(emb.tolist() if hasattr(emb, 'tolist') else list(emb))
-        except Exception as e:
-            logger.warning(f"Embedding fehlgeschlagen Chunk {i}: {e}")
-            embeddings.append([])
-    success = len([e for e in embeddings if e])
-    logger.info(f"Embedding fertig: {success}/{len(texts)} erfolgreich")
+    """
+    Bettet eine Liste von Chunks per Batch ein.
+    Filtert leere/zu kurze Chunks vor dem Embedding heraus (Platzhalter [] bleibt).
+    Reihenfolge ist garantiert stabil.
+    """
+    from memory.memory_store import embed_texts
+
+    # Texte extrahieren — leere oder sehr kurze Chunks werden übersprungen
+    MIN_CHUNK_LEN = 10
+    texts = []
+    valid_indices = []
+    for i, chunk in enumerate(chunks):
+        text = chunk.get("text", "").strip()
+        if len(text) >= MIN_CHUNK_LEN:
+            texts.append(text)
+            valid_indices.append(i)
+        else:
+            logger.debug(f"Chunk {i} übersprungen (zu kurz: {len(text)} Zeichen)")
+
+    skipped = len(chunks) - len(valid_indices)
+    if skipped:
+        logger.info(f"Embedding: {skipped} Chunks übersprungen (zu kurz/leer)")
+
+    # Batch-Embedding der gefilterten Texte
+    batch_embeddings = embed_texts(texts)  # verwendet EMBEDDING_BATCH_SIZE aus Config
+
+    # Ergebnis-Liste mit stabiler Reihenfolge aufbauen
+    # Ungültige Chunks bekommen [] als Platzhalter
+    embeddings = [[]] * len(chunks)
+    for list_pos, chunk_idx in enumerate(valid_indices):
+        embeddings[chunk_idx] = batch_embeddings[list_pos] if list_pos < len(batch_embeddings) else []
+
+    success = sum(1 for e in embeddings if e)
+    logger.info(f"embed_chunks abgeschlossen: {success}/{len(chunks)} Chunks eingebettet")
     return embeddings
 
 
 def embed_query(query_text):
-    from memory.memory_store import embed_text
+    """Query-Embedding — nutzt dieselbe Normalisierung wie embed_texts, aber mit search_query Prefix."""
+    from memory.memory_store import embed_query as _embed_query
     try:
-        emb = embed_text(query_text)
-        return emb.tolist() if hasattr(emb, 'tolist') else list(emb)
+        return _embed_query(query_text)
     except Exception as e:
         logger.error(f"Query-Embedding fehlgeschlagen: {e}")
         return []
