@@ -172,15 +172,24 @@ def get_system_resources():
 
 
 def get_bot_uptime():
-    """Prüft ob der Bot-Prozess läuft."""
+    """Prüft ob der Bot-Prozess läuft (Gunicorn oder direkt python app.py)."""
     import subprocess
     try:
+        # Primär: Gunicorn (produktiv via systemd)
         result = subprocess.run(
+            ["pgrep", "-f", "gunicorn.*app:app"],
+            capture_output=True, text=True
+        )
+        pids = [p for p in result.stdout.strip().split("\n") if p.strip()]
+        if pids:
+            return True
+        # Fallback: direkt python app.py (Entwicklung)
+        result2 = subprocess.run(
             ["pgrep", "-f", "python app.py"],
             capture_output=True, text=True
         )
-        pids = result.stdout.strip().split("\n")
-        return len([p for p in pids if p.strip()]) > 0
+        pids2 = [p for p in result2.stdout.strip().split("\n") if p.strip()]
+        return len(pids2) > 0
     except Exception:
         return False
 
