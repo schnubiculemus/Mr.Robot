@@ -24,6 +24,7 @@ os.chdir(PROJECT_DIR)
 from config import OLLAMA_API_URL, OLLAMA_API_KEY, OLLAMA_MODEL, WAHA_API_KEY, USER_CONTEXTS
 from core.datetime_utils import now_utc, now_berlin, safe_parse_dt, to_iso
 from core.file_utils import atomic_write_json
+from core.state import load_state, save_state
 from core.database import get_connection, get_chat_history, save_message
 from core.whatsapp import send_message, init_waha
 from core.tasks import (
@@ -38,11 +39,12 @@ from autonomy import run_autonomy
 from decay import run_decay
 from diary import run_diary
 
+from logging.handlers import RotatingFileHandler as _RFH
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [HEARTBEAT] %(message)s",
     handlers=[
-        logging.FileHandler(os.path.join(PROJECT_DIR, "logs", "heartbeat.log")),
+        _RFH(os.path.join(PROJECT_DIR, "logs", "heartbeat.log"), maxBytes=10*1024*1024, backupCount=5),
         logging.StreamHandler(),
     ],
 )
@@ -54,35 +56,6 @@ ACTIVE_HOURS_END = 22
 SILENCE_THRESHOLD_HOURS = 3
 HEARTBEAT_COOLDOWN_HOURS = 4
 
-HEARTBEAT_STATE_PATH = os.path.join(PROJECT_DIR, "heartbeat_state.json")
-
-
-# =============================================================================
-# State
-# =============================================================================
-
-def load_state():
-    if not os.path.exists(HEARTBEAT_STATE_PATH):
-        return {}
-    try:
-        with open(HEARTBEAT_STATE_PATH, "r") as f:
-            return json.load(f)
-    except (json.JSONDecodeError, IOError) as e:
-        # Defekte Datei sichern und Fehler sichtbar machen (P1.5)
-        corrupt_path = HEARTBEAT_STATE_PATH + ".corrupt"
-        logger.error(
-            f"heartbeat_state.json kaputt: {e} — "
-            f"sichere als {corrupt_path}, starte mit leerem State"
-        )
-        try:
-            os.replace(HEARTBEAT_STATE_PATH, corrupt_path)
-        except OSError as rename_err:
-            logger.error(f"Umbenennen fehlgeschlagen: {rename_err}")
-        return {}
-
-
-def save_state(state):
-    atomic_write_json(HEARTBEAT_STATE_PATH, state)
 
 
 def get_last_message_time(user_id):

@@ -39,6 +39,7 @@ from memory.chunk_schema import (
 )
 from memory.memory_store import (
     store_chunk,
+    store_chunks_batch,
     get_chunk,
     update_chunk,
     archive_chunk,
@@ -413,33 +414,48 @@ def consolidate_block(turns, run_id=None, block_index=0):
     creates_after = len([c for c in chunk_defs if c.get("action") == "create"])
     dropped_count = max(0, creates_before - creates_after)
 
-    # Chunks verarbeiten (create/confirm/update/supersede)
+    # Chunks verarbeiten — creates erst sammeln, dann als Batch embedden
     result_ids = []
     executed_actions = []
+    pending_creates = []   # (chunk, cdef) — warten auf Batch-Embedding
+    pending_create_cdefs = []
+
     for cdef in chunk_defs:
         action = cdef.get("action", "create")
         if action == "create":
-            chunk_id = _process_create(cdef)
+            # _process_create vorbereiten ohne store_chunk — gibt chunk-Dict zurück
+            chunk = _prepare_create(cdef)
+            if chunk:
+                pending_creates.append(chunk)
+                pending_create_cdefs.append(cdef)
         elif action == "confirm":
             chunk_id = _process_confirm(cdef)
+            if chunk_id:
+                result_ids.append(chunk_id)
+                executed_actions.append(_action_entry("confirm", cdef, chunk_id))
         elif action == "update":
             chunk_id = _process_update(cdef)
+            if chunk_id:
+                result_ids.append(chunk_id)
+                executed_actions.append(_action_entry("update", cdef, chunk_id))
         elif action == "supersede":
             chunk_id = _process_supersede(cdef)
+            if chunk_id:
+                result_ids.append(chunk_id)
+                executed_actions.append(_action_entry("supersede", cdef, chunk_id))
         else:
             logger.warning(f"Konsolidierer: Unbekannte Action '{action}', uebersprungen")
-            chunk_id = None
 
-        if chunk_id:
-            result_ids.append(chunk_id)
-            executed_actions.append({
-                "action": action,
-                "chunk_type": cdef.get("chunk_type") or action,
-                "chunk_id": chunk_id[:8],
-                "text_preview": (cdef.get("text") or "")[:80],
-                "confidence": cdef.get("confidence"),
-                "existing_chunk_id": (cdef.get("existing_chunk_id") or "")[:8] or None,
-            })
+    # Alle creates als Batch schreiben
+    if pending_creates:
+        saved_ids = store_chunks_batch(pending_creates)
+        saved_set = set(saved_ids)
+        for chunk, cdef in zip(pending_creates, pending_create_cdefs):
+            if chunk["id"] in saved_set:
+                result_ids.append(chunk["id"])
+                executed_actions.append(_action_entry("create", cdef, chunk["id"]))
+                logger.info(f"CREATE: [{chunk['chunk_type']}] [{chunk.get('source','')}] conf={chunk['confidence']} | {chunk['text'][:80]}")
+
 
     # Ergebnis loggen
     actions_summary = {}
@@ -517,6 +533,59 @@ def _apply_action_limit(chunk_defs):
 # =============================================================================
 # Action Handlers (Phase 4)
 # =============================================================================
+
+def _prepare_create(cdef):
+    """
+    Wie _process_create, aber ohne store_chunk — gibt den validierten Chunk-Dict
+    zurueck. Wird vom Batch-Embedding-Pfad genutzt.
+    Returns: Chunk-Dict oder None bei Validierungsfehler.
+    """
+    text = cdef.get("text", "").strip()
+    chunk_type = cdef.get("chunk_type", "")
+    source = cdef.get("source", "")
+    confidence = cdef.get("confidence", 0.0)
+    epistemic_status = cdef.get("epistemic_status", "")
+    tags = cdef.get("tags", [])
+
+    error = _validate_common_fields(text, chunk_type, source, confidence, epistemic_status)
+    if error:
+        return None
+
+    confidence = float(confidence)
+    if not isinstance(tags, list):
+        tags = []
+    tags = sanitize_tags(tags)
+
+    if _contains_sensitive_data(text):
+        logger.warning(f"Konsolidierer: PII/Secret erkannt, Chunk uebersprungen")
+        return None
+
+    _check_epistemic_compatibility(chunk_type, epistemic_status, text)
+
+    chunk = create_chunk(
+        text=text, chunk_type=chunk_type, source=source,
+        confidence=confidence, epistemic_status=epistemic_status, tags=tags,
+    )
+
+    valid, err = validate_chunk(chunk)
+    if not valid:
+        logger.warning(f"Konsolidierer: Chunk ungueltig: {err}")
+        return None
+
+    return chunk
+
+
+def _action_entry(action, cdef, chunk_id):
+    """Baut einen einheitlichen Eintrag fuer executed_actions."""
+    return {
+        "action": action,
+        "chunk_type": cdef.get("chunk_type") or action,
+        "chunk_id": chunk_id[:8],
+        "text_preview": (cdef.get("text") or "")[:80],
+        "confidence": cdef.get("confidence"),
+        "existing_chunk_id": (cdef.get("existing_chunk_id") or "")[:8] or None,
+    }
+
 
 def _process_create(cdef):
     """Verarbeitet eine create-Aktion. Validiert und speichert neuen Chunk."""

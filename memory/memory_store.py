@@ -231,6 +231,50 @@ def store_chunk(chunk):
     return chunk["id"]
 
 
+def store_chunks_batch(chunks):
+    """
+    Speichert eine Liste von Chunks mit einem einzigen Batch-Embedding-Call.
+    Deutlich schneller als store_chunk() einzeln aufrufen wenn mehrere Chunks
+    auf einmal geschrieben werden (z.B. nach Konsolidierung).
+
+    Args:
+        chunks: Liste von Chunk-Dicts (validiert, mit id/text/chunk_type etc.)
+
+    Returns:
+        Liste der gespeicherten Chunk-IDs. Leere Liste bei Fehler.
+    """
+    if not chunks:
+        return []
+
+    collection = get_active_collection()
+    texts = [c["text"] for c in chunks]
+
+    # Alle Embeddings in einem Batch
+    embeddings = embed_texts(texts)
+
+    ids, documents, metadatas, valid_embeddings = [], [], [], []
+    for i, chunk in enumerate(chunks):
+        emb = embeddings[i] if i < len(embeddings) else []
+        if not emb:
+            logger.warning(f"Batch: Embedding fehlgeschlagen fuer Chunk {chunk['id'][:8]}, uebersprungen")
+            continue
+        metadata = chunk_to_metadata(chunk)
+        for opt_field in ("supersedes", "expires_at", "last_confirmed_at"):
+            if opt_field in chunk:
+                metadata[opt_field] = chunk[opt_field]
+        ids.append(chunk["id"])
+        documents.append(chunk["text"])
+        metadatas.append(metadata)
+        valid_embeddings.append(emb)
+
+    if not ids:
+        return []
+
+    collection.upsert(ids=ids, documents=documents, embeddings=valid_embeddings, metadatas=metadatas)
+    logger.info(f"Batch gespeichert: {len(ids)} Chunks")
+    return ids
+
+
 def get_chunk(chunk_id):
     """Holt einen einzelnen Chunk aus der aktiven Collection."""
     collection = get_active_collection()

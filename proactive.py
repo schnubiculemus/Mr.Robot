@@ -18,7 +18,8 @@ from config import OLLAMA_API_URL, OLLAMA_API_KEY, OLLAMA_MODEL
 from core.database import get_chat_history, save_message
 from core.whatsapp import send_message
 from core.ollama_client import build_system_prompt
-from core.datetime_utils import now_utc, now_berlin, safe_parse_dt, format_berlin
+from core.datetime_utils import now_utc, now_berlin, safe_parse_dt, format_berlin, to_iso
+from core.state import load_state, save_state
 import random
 from memory.memory_store import query_active, get_all_active
 
@@ -284,7 +285,6 @@ def _check_curiosity(user_id, now):
     Kimi entscheidet frei welche Frage sie stellt — basierend auf
     vorhandenen Chunks und was noch fehlt.
     """
-    from heartbeat import load_state, save_state, to_iso
     berlin = now_berlin()
 
     # Nur tagsüber

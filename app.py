@@ -20,11 +20,12 @@ from memory.fast_track import process_fast_track
 # logs/ Verzeichnis sicherstellen
 os.makedirs("logs", exist_ok=True)
 
+from logging.handlers import RotatingFileHandler as _RFH
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
-        logging.FileHandler("logs/schnubot.log"),
+        _RFH("logs/schnubot.log", maxBytes=10*1024*1024, backupCount=5),
         logging.StreamHandler(),
     ],
 )
