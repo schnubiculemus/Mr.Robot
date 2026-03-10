@@ -306,117 +306,150 @@ def run_heartbeat(user_id, context_name):
     berlin = now_berlin()
     logger.info(f"--- {context_name} ({user_id}) ---")
 
-    # 1. Konsolidierung
-    run_consolidation(user_id)
+    from core.heartbeat_log import HeartbeatRun
 
-    # 2. Deduplizierung (nach Konsolidierung)
-    try:
-        dedup_count = deduplicate_active()
-        if dedup_count > 0:
-            logger.info(f"Deduplizierung: {dedup_count} Duplikate archiviert")
-    except Exception as e:
-        logger.warning(f"Deduplizierung fehlgeschlagen: {e}")
+    with HeartbeatRun(user_id) as hb_run:
 
-    # 3. Decay (Gewichts- und Confidence-Alterung)
-    try:
-        decay_stats = run_decay()
-        if decay_stats["decayed"] > 0 or decay_stats["archived"] > 0:
-            logger.info(f"Decay: {decay_stats['decayed']} angepasst, {decay_stats['archived']} archiviert")
-    except Exception as e:
-        logger.warning(f"Decay fehlgeschlagen: {e}")
-
-    # 3b. Reflexion (Mr. Robot denkt eigenständig nach)
-    try:
-        state = load_state()
-        last_reflection = state.get(f"{user_id}_last_reflection")
-        do_reflect = True
-
-        if last_reflection:
-            last_ref_dt = safe_parse_dt(last_reflection)
-            if last_ref_dt:
-                age_hours = (now - last_ref_dt).total_seconds() / 3600
-                do_reflect = age_hours >= 12
+        # 1. Konsolidierung
+        try:
+            result = run_consolidation(user_id)
+            if isinstance(result, dict):
+                new_c = result.get("created", 0)
+                sup_c = result.get("superseded", 0)
+                detail = f"Konsol.: {new_c} neu, {sup_c} ersetzt" if (new_c or sup_c) else "Konsol.: nichts"
             else:
-                do_reflect = True  # Kaputtes Datum → reflektieren
+                detail = "Konsol.: ok"
+            hb_run.step("konsolidierung", "ok", detail)
+        except Exception as e:
+            logger.warning(f"Konsolidierung fehlgeschlagen: {e}")
+            hb_run.step("konsolidierung", "error", str(e)[:80])
 
-        if do_reflect:
-            from reflection import run_reflection
-            chunk_id = run_reflection(user_id)
-            if chunk_id:
-                state = load_state()
-                state[f"{user_id}_last_reflection"] = to_iso(now)
-                save_state(state)
-                logger.info(f"Reflexion erzeugt: {chunk_id[:8]}")
-        else:
-            logger.info("Reflexion: Cooldown nicht erreicht, skip")
-    except Exception as e:
-        logger.warning(f"Reflexion fehlgeschlagen: {e}")
+        # 2. Deduplizierung
+        try:
+            dedup_count = deduplicate_active()
+            if dedup_count > 0:
+                logger.info(f"Deduplizierung: {dedup_count} Duplikate archiviert")
+                hb_run.step("deduplizierung", "ok", f"Dedup.: {dedup_count} archiviert")
+            else:
+                hb_run.step("deduplizierung", "skip", "")
+        except Exception as e:
+            logger.warning(f"Deduplizierung fehlgeschlagen: {e}")
+            hb_run.step("deduplizierung", "error", str(e)[:80])
 
-    # 3c. Tagebuch (Mr. Robot schreibt seinen täglichen Eintrag)
-    # Nur im Abend-Fenster — der Tag soll erst gelebt werden bevor man drüber schreibt.
-    try:
-        is_evening_for_diary = 20 <= berlin.hour < 23
-        if is_evening_for_diary:
-            result = run_diary(user_id)
-            if result:
-                filepath, chunk_id = result
-                logger.info(f"Tagebuch geschrieben: {filepath}")
-        else:
-            logger.info("Tagebuch: Kein Abend-Fenster, skip")
-    except Exception as e:
-        logger.warning(f"Tagebuch fehlgeschlagen: {e}")
+        # 3. Decay
+        try:
+            decay_stats = run_decay()
+            if decay_stats["decayed"] > 0 or decay_stats["archived"] > 0:
+                logger.info(f"Decay: {decay_stats['decayed']} angepasst, {decay_stats['archived']} archiviert")
+                hb_run.step("decay", "ok", f"Decay: {decay_stats['decayed']} angepasst, {decay_stats['archived']} archiviert")
+            else:
+                hb_run.step("decay", "skip", "")
+        except Exception as e:
+            logger.warning(f"Decay fehlgeschlagen: {e}")
+            hb_run.step("decay", "error", str(e)[:80])
 
-    # 4. Proaktive Nachrichten (Event-basiert)
-    try:
-        # Briefing-Fenster dürfen den Stille-Check umgehen — sie sollen kommen
-        # wenn Tommy aktiv war, nicht nur bei langer Stille.
-        # Aber: max 1 Briefing pro Fenster (eigener Cooldown).
-        is_morning = 7 <= berlin.hour < 10
-        is_evening = 20 <= berlin.hour < 22
-        is_briefing_window = is_morning or is_evening
-        allow_proactive = False
-
-        if is_briefing_window:
+        # 3b. Reflexion
+        try:
             state = load_state()
-            cooldown_key = f"{user_id}_last_briefing_morning" if is_morning else f"{user_id}_last_briefing_evening"
-            last_briefing = state.get(cooldown_key)
-            if last_briefing:
-                last_br_dt = safe_parse_dt(last_briefing)
-                if last_br_dt:
-                    age_hours = (now - last_br_dt).total_seconds() / 3600
-                    allow_proactive = age_hours >= 20
+            last_reflection = state.get(f"{user_id}_last_reflection")
+            do_reflect = True
+            if last_reflection:
+                last_ref_dt = safe_parse_dt(last_reflection)
+                if last_ref_dt:
+                    age_hours = (now - last_ref_dt).total_seconds() / 3600
+                    do_reflect = age_hours >= 12
+
+            if do_reflect:
+                from reflection import run_reflection
+                chunk_id = run_reflection(user_id)
+                if chunk_id:
+                    state = load_state()
+                    state[f"{user_id}_last_reflection"] = to_iso(now)
+                    save_state(state)
+                    logger.info(f"Reflexion erzeugt: {chunk_id[:8]}")
+                    hb_run.step("reflexion", "ok", f"Reflexion: {chunk_id[:8]}")
                 else:
-                    allow_proactive = True  # Kaputtes Datum → erlauben
+                    hb_run.step("reflexion", "skip", "Kein Ergebnis")
             else:
-                allow_proactive = True
-        else:
-            allow_proactive = should_send_message(user_id, now)
+                logger.info("Reflexion: Cooldown nicht erreicht, skip")
+                hb_run.step("reflexion", "skip", "Cooldown")
+        except Exception as e:
+            logger.warning(f"Reflexion fehlgeschlagen: {e}")
+            hb_run.step("reflexion", "error", str(e)[:80])
 
-        if allow_proactive:
-            sent = run_proactive(user_id, context_name, now)
-            if sent:
+        # 3c. Tagebuch
+        try:
+            is_evening_for_diary = 20 <= berlin.hour < 23
+            if is_evening_for_diary:
+                result = run_diary(user_id)
+                if result:
+                    filepath, chunk_id = result
+                    logger.info(f"Tagebuch geschrieben: {filepath}")
+                    hb_run.step("tagebuch", "ok", "Tagebuch geschrieben")
+                else:
+                    hb_run.step("tagebuch", "skip", "Bereits heute geschrieben")
+            else:
+                logger.info("Tagebuch: Kein Abend-Fenster, skip")
+                hb_run.step("tagebuch", "skip", "Kein Abend-Fenster")
+        except Exception as e:
+            logger.warning(f"Tagebuch fehlgeschlagen: {e}")
+            hb_run.step("tagebuch", "error", str(e)[:80])
+
+        # 4. Proaktive Nachrichten
+        try:
+            is_morning = 7 <= berlin.hour < 10
+            is_evening = 20 <= berlin.hour < 22
+            is_briefing_window = is_morning or is_evening
+            allow_proactive = False
+
+            if is_briefing_window:
                 state = load_state()
-                state[f"{user_id}_message"] = to_iso(now)
-                if is_morning:
-                    state[f"{user_id}_last_briefing_morning"] = to_iso(now)
-                elif is_evening:
-                    state[f"{user_id}_last_briefing_evening"] = to_iso(now)
-                save_state(state)
-        else:
-            logger.info("Proaktive Nachricht: Cooldown/Zeitfenster nicht erfuellt, skip.")
-    except Exception as e:
-        logger.warning(f"Proaktiv-Engine fehlgeschlagen: {e}")
+                cooldown_key = f"{user_id}_last_briefing_morning" if is_morning else f"{user_id}_last_briefing_evening"
+                last_briefing = state.get(cooldown_key)
+                if last_briefing:
+                    last_br_dt = safe_parse_dt(last_briefing)
+                    if last_br_dt:
+                        age_hours = (now - last_br_dt).total_seconds() / 3600
+                        allow_proactive = age_hours >= 20
+                    else:
+                        allow_proactive = True
+                else:
+                    allow_proactive = True
+            else:
+                allow_proactive = should_send_message(user_id, now)
 
-    # 5. Autonomie-Engine (Soul-PR + Tier-2 Selbstmodifikation)
-    try:
-        run_autonomy(user_id)
-    except Exception as e:
-        logger.warning(f"Autonomie-Engine fehlgeschlagen: {e}")
+            if allow_proactive:
+                sent = run_proactive(user_id, context_name, now)
+                if sent:
+                    state = load_state()
+                    state[f"{user_id}_message"] = to_iso(now)
+                    if is_morning:
+                        state[f"{user_id}_last_briefing_morning"] = to_iso(now)
+                    elif is_evening:
+                        state[f"{user_id}_last_briefing_evening"] = to_iso(now)
+                    save_state(state)
+                    hb_run.step("proaktiv", "ok", "Nachricht gesendet")
+                else:
+                    hb_run.step("proaktiv", "skip", "Kein Trigger")
+            else:
+                logger.info("Proaktive Nachricht: Cooldown/Zeitfenster nicht erfuellt, skip.")
+                hb_run.step("proaktiv", "skip", "Cooldown")
+        except Exception as e:
+            logger.warning(f"Proaktiv-Engine fehlgeschlagen: {e}")
+            hb_run.step("proaktiv", "error", str(e)[:80])
 
-    # State
-    state = load_state()
-    state[f"{user_id}_last_run"] = to_iso(now)
-    save_state(state)
+        # 5. Autonomie-Engine
+        try:
+            run_autonomy(user_id)
+            hb_run.step("autonomie", "ok", "")
+        except Exception as e:
+            logger.warning(f"Autonomie-Engine fehlgeschlagen: {e}")
+            hb_run.step("autonomie", "error", str(e)[:80])
+
+        # State
+        state = load_state()
+        state[f"{user_id}_last_run"] = to_iso(now)
+        save_state(state)
 
     logger.info(f"--- fertig ---")
 

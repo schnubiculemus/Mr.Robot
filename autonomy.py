@@ -63,7 +63,6 @@ def _set_arch_cooldown():
         atomic_write_json(ARCH_COOLDOWN_PATH, {"last_arch_update": to_iso()})
     except Exception as e:
         logger.warning(f"Arch-Cooldown speichern fehlgeschlagen: {e}")
-SOUL_PR_COOLDOWN_HOURS = 24
 
 
 # =============================================================================

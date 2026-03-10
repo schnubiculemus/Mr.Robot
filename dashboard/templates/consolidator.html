@@ -244,10 +244,10 @@ async function showDetail(eventId) {
                     '<span class="badge badge-' + actionColor(a.action) + '">' + a.action + '</span>' +
                     (a.chunk_type ? '<span class="badge badge-' + a.chunk_type + '">' + a.chunk_type + '</span>' : '') +
                     (a.confidence != null ? '<span style="color:var(--text-muted);font-size:10px">conf ' + Number(a.confidence).toFixed(2) + '</span>' : '') +
-                    (isSupersede ? '<button onclick="loadDiff(\'' + a.chunk_id + '\', ' + i + ')" style="margin-left:auto;background:var(--bg-elevated);color:var(--accent);border:1px solid var(--border);border-radius:4px;padding:2px 8px;cursor:pointer;font-size:11px;font-family:inherit">Diff anzeigen</button>' : '<span class="mono" style="color:var(--text-dim);font-size:10px;margin-left:auto">' + (a.chunk_id || '') + '</span>') +
+                    (isSupersede ? '<button onclick="loadDiff(\'' + a.chunk_id + '\', ' + i + ')" style="margin-left:auto;background:var(--bg-elevated);color:var(--accent);border:1px solid var(--border);border-radius:4px;padding:2px 8px;cursor:pointer;font-size:11px;font-family:inherit">Diff</button> <a href="/chunks?highlight=' + encodeURIComponent(a.chunk_id) + '" title="Chunk öffnen" style="color:var(--accent);font-size:11px;font-family:monospace;margin-left:4px">' + a.chunk_id.substring(0,8) + ' ↗</a>' : (a.chunk_id ? '<a href="/chunks?highlight=' + encodeURIComponent(a.chunk_id) + '" title="Chunk öffnen" style="color:var(--accent);font-size:10px;font-family:monospace;margin-left:auto">' + a.chunk_id.substring(0,8) + ' ↗</a>' : '<span style="color:var(--text-dim);font-size:10px;margin-left:auto">—</span>')) +
                 '</div>' +
                 (a.text_preview ? '<div style="color:var(--text-secondary);font-size:12px;line-height:1.5">' + escHtml(a.text_preview) + '</div>' : '') +
-                (a.existing_chunk_id ? '<div style="margin-top:4px;font-size:10px;color:var(--text-dim)">&#x21A9; ' + escHtml(a.existing_chunk_id) + '</div>' : '') +
+                (a.existing_chunk_id ? '<div style="margin-top:4px;font-size:10px;color:var(--text-dim)">&#x21A9; <a href="/chunks?highlight=' + encodeURIComponent(a.existing_chunk_id) + '" title="Original-Chunk öffnen" style="color:var(--text-dim);font-family:monospace">' + a.existing_chunk_id.substring(0,12) + ' ↗</a></div>' : '') +
                 '<div id="diff-' + i + '"></div>' +
             '</div>';
         }).join('');

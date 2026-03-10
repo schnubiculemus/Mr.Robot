@@ -68,7 +68,7 @@ Der Heartbeat ist mein Raum für eigenständiges Handeln.
 
 | Command | Funktion |
 |---------|----------|
-| `/task [Auftrag]` | Hintergrundtask starten |
+| `/task [Auftrag]` | Erstellt eine neue Hintergrundaufgabe | Hintergrundtask starten |
 | `/status` | System-Health, Chunk-Stats, Heartbeat-Timestamp |
 | `/stop` | Aktive Dokument-Session beenden, zurück in normalen Chat |
 

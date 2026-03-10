@@ -204,7 +204,13 @@ def build_system_prompt(context_name=None, user_id=None, user_message=None, doc_
         "Nur EINEN Search-Block pro Antwort. Nur wenn wirklich noetig — nicht bei allgemeinem Wissen."
     )
 
-    # 10. Dokument-Kontext — ganz am Ende, höchste Recency-Priorität
+    # 10. Markdown-Verbot — direkt vor der User-Nachricht, maximale Recency
+    parts.append(
+        "KEIN MARKDOWN. Keine Sternchen, keine Rauten, keine Trennlinien, keine Unterstriche, keine Backticks. "
+        "Nur Fliesstext und Zeilenumbrueche. WhatsApp rendert Markdown nicht — es erscheint als Zeichensalat."
+    )
+
+    # 11. Dokument-Kontext — ganz am Ende, höchste Recency-Priorität
     if doc_context:
         parts.append(
             "DOKUMENT-KONTEXT (bereits extrahiert, liegt vollstaendig vor):\n\n" + doc_context

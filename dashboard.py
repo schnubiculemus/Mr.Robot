@@ -31,8 +31,9 @@ from memory.memory_store import (
 )
 from memory.memory_config import CHUNK_TYPES
 from core.datetime_utils import now_utc, now_berlin, safe_parse_dt
-from core.database import get_fast_track_events, get_fast_track_stats, get_consolidator_events, get_consolidator_stats, get_soul_proposals, update_soul_proposal_status
-from config import DASHBOARD_TOKEN, FLASK_SECRET_KEY
+from core.database import get_fast_track_events, get_fast_track_stats, get_consolidator_events, get_consolidator_stats, get_soul_proposals, update_soul_proposal_status, get_connection as get_db_connection
+from core.heartbeat_log import get_recent_runs
+from config import DASHBOARD_TOKEN, FLASK_SECRET_KEY, USER_CONTEXTS
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [DASHBOARD] %(message)s")
 logger = logging.getLogger(__name__)
@@ -200,10 +201,226 @@ def diary_page():
     return render_template("diary.html")
 
 
+@app.route("/timeline")
+@require_auth
+def timeline_page():
+    return render_template("timeline.html")
+
+
+@app.route("/api/heartbeat/runs")
+@require_auth
+def api_heartbeat_runs():
+    from core.heartbeat_log import get_recent_runs
+    limit = int(request.args.get("limit", 100))
+    runs = get_recent_runs(limit=limit)
+    return jsonify(runs)
+
+
 @app.route("/soul")
 @require_auth
 def soul_page():
     return redirect("/essence")
+
+
+@app.route("/todos")
+@require_auth
+def todos_page():
+    return render_template("todos.html")
+
+
+@app.route("/api/todos")
+@require_auth
+def api_todos():
+    from core.todos import get_all_todos
+    user_id = list(USER_CONTEXTS.keys())[0]
+    status = request.args.get("status")
+    todos = get_all_todos(user_id, limit=200)
+    if status:
+        todos = [t for t in todos if t["status"] == status]
+    return jsonify(todos)
+
+
+@app.route("/api/todos", methods=["POST"])
+@require_auth
+def api_todos_create():
+    from core.todos import create_todo
+    user_id = list(USER_CONTEXTS.keys())[0]
+    data = request.json or {}
+    todo = create_todo(
+        user_id=user_id,
+        title=data.get("title", ""),
+        description=data.get("description"),
+        priority=data.get("priority", "mittel"),
+        project=data.get("project"),
+        due_date=data.get("due_date"),
+    )
+    return jsonify(todo), 201
+
+
+@app.route("/api/todos/<int:todo_id>", methods=["PATCH"])
+@require_auth
+def api_todos_update(todo_id):
+    from core.todos import get_todo, complete_todo
+    from core.database import get_connection
+    data = request.json or {}
+    action = data.get("action")
+    if action == "complete":
+        todo = complete_todo(todo_id)
+        return jsonify(todo)
+    # Feld-Updates
+    todo = get_todo(todo_id)
+    if not todo:
+        return jsonify({"error": "nicht gefunden"}), 404
+    conn = get_connection()
+    allowed = {"title", "description", "priority", "project", "due_date", "status"}
+    updates = {k: v for k, v in data.items() if k in allowed}
+    if updates:
+        sets = ", ".join(f"{k}=?" for k in updates)
+        conn.execute(f"UPDATE todos SET {sets} WHERE id=?", (*updates.values(), todo_id))
+        conn.commit()
+    return jsonify(get_todo(todo_id))
+
+
+@app.route("/api/todos/<int:todo_id>", methods=["DELETE"])
+@require_auth
+def api_todos_delete(todo_id):
+    from core.todos import delete_todo
+    delete_todo(todo_id)
+    return jsonify({"ok": True})
+
+
+@app.route("/quality")
+@require_auth
+def quality_page():
+    return render_template("quality.html")
+
+
+@app.route("/api/quality/stats")
+@require_auth
+def api_quality_stats():
+    """Qualitaetsmetriken fuer das Gedaechtnis."""
+    try:
+        from datetime import timezone
+        active = get_active_collection()
+        all_data = active.get(include=["metadatas", "documents"])
+        metas = all_data["metadatas"]
+        docs  = all_data["documents"]
+        now   = datetime.now(timezone.utc)
+
+        t7  = (now - timedelta(days=7)).isoformat()
+        t30 = (now - timedelta(days=30)).isoformat()
+
+        total = len(metas)
+        retrieved_ever = 0
+        retrieved_7d   = 0
+        retrieved_30d  = 0
+        never_retrieved = 0
+        dead_chunks = []
+        top_chunks  = []
+        confidence_buckets = {"0.0-0.3": 0, "0.3-0.6": 0, "0.6-0.8": 0, "0.8+": 0}
+        weight_sum  = 0.0
+        age_sum_days = 0
+
+        for i, meta in enumerate(metas):
+            rc  = int(meta.get("retrieved_count", 0))
+            lra = meta.get("last_retrieved_at", "")
+            ca  = meta.get("created_at", "")
+            conf = float(meta.get("confidence", 0))
+            w    = float(meta.get("weight", 1.0))
+            weight_sum += w
+
+            try:
+                created_dt = datetime.fromisoformat(ca.replace("Z", "+00:00"))
+                age_days = (now - created_dt).days
+            except Exception:
+                age_days = 0
+            age_sum_days += age_days
+
+            if rc > 0:
+                retrieved_ever += 1
+                if lra >= t7:
+                    retrieved_7d += 1
+                if lra >= t30:
+                    retrieved_30d += 1
+            else:
+                never_retrieved += 1
+                if age_days >= 14:
+                    dead_chunks.append({
+                        "id": all_data["ids"][i],
+                        "text": (docs[i] or "")[:80],
+                        "chunk_type": meta.get("chunk_type", "?"),
+                        "age_days": age_days,
+                        "confidence": round(conf, 2),
+                        "weight": round(w, 2),
+                    })
+
+            if rc > 0:
+                top_chunks.append({
+                    "id": all_data["ids"][i],
+                    "text": (docs[i] or "")[:80],
+                    "chunk_type": meta.get("chunk_type", "?"),
+                    "retrieved_count": rc,
+                    "last_retrieved_at": lra[:16].replace("T", " ") if lra else "-",
+                    "confidence": round(conf, 2),
+                })
+
+            if conf < 0.3:
+                confidence_buckets["0.0-0.3"] += 1
+            elif conf < 0.6:
+                confidence_buckets["0.3-0.6"] += 1
+            elif conf < 0.8:
+                confidence_buckets["0.6-0.8"] += 1
+            else:
+                confidence_buckets["0.8+"] += 1
+
+        top_chunks.sort(key=lambda x: x["retrieved_count"], reverse=True)
+        dead_chunks.sort(key=lambda x: x["age_days"], reverse=True)
+
+        ft_7d = {"total": 0, "stored": 0}
+        cons_7d = {"runs": 0, "noop": 0, "actions": 0}
+        try:
+            conn = get_db_connection()
+            t7_db = (now - timedelta(days=7)).strftime("%Y-%m-%d")
+            rows = conn.execute(
+                "SELECT stored FROM fast_track_events WHERE timestamp >= ?", (t7_db,)
+            ).fetchall()
+            ft_7d["total"]  = len(rows)
+            ft_7d["stored"] = sum(1 for r in rows if r[0])
+
+            rows2 = conn.execute(
+                "SELECT null_result, actions_json FROM consolidator_events WHERE timestamp >= ?",
+                (t7_db,)
+            ).fetchall()
+            cons_7d["runs"] = len(rows2)
+            cons_7d["noop"] = sum(1 for r in rows2 if r[0])
+            for r in rows2:
+                try:
+                    acts = json.loads(r[1] or "[]")
+                    cons_7d["actions"] += len(acts)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        return jsonify({
+            "total": total,
+            "retrieved_ever": retrieved_ever,
+            "retrieved_7d": retrieved_7d,
+            "retrieved_30d": retrieved_30d,
+            "never_retrieved": never_retrieved,
+            "usage_rate_ever": round(retrieved_ever / total * 100) if total else 0,
+            "usage_rate_7d":   round(retrieved_7d   / total * 100) if total else 0,
+            "usage_rate_30d":  round(retrieved_30d  / total * 100) if total else 0,
+            "avg_weight": round(weight_sum / total, 2) if total else 0,
+            "avg_age_days": round(age_sum_days / total) if total else 0,
+            "dead_chunks": dead_chunks[:20],
+            "top_chunks":  top_chunks[:15],
+            "confidence_buckets": confidence_buckets,
+            "ft_7d": ft_7d,
+            "cons_7d": cons_7d,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/essence")
@@ -297,8 +514,8 @@ DEFAULT_TOOLS = [
     {"id": "pdf",        "name": "PDF-Analyse",      "icon": "📄", "description": "PDFs per WhatsApp hochladen und durchsuchen", "enabled": True,  "available": True},
     {"id": "calendar",   "name": "Kalender",          "icon": "📅", "description": "Termine lesen und erstellen",                "enabled": False, "available": False},
     {"id": "email",      "name": "E-Mail",            "icon": "✉️",  "description": "E-Mails lesen und senden",                  "enabled": False, "available": False},
-    {"id": "voice",      "name": "Sprachnachrichten", "icon": "🎙️", "description": "Sprachnachrichten transkribieren (Whisper)", "enabled": False, "available": False},
-    {"id": "tasks",      "name": "Aufgaben",          "icon": "✅", "description": "Aufgaben erstellen und verwalten",           "enabled": False, "available": False},
+    {"id": "voice",      "name": "Sprachnachrichten", "icon": "🎙️", "description": "Sprachnachrichten transkribieren (Whisper)", "enabled": True,  "available": True},
+    {"id": "tasks",      "name": "Aufgaben",          "icon": "✅", "description": "Aufgaben & Erinnerungen nach Kategorie",           "enabled": True,  "available": True},
     {"id": "images",     "name": "Bildanalyse",       "icon": "🖼️", "description": "Bilder beschreiben und analysieren",        "enabled": False, "available": False},
 ]
 
@@ -311,6 +528,7 @@ def load_tools_config():
             merged = dict(t)
             if t["id"] in saved:
                 merged["enabled"] = saved[t["id"]].get("enabled", t["enabled"])
+                merged["available"] = saved[t["id"]].get("available", t["available"])
             tools.append(merged)
         return tools
     except (FileNotFoundError, json.JSONDecodeError):
@@ -893,6 +1111,15 @@ def api_consolidator_diff(chunk_id):
 # =============================================================================
 
 SOUL_MD_PATH = os.path.join(PROJECT_DIR, "soul.md")
+
+def _atomic_write(path, text):
+    """Schreibt text atomar: erst tmp-Datei, dann rename. Verhindert korrupte Dateien bei Absturz."""
+    import tempfile
+    dir_ = os.path.dirname(path)
+    with tempfile.NamedTemporaryFile("w", dir=dir_, delete=False, suffix=".tmp", encoding="utf-8") as tf:
+        tf.write(text)
+        tmp_path = tf.name
+    os.replace(tmp_path, path)  # atomar auf Linux
 RULES_MD_PATH = os.path.join(PROJECT_DIR, "rules.md")
 TOOLS_MD_PATH = os.path.join(PROJECT_DIR, "tools.md")
 ARCHITECTURE_MD_PATH = os.path.join(PROJECT_DIR, "architecture.md")
@@ -976,9 +1203,7 @@ def api_soul_md_save():
     else:
         return jsonify({"error": "raw oder sections erforderlich"}), 400
 
-    with open(SOUL_MD_PATH, "w") as f:
-        f.write(new_text)
-
+    _atomic_write(SOUL_MD_PATH, new_text)
     return jsonify({"ok": True, "chars": len(new_text)})
 
 
@@ -1055,8 +1280,7 @@ def api_essence_sections_save(file_key):
     if os.path.exists(path):
         shutil.copy2(path, path + ".bak")
     new_text = _rebuild_soul_md(data["sections"])
-    with open(path, "w") as f:
-        f.write(new_text)
+    _atomic_write(path, new_text)
     return jsonify({"ok": True, "chars": len(new_text)})
 
 

@@ -1,0 +1,337 @@
+{% extends "base.html" %}
+{% block title %}Heartbeat Timeline{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Heartbeat Timeline</h1>
+    <p>Jeder Run — was passiert ist, was nicht, und warum</p>
+</div>
+
+<div style="display:flex; gap:10px; align-items:center; margin-bottom:20px; flex-wrap:wrap;">
+    <div id="status-badge" style="font-size:12px; color:var(--text-3);">Lade...</div>
+    <div style="margin-left:auto; display:flex; gap:8px;">
+        <button class="btn btn-secondary" onclick="loadRuns()" style="font-size:12px; padding:6px 12px;">↻ Aktualisieren</button>
+        <select class="filter-select" id="filter-status" onchange="applyFilter()">
+            <option value="all">Alle Runs</option>
+            <option value="error">Nur mit Fehlern</option>
+            <option value="ok">Nur ohne Fehler</option>
+        </select>
+    </div>
+</div>
+
+<div id="timeline-container">
+    <div class="loading">Lade Timeline...</div>
+</div>
+
+<style>
+.run-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin-bottom: 10px;
+    overflow: hidden;
+    box-shadow: var(--shadow-sm);
+    transition: box-shadow 0.15s;
+}
+
+.run-card:hover { box-shadow: var(--shadow); }
+
+.run-card.has-error { border-left: 3px solid var(--red); }
+
+.run-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 13px 18px;
+    cursor: pointer;
+    user-select: none;
+}
+
+.run-header:hover { background: var(--bg); }
+
+.run-time {
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-3);
+    white-space: nowrap;
+    min-width: 110px;
+}
+
+.run-duration {
+    font-size: 11px;
+    color: var(--text-4);
+    white-space: nowrap;
+}
+
+.run-summary {
+    font-size: 12px;
+    color: var(--text-2);
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.run-error-badge {
+    background: var(--red-light);
+    color: var(--red);
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 20px;
+    white-space: nowrap;
+}
+
+.run-chevron {
+    color: var(--text-4);
+    font-size: 11px;
+    transition: transform 0.2s;
+    flex-shrink: 0;
+}
+
+.run-card.expanded .run-chevron { transform: rotate(90deg); }
+
+.run-detail {
+    display: none;
+    border-top: 1px solid var(--border-light);
+    padding: 14px 18px;
+    background: var(--surface-2);
+}
+
+.run-card.expanded .run-detail { display: block; }
+
+.steps-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.step-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+    padding: 5px 0;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.step-row:last-child { border-bottom: none; }
+
+.step-name {
+    width: 110px;
+    font-weight: 500;
+    color: var(--text-2);
+    flex-shrink: 0;
+    text-transform: capitalize;
+}
+
+.step-indicator {
+    width: 20px;
+    text-align: center;
+    flex-shrink: 0;
+    font-size: 13px;
+}
+
+.step-detail {
+    color: var(--text-3);
+    flex: 1;
+}
+
+.step-ts {
+    font-size: 10px;
+    color: var(--text-4);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+/* Tagesgruppe */
+.day-group-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--text-4);
+    padding: 16px 0 6px;
+}
+
+.day-group-label:first-child { padding-top: 0; }
+
+/* Stats Bar oben */
+.stats-bar {
+    display: flex;
+    gap: 20px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 20px;
+    margin-bottom: 20px;
+    box-shadow: var(--shadow-sm);
+}
+
+.stats-bar-item { text-align: center; }
+.stats-bar-value { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; color: var(--text-1); }
+.stats-bar-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-4); margin-top: 2px; }
+</style>
+
+<script>
+let allRuns = [];
+
+const STEP_LABELS = {
+    konsolidierung: 'Konsolidierung',
+    deduplizierung: 'Dedup.',
+    decay: 'Decay',
+    reflexion: 'Reflexion',
+    tagebuch: 'Tagebuch',
+    proaktiv: 'Proaktiv',
+    autonomie: 'Autonomie',
+    '__crash__': 'Crash',
+};
+
+const STEP_ICONS = {
+    ok:    '✓',
+    skip:  '–',
+    error: '⚠',
+};
+
+const STEP_COLORS = {
+    ok:    'var(--accent)',
+    skip:  'var(--text-4)',
+    error: 'var(--red)',
+};
+
+function formatTs(iso) {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    return d.toLocaleString('de-DE', {
+        day: '2-digit', month: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+    });
+}
+
+function formatTimeShort(iso) {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    return d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+}
+
+function formatDay(iso) {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setDate(today.getDate() - 1);
+
+    if (d.toDateString() === today.toDateString()) return 'Heute';
+    if (d.toDateString() === yesterday.toDateString()) return 'Gestern';
+    return d.toLocaleDateString('de-DE', { weekday: 'long', day: '2-digit', month: '2-digit' });
+}
+
+function getDayKey(iso) {
+    if (!iso) return '';
+    return new Date(iso).toDateString();
+}
+
+function calcDuration(started, finished) {
+    if (!started || !finished) return '';
+    const s = new Date(started);
+    const f = new Date(finished);
+    const sec = Math.round((f - s) / 1000);
+    if (sec < 60) return `${sec}s`;
+    return `${Math.floor(sec / 60)}m ${sec % 60}s`;
+}
+
+function buildRunCard(run, idx) {
+    const duration = calcDuration(run.started_at, run.finished_at);
+    const hasError = run.had_error;
+
+    const steps = (run.steps || []).map(s => {
+        const icon = STEP_ICONS[s.status] || '?';
+        const color = STEP_COLORS[s.status] || 'var(--text-3)';
+        const label = STEP_LABELS[s.step] || s.step;
+        const detail = s.detail || '';
+        const ts = s.ts ? formatTimeShort(s.ts) : '';
+        return `
+            <div class="step-row">
+                <div class="step-name">${label}</div>
+                <div class="step-indicator" style="color:${color}; font-weight:600">${icon}</div>
+                <div class="step-detail">${detail || '<span style="color:var(--text-4)">—</span>'}</div>
+                <div class="step-ts">${ts}</div>
+            </div>`;
+    }).join('');
+
+    return `
+        <div class="run-card ${hasError ? 'has-error' : ''}" id="run-${idx}">
+            <div class="run-header" onclick="toggleRun(${idx})">
+                <div class="run-time">${formatTimeShort(run.started_at)}</div>
+                <div class="run-summary">${run.summary || '—'}</div>
+                ${duration ? `<div class="run-duration">${duration}</div>` : ''}
+                ${hasError ? '<div class="run-error-badge">Fehler</div>' : ''}
+                <div class="run-chevron">▶</div>
+            </div>
+            <div class="run-detail">
+                <div class="steps-grid">${steps || '<div style="color:var(--text-4);font-size:12px">Keine Steps aufgezeichnet</div>'}</div>
+            </div>
+        </div>`;
+}
+
+function toggleRun(idx) {
+    const card = document.getElementById(`run-${idx}`);
+    card.classList.toggle('expanded');
+}
+
+function applyFilter() {
+    const filter = document.getElementById('filter-status').value;
+    const filtered = filter === 'error' ? allRuns.filter(r => r.had_error)
+                   : filter === 'ok'    ? allRuns.filter(r => !r.had_error)
+                   : allRuns;
+    renderRuns(filtered);
+}
+
+function renderRuns(runs) {
+    const container = document.getElementById('timeline-container');
+    if (!runs.length) {
+        container.innerHTML = '<div class="loading">Noch keine Heartbeat-Runs aufgezeichnet.<br><span style="font-size:11px;color:var(--text-4)">Runs werden ab dem nächsten Heartbeat-Zyklus gespeichert.</span></div>';
+        return;
+    }
+
+    // Nach Tagen gruppieren
+    let html = '';
+    let lastDay = null;
+    runs.forEach((run, idx) => {
+        const day = getDayKey(run.started_at);
+        if (day !== lastDay) {
+            html += `<div class="day-group-label">${formatDay(run.started_at)}</div>`;
+            lastDay = day;
+        }
+        html += buildRunCard(run, idx);
+    });
+
+    container.innerHTML = html;
+}
+
+async function loadRuns() {
+    try {
+        const res = await fetch('/api/heartbeat/runs?limit=200');
+        allRuns = await res.json();
+
+        // Stats
+        const total = allRuns.length;
+        const errors = allRuns.filter(r => r.had_error).length;
+        const today = allRuns.filter(r => getDayKey(r.started_at) === new Date().toDateString()).length;
+
+        document.getElementById('status-badge').innerHTML =
+            `<span style="color:var(--text-4)">${total} Runs gespeichert · ${today} heute · </span>` +
+            (errors > 0
+                ? `<span style="color:var(--red)">${errors} mit Fehlern</span>`
+                : `<span style="color:var(--accent)">Keine Fehler</span>`);
+
+        applyFilter();
+    } catch(e) {
+        document.getElementById('timeline-container').innerHTML =
+            `<div class="loading" style="color:var(--red)">Fehler beim Laden: ${e.message}</div>`;
+    }
+}
+
+loadRuns();
+</script>
+{% endblock %}

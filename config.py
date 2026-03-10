@@ -25,7 +25,7 @@ if not WEBHOOK_SECRET:
 BOT_NAME = os.getenv("BOT_NAME", "Mr.Robot")
 
 # Datenbank
-DB_PATH = os.getenv("DB_PATH", "bot.db")
+DB_PATH = os.getenv("DB_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "bot.db"))
 
 # Chat-Kontext
 MAX_CONTEXT_MESSAGES = int(os.getenv("MAX_CONTEXT_MESSAGES", "30"))

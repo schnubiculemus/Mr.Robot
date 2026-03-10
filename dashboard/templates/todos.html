@@ -1,0 +1,443 @@
+{% extends "base.html" %}
+{% block title %}Listen{% endblock %}
+
+{% block content %}
+<div class="page-header" style="display:flex;align-items:center;justify-content:space-between">
+    <div>
+        <h1>Listen</h1>
+        <p>Aufgaben die Mr. Robot verwaltet</p>
+    </div>
+    <button class="btn btn-primary" onclick="openCreate()">+ Neu</button>
+</div>
+
+<!-- Filter -->
+<div style="display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap;align-items:center">
+    <div style="display:flex;gap:4px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:3px">
+        <button class="tab-btn active" onclick="setFilter('open', this)">Offen</button>
+        <button class="tab-btn" onclick="setFilter('done', this)">Erledigt</button>
+        <button class="tab-btn" onclick="setFilter('all', this)">Alle</button>
+    </div>
+    <select class="filter-select" id="prio-filter" onchange="applyFilters()">
+        <option value="">Alle Prioritäten</option>
+        <option value="hoch">🔴 Hoch</option>
+        <option value="mittel">🟡 Mittel</option>
+        <option value="niedrig">🟢 Niedrig</option>
+        <option value="keine">⚪ Keine</option>
+    </select>
+    <select class="filter-select" id="project-filter" onchange="applyFilters()">
+        <option value="">Alle Listen</option>
+        <option value="ukl">ukl — UKL / Arbeit</option>
+        <option value="osmi">osmi — Medieninformatik</option>
+        <option value="jotsle">jotsle — Julia & Tommy</option>
+        <option value="privat">privat</option>
+        <option value="booktobuy">booktobuy — Bücher</option>
+    </select>
+    <div id="todo-count" style="margin-left:auto;font-size:12px;color:var(--text-4)"></div>
+</div>
+
+<!-- Todo-Liste -->
+<div id="todo-list">
+    <div class="loading">Lade Todos...</div>
+</div>
+
+<!-- Create/Edit Modal -->
+<div id="modal-backdrop" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.3);z-index:100;align-items:center;justify-content:center">
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:24px;width:460px;max-width:95vw;box-shadow:var(--shadow-lg)">
+        <div style="font-size:15px;font-weight:600;color:var(--text-1);margin-bottom:18px" id="modal-title">Neuer Eintrag</div>
+
+        <div style="display:flex;flex-direction:column;gap:12px">
+            <div>
+                <label class="field-label">Titel *</label>
+                <input class="field-input" id="f-title" type="text" placeholder="Was muss erledigt werden?">
+            </div>
+            <div>
+                <label class="field-label">Beschreibung</label>
+                <textarea class="field-input" id="f-desc" rows="2" placeholder="Optional"></textarea>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+                <div>
+                    <label class="field-label">Priorität</label>
+                    <select class="field-input" id="f-prio">
+                        <option value="keine" selected>⚪ Keine Priorität</option>
+                        <option value="hoch">🔴 Hoch</option>
+                        <option value="mittel">🟡 Mittel</option>
+                        <option value="niedrig">🟢 Niedrig</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="field-label">Fällig am</label>
+                    <input class="field-input" id="f-due" type="date">
+                </div>
+            </div>
+            <div>
+                <label class="field-label">Liste / Kategorie</label>
+                <select class="field-input" id="f-project">
+                    <option value="">— wählen —</option>
+                    <option value="ukl">ukl — UKL / Arbeit</option>
+                    <option value="osmi">osmi — Medieninformatik</option>
+                    <option value="jotsle">jotsle — Julia & Tommy</option>
+                    <option value="privat">privat</option>
+                    <option value="booktobuy">booktobuy — Bücher</option>
+                </select>
+            </div>
+        </div>
+
+        <div style="display:flex;gap:8px;margin-top:20px;justify-content:flex-end">
+            <button class="btn btn-secondary" onclick="closeModal()">Abbrechen</button>
+            <button class="btn btn-primary" onclick="saveTodo()" id="modal-save-btn">Erstellen</button>
+        </div>
+    </div>
+</div>
+
+<style>
+.tab-btn {
+    background: none;
+    border: none;
+    padding: 5px 12px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-3);
+    border-radius: calc(var(--radius) - 2px);
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.tab-btn.active {
+    background: var(--bg);
+    color: var(--text-1);
+    box-shadow: var(--shadow-sm);
+}
+.tab-btn:hover:not(.active) { color: var(--text-1); }
+
+.todo-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 13px 16px;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    box-shadow: var(--shadow-sm);
+    transition: box-shadow 0.15s;
+}
+.todo-card:hover { box-shadow: var(--shadow); }
+.todo-card.done { opacity: 0.55; }
+
+.todo-check {
+    width: 18px; height: 18px;
+    border: 2px solid var(--border);
+    border-radius: 50%;
+    cursor: pointer;
+    flex-shrink: 0;
+    margin-top: 1px;
+    transition: all 0.15s;
+    display: flex; align-items: center; justify-content: center;
+}
+.todo-check:hover { border-color: var(--accent); }
+.todo-check.checked { background: var(--accent); border-color: var(--accent); }
+.todo-check.checked::after { content: '✓'; color: white; font-size: 10px; font-weight: 700; }
+
+.todo-body { flex: 1; min-width: 0; }
+.todo-title {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-1);
+    line-height: 1.3;
+}
+.todo-card.done .todo-title { text-decoration: line-through; color: var(--text-4); }
+
+.todo-meta {
+    display: flex;
+    gap: 8px;
+    margin-top: 5px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+.todo-meta-item {
+    font-size: 11px;
+    color: var(--text-4);
+    display: flex;
+    align-items: center;
+    gap: 3px;
+}
+.todo-meta-item.overdue { color: var(--red); font-weight: 500; }
+.todo-meta-item.due-today { color: var(--amber); font-weight: 500; }
+
+.todo-desc {
+    font-size: 12px;
+    color: var(--text-3);
+    margin-top: 4px;
+}
+
+.todo-actions {
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
+    opacity: 0;
+    transition: opacity 0.15s;
+}
+.todo-card:hover .todo-actions { opacity: 1; }
+
+.todo-action-btn {
+    background: none;
+    border: none;
+    padding: 4px 6px;
+    cursor: pointer;
+    color: var(--text-4);
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    transition: all 0.15s;
+}
+.todo-action-btn:hover { background: var(--bg); color: var(--text-1); }
+.todo-action-btn.delete:hover { color: var(--red); }
+
+.prio-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    margin-top: 5px;
+}
+.prio-hoch { background: var(--red); }
+.prio-mittel { background: var(--amber); }
+.prio-niedrig { background: var(--accent); }
+.prio-keine { background: var(--border, #3a3a4e); }
+
+.group-label {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-4);
+    padding: 12px 0 6px;
+}
+
+.field-label {
+    display: block;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-4);
+    margin-bottom: 5px;
+}
+.field-input {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 7px 10px;
+    font-size: 13px;
+    color: var(--text-1);
+    outline: none;
+    box-sizing: border-box;
+    font-family: inherit;
+    resize: vertical;
+}
+.field-input:focus { border-color: var(--accent); }
+
+#modal-backdrop { display: none; }
+#modal-backdrop.open { display: flex !important; }
+</style>
+
+<script>
+let allTodos = [];
+let currentFilter = 'open';
+let editingId = null;
+
+const today = new Date().toISOString().split('T')[0];
+
+async function loadTodos() {
+    try {
+        const res = await fetch('/api/todos');
+        allTodos = await res.json();
+        updateProjectFilter();
+        applyFilters();
+    } catch(e) {
+        document.getElementById('todo-list').innerHTML =
+            `<div class="loading" style="color:var(--red)">Fehler: ${e.message}</div>`;
+    }
+}
+
+function updateProjectFilter() {
+    const projects = [...new Set(allTodos.map(t => t.project).filter(Boolean))].sort();
+    const sel = document.getElementById('project-filter');
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">Alle Kategorien</option>' +
+        projects.map(p => `<option value="${p}"${p===cur?' selected':''}>${p}</option>`).join('');
+}
+
+function setFilter(f, btn) {
+    currentFilter = f;
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    applyFilters();
+}
+
+function applyFilters() {
+    const prio = document.getElementById('prio-filter').value;
+    const proj = document.getElementById('project-filter').value;
+
+    let filtered = allTodos;
+    if (currentFilter !== 'all') filtered = filtered.filter(t => t.status === currentFilter);
+    if (prio) filtered = filtered.filter(t => t.priority === prio);
+    if (proj) filtered = filtered.filter(t => t.project === proj);
+
+    document.getElementById('todo-count').textContent = `${filtered.length} Einträge`;
+    renderTodos(filtered);
+}
+
+function renderTodos(todos) {
+    const container = document.getElementById('todo-list');
+    if (!todos.length) {
+        container.innerHTML = '<div class="loading">Keine Todos gefunden.</div>';
+        return;
+    }
+
+    // Nach Kategorie gruppieren (nur bei open/all)
+    if (currentFilter === 'done') {
+        container.innerHTML = todos.map(renderTodo).join('');
+        return;
+    }
+
+    const groups = {};
+    todos.forEach(t => {
+        const g = t.project || 'Allgemein';
+        if (!groups[g]) groups[g] = [];
+        groups[g].push(t);
+    });
+
+    // Sortierung: Allgemein zuletzt
+    const sorted = Object.entries(groups).sort(([a],[b]) => {
+        if (a === 'Allgemein') return 1;
+        if (b === 'Allgemein') return -1;
+        return a.localeCompare(b);
+    });
+
+    container.innerHTML = sorted.map(([group, items]) =>
+        `<div class="group-label">${group}</div>` + items.map(renderTodo).join('')
+    ).join('');
+}
+
+function renderTodo(t) {
+    const isDone = t.status === 'done';
+    const isOverdue = !isDone && t.due_date && t.due_date < today;
+    const isDueToday = !isDone && t.due_date === today;
+
+    let dueStr = '';
+    if (t.due_date) {
+        const cls = isOverdue ? 'overdue' : isDueToday ? 'due-today' : '';
+        const label = isOverdue ? `⚠ ${t.due_date}` : isDueToday ? '← heute' : t.due_date;
+        dueStr = `<span class="todo-meta-item ${cls}">📅 ${label}</span>`;
+    }
+
+    return `<div class="todo-card ${isDone ? 'done' : ''}" id="todo-${t.id}">
+        <div class="prio-dot prio-${t.priority}" title="${t.priority}"></div>
+        <div class="todo-check ${isDone ? 'checked' : ''}" onclick="toggleDone(${t.id}, ${isDone})"></div>
+        <div class="todo-body">
+            <div class="todo-title">${esc(t.title)}</div>
+            ${t.description ? `<div class="todo-desc">${esc(t.description)}</div>` : ''}
+            <div class="todo-meta">
+                <span class="todo-meta-item">#${t.id}</span>
+                ${dueStr}
+                ${t.project && currentFilter === 'all' ? `<span class="todo-meta-item">📁 ${esc(t.project)}</span>` : ''}
+                ${isDone && t.completed_at ? `<span class="todo-meta-item">✓ ${t.completed_at.slice(0,10)}</span>` : ''}
+            </div>
+        </div>
+        <div class="todo-actions">
+            <button class="todo-action-btn" onclick="openEdit(${t.id})" title="Bearbeiten">✏</button>
+            <button class="todo-action-btn delete" onclick="deleteTodo(${t.id})" title="Löschen">🗑</button>
+        </div>
+    </div>`;
+}
+
+async function toggleDone(id, wasDone) {
+    if (wasDone) return; // Rückgängig nicht implementiert
+    await fetch(`/api/todos/${id}`, {
+        method: 'PATCH',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({action: 'complete'})
+    });
+    await loadTodos();
+}
+
+async function deleteTodo(id) {
+    if (!confirm('Todo löschen?')) return;
+    await fetch(`/api/todos/${id}`, {method: 'DELETE'});
+    await loadTodos();
+}
+
+function openCreate() {
+    editingId = null;
+    document.getElementById('modal-title').textContent = 'Neuer Eintrag';
+    document.getElementById('modal-save-btn').textContent = 'Erstellen';
+    document.getElementById('f-title').value = '';
+    document.getElementById('f-desc').value = '';
+    document.getElementById('f-prio').value = 'mittel';
+    document.getElementById('f-due').value = '';
+    document.getElementById('f-project').value = '';
+    document.getElementById('modal-backdrop').classList.add('open');
+    setTimeout(() => document.getElementById('f-title').focus(), 50);
+}
+
+function openEdit(id) {
+    const t = allTodos.find(x => x.id === id);
+    if (!t) return;
+    editingId = id;
+    document.getElementById('modal-title').textContent = 'Eintrag bearbeiten';
+    document.getElementById('modal-save-btn').textContent = 'Speichern';
+    document.getElementById('f-title').value = t.title || '';
+    document.getElementById('f-desc').value = t.description || '';
+    document.getElementById('f-prio').value = t.priority || 'mittel';
+    document.getElementById('f-due').value = t.due_date || '';
+    document.getElementById('f-project').value = t.project || '';
+    document.getElementById('modal-backdrop').classList.add('open');
+}
+
+function closeModal() {
+    document.getElementById('modal-backdrop').classList.remove('open');
+}
+
+async function saveTodo() {
+    const title = document.getElementById('f-title').value.trim();
+    if (!title) { alert('Titel erforderlich'); return; }
+    const data = {
+        title,
+        description: document.getElementById('f-desc').value.trim() || null,
+        priority: document.getElementById('f-prio').value,
+        due_date: document.getElementById('f-due').value || null,
+        project: document.getElementById('f-project').value.trim() || null,
+    };
+    if (editingId) {
+        await fetch(`/api/todos/${editingId}`, {
+            method: 'PATCH',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify(data)
+        });
+    } else {
+        await fetch('/api/todos', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify(data)
+        });
+    }
+    closeModal();
+    await loadTodos();
+}
+
+// Enter im Titel-Feld
+document.getElementById('f-title').addEventListener('keydown', e => {
+    if (e.key === 'Enter') saveTodo();
+});
+
+// Backdrop-Click schließt Modal
+document.getElementById('modal-backdrop').addEventListener('click', e => {
+    if (e.target === e.currentTarget) closeModal();
+});
+
+function esc(str) {
+    return (str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+loadTodos();
+</script>
+{% endblock %}

@@ -10,6 +10,7 @@ from core.database import init_db, get_or_create_user, save_message, get_chat_hi
 from core.ollama_client import chat as ollama_chat
 from core.whatsapp import send_message, extract_message, init_waha
 from core.document import is_media_message, parse_media_sentinel, download_media, extract_pdf_text, build_doc_session, search_doc_session, get_doc_session
+from core.voice import transcribe_audio, store_voice_chunk
 from core.tasks import (
     create_task, save_task, load_task, build_iteration_prompt, TASK_DONE_TOKEN,
     get_pending_tasks, claim_task, refresh_claim, release_task, generate_runner_id,
@@ -104,7 +105,7 @@ def webhook():
     if _t in ["/doc stop", "/doc end", "/dokument stop", "stop", "fertig", "ende", "/stop"]:
         from core.document import clear_doc_session
         clear_doc_session(phone_number)
-        send_message(phone_number, "Dokument-Session beendet. Ich bin wieder im normalen Modus.\n\n[kimi]")
+        send_message(phone_number, "Dokument-Session beendet. Ich bin wieder im normalen Modus.")
         return jsonify({"status": "ok"}), 200
 
     if text.strip().lower().startswith("/task "):
@@ -158,6 +159,29 @@ def webhook():
         logger.info(f"Status abgefragt")
         return jsonify({"status": "status_sent"}), 200
 
+    # --- Sprachnachricht — VOR PDF-Check, da is_media_message() alle MEDIA-Sentinels matcht ---
+    if text.startswith("[MEDIA:audio:"):
+        try:
+            import json as _json
+            _tools_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "tools_config.json")
+            with open(_tools_path) as _tf:
+                _tools = {t["id"]: t for t in _json.load(_tf)}
+            if not _tools.get("voice", {}).get("enabled", True):
+                send_message(phone_number, "Sprachnachrichten sind gerade deaktiviert.")
+                return jsonify({"status": "tool_disabled"}), 200
+        except Exception:
+            pass
+        parsed = parse_media_sentinel(text)
+        if parsed:
+            _, media_url, filename = parsed
+            from config import WAHA_API_KEY as _waha_key
+            audio_bytes = download_media(media_url, api_key=_waha_key)
+            if audio_bytes:
+                _chat_pool.submit(_process_voice, phone_number, audio_bytes, display_name, context_name)
+            else:
+                send_message(phone_number, "Die Sprachnachricht konnte leider nicht heruntergeladen werden.")
+        return jsonify({"status": "processing_voice"}), 200
+
     # --- Chat-Verarbeitung im Chat-Pool ---
     # Sofort 200 an WAHA zurück, damit der Webhook nicht timeout'd.
     # Kimi-Antwort + Fast-Track laufen asynchron im dedizierten Chat-Pool.
@@ -170,7 +194,7 @@ def webhook():
             with open(_tools_path) as _tf:
                 _tools = {t["id"]: t for t in _json.load(_tf)}
             if not _tools.get("pdf", {}).get("enabled", True):
-                send_message(phone_number, "PDF-Analyse ist gerade deaktiviert.\n\n[kimi]")
+                send_message(phone_number, "PDF-Analyse ist gerade deaktiviert.")
                 return jsonify({"status": "tool_disabled"}), 200
         except (FileNotFoundError, Exception):
             pass  # Kein Config = Standard = aktiv
@@ -185,15 +209,15 @@ def webhook():
                 if caption:
                     # PDF + Frage: sofortige Meldung, dann Session aufbauen + antworten
                     ack = "Einen Moment — ich schaue mir das Dokument an. 📄"
-                    send_message(phone_number, ack + "\n\n[kimi]")
+                    send_message(phone_number, ack + "")
                     _chat_pool.submit(_process_document_search, phone_number, pdf_bytes, filename, caption, display_name, context_name)
                 else:
                     # Nur PDF ohne Frage: Session aufbauen, dann bereit-Meldung
                     ack = "Einen Moment — ich schaue mir das Dokument an. 📄"
-                    send_message(phone_number, ack + "\n\n[kimi]")
+                    send_message(phone_number, ack + "")
                     _chat_pool.submit(_process_document_index, phone_number, pdf_bytes, filename, display_name)
             else:
-                send_message(phone_number, f"Das Dokument konnte leider nicht heruntergeladen werden.\n\n[kimi]")
+                send_message(phone_number, f"Das Dokument konnte leider nicht heruntergeladen werden.")
         return jsonify({"status": "processing_document"}), 200
 
     # Aktive Doc-Session? Immer Dokument-Modus bis User explizit "stop" schreibt.
@@ -288,8 +312,28 @@ def _process_chat(phone_number, text, display_name, context_name):
                 except Exception as e:
                     logger.error(f"Web Search: zweiter Kimi-Call fehlgeschlagen: {e}")
 
+            # [gespeichert] Signal entfernen
+            reply = re.sub(r"\s*\[gespeichert\]\s*", " ", reply).strip()
+
+            # Todo-Parsing: Kimi schreibt [TODO_ACTION: {...}] wenn sie ein Todo anlegen will
+            _tasks_enabled = True
+            try:
+                import json as _j2; _tp = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "tools_config.json")
+                _tasks_enabled = {t["id"]: t for t in _j2.load(open(_tp))}.get("tasks", {}).get("enabled", True)
+            except Exception: pass
+            if _tasks_enabled:
+                try:
+                    from core.todos import extract_todo_action, execute_todo_action
+                    reply, todo_action = extract_todo_action(reply)
+                    if todo_action:
+                        todo_result = execute_todo_action(phone_number, todo_action)
+                        if todo_result:
+                            reply = reply + ("\n\n" if reply else "") + todo_result
+                except Exception as e:
+                    logger.warning(f"Todo-Parsing fehlgeschlagen: {e}")
+
             save_message(phone_number, "assistant", reply)
-            send_message(phone_number, reply + "\n\n[kimi]")
+            send_message(phone_number, reply + "")
 
             logger.info(f"Antwort an {display_name}: {reply[:100]}")
 
@@ -480,6 +524,37 @@ def _estimate_time(page_count):
         return "einige Minuten"
 
 
+def _process_voice(phone_number, audio_bytes, display_name, context_name):
+    """
+    Transkribiert eine Sprachnachricht und laesst Kimi darauf antworten.
+
+    Ablauf:
+      1. faster-whisper transkribiert die Audio-Bytes
+      2. Transkript als knowledge-Chunk speichern
+      3. Transkript als User-Nachricht behandeln → Kimi antwortet normal
+    """
+    try:
+        transcript = transcribe_audio(audio_bytes)
+
+        if not transcript:
+            send_message(phone_number, "Ich konnte die Sprachnachricht leider nicht verstehen. Kannst du es nochmal versuchen oder schreiben?")
+            return
+
+        # Als Chunk speichern
+        store_voice_chunk(transcript, phone_number)
+
+        # Als User-Nachricht in DB speichern (mit Marker damit klar ist woher)
+        display_transcript = f"🎙️ {transcript}"
+        save_message(phone_number, "user", display_transcript)
+
+        # Kimi antwortet auf den transkribierten Text
+        _process_chat(phone_number, transcript, display_name, context_name)
+
+    except Exception as e:
+        logger.error(f"Voice-Processing fehlgeschlagen fuer {phone_number}: {e}")
+        send_message(phone_number, "Fehler bei der Sprachnachricht — bitte nochmal versuchen.")
+
+
 def _process_document_index(phone_number, pdf_bytes, filename, display_name):
     """Nur PDF ohne Frage: Session aufbauen und Bereit-Meldung senden."""
     try:
@@ -487,13 +562,13 @@ def _process_document_index(phone_number, pdf_bytes, filename, display_name):
         # Extraktion zuerst — schnell, liefert Seitenzahl
         pages = extract_pages(pdf_bytes)
         if not pages:
-            send_message(phone_number, "Das PDF konnte leider nicht gelesen werden.\n\n[kimi]")
+            send_message(phone_number, "Das PDF konnte leider nicht gelesen werden.")
             return
 
         # Zweite Meldung mit Zeitschaetzung
         est = _estimate_time(len(pages))
         eta_msg = f"📊 {len(pages)} Seiten — ich indexiere in {est}. Gleich kannst du Fragen stellen."
-        send_message(phone_number, eta_msg + "\n\n[kimi]")
+        send_message(phone_number, eta_msg + "")
 
         # Chunking + Embedding — Session sofort mit leeren Embeddings setzen
         chunks = chunk_pages(pages)
@@ -503,7 +578,7 @@ def _process_document_index(phone_number, pdf_bytes, filename, display_name):
 
         reply = f'✅ "{filename}" ist geladen — {len(pages)} Seiten, {len(chunks)} Abschnitte.\n\nIch bin jetzt im Dokument-Modus. Stell mir deine Fragen dazu. Schreib "stop" wenn du wieder normal chatten möchtest.'
         save_message(phone_number, "assistant", reply)
-        send_message(phone_number, reply + "\n\n[kimi]")
+        send_message(phone_number, reply + "")
         logger.info(f"Doc-Index aufgebaut: {filename} fuer {display_name}")
     except Exception as e:
         logger.error(f"Doc-Index fehlgeschlagen: {e}")
@@ -608,7 +683,7 @@ def _handle_doc_followup(phone_number, query, context_name):
         try:
             reply = _answer_doc_query(phone_number, query, context_name)
             save_message(phone_number, "assistant", reply)
-            send_message(phone_number, reply + "\n\n[kimi]")
+            send_message(phone_number, reply + "")
         except Exception as e:
             logger.error(f"Doc-Followup fehlgeschlagen: {e}")
             send_message(phone_number, "Beim Durchsuchen des Dokuments ist etwas schiefgelaufen.")
@@ -624,11 +699,11 @@ def _process_document_search(phone_number, pdf_bytes, filename, caption, display
             if not pages:
                 reply = "Das PDF konnte leider nicht gelesen werden."
                 save_message(phone_number, "assistant", reply)
-                send_message(phone_number, reply + "\n\n[kimi]")
+                send_message(phone_number, reply + "")
                 return
 
             est = _estimate_time(len(pages))
-            send_message(phone_number, f"📊 {len(pages)} Seiten — ich bin in {est} bereit.\n\n[kimi]")
+            send_message(phone_number, f"📊 {len(pages)} Seiten — ich bin in {est} bereit.")
 
             chunks = chunk_pages(pages)
             # Session sofort mit leeren Embeddings setzen — verhindert dass Folgefragen
@@ -642,7 +717,7 @@ def _process_document_search(phone_number, pdf_bytes, filename, caption, display
             save_message(phone_number, "user", user_msg)
             reply = _answer_doc_query(phone_number, caption, context_name)
             save_message(phone_number, "assistant", reply)
-            send_message(phone_number, reply + "\n\n[kimi]")
+            send_message(phone_number, reply + "")
             logger.info(f"Dokument-Suche: {filename} / '{caption[:50]}' fuer {display_name}")
 
         except Exception as e:

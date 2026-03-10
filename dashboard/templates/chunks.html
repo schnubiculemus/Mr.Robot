@@ -28,6 +28,15 @@
         <option value="active">Aktiv</option>
         <option value="archive">Archiviert</option>
     </select>
+    <select class="filter-select" id="filter-vitality" onchange="filterLocally()">
+        <option value="">Alle Zustände</option>
+        <option value="hot">🔥 hot</option>
+        <option value="aging">🌤 aging</option>
+        <option value="stale">🌫 stale</option>
+        <option value="suspect">⚠ suspect</option>
+        <option value="neu">○ neu</option>
+        <option value="superseded">superseded</option>
+    </select>
     <input type="text" class="filter-input" id="filter-search" placeholder="Textsuche..." onkeyup="debounceSearch()">
     <input type="text" class="filter-input" id="filter-tag" placeholder="Tag filtern..." style="min-width:120px" onkeyup="debounceSearch()">
     <span id="chunk-count" style="color:var(--text-muted);font-size:11px;align-self:center;margin-left:auto"></span>
@@ -48,6 +57,8 @@
                     <th style="width:80px">ID</th>
                     <th style="width:110px">Typ</th>
                     <th>Text</th>
+                    <th style="width:75px">Zustand</th>
+                    <th style="width:46px" title="Retrievals">↑</th>
                     <th style="width:55px">Conf.</th>
                     <th style="width:55px">Weight</th>
                     <th style="width:65px">Alter</th>
@@ -56,7 +67,7 @@
                 </tr>
             </thead>
             <tbody id="chunk-table">
-                <tr><td colspan="9" class="loading">Lade Chunks...</td></tr>
+                <tr><td colspan="11" class="loading">Lade Chunks...</td></tr>
             </tbody>
         </table>
     </div>
@@ -108,16 +119,24 @@ async function loadChunks() {
         updateBulkBar();
         document.getElementById('chunk-count').textContent = data.total + ' Chunks';
         renderTable(data.chunks);
+        // Deep-Link: ?highlight=CHUNK_ID
+        const urlParams = new URLSearchParams(window.location.search);
+        const hlId = urlParams.get('highlight');
+        if (hlId) {
+            const found = allChunks.find(function(c) { return c.id.startsWith(hlId) || hlId.startsWith(c.id.substring(0,8)); });
+            if (found) { showDetail(found.id); }
+            else { showDetail(hlId); } // versuche direkt
+        }
     } catch (e) {
         document.getElementById('chunk-table').innerHTML =
-            '<tr><td colspan="9" class="loading">Fehler: ' + e.message + '</td></tr>';
+            '<tr><td colspan="11" class="loading">Fehler: ' + e.message + '</td></tr>';
     }
 }
 
 function renderTable(chunks) {
     if (!chunks.length) {
         document.getElementById('chunk-table').innerHTML =
-            '<tr><td colspan="9" class="loading">Keine Chunks gefunden</td></tr>';
+            '<tr><td colspan="11" class="loading">Keine Chunks gefunden</td></tr>';
         return;
     }
 
@@ -128,13 +147,31 @@ function renderTable(chunks) {
         const weightBar = '<span class="score-bar"><span class="score-bar-fill" style="width:' + ((c.weight / 2) * 100) + '%"></span></span>';
         const tags = c.tags_list.map(function(t) { return '<span class="tag">' + t + '</span>'; }).join('');
 
+        // Vitalität berechnen
+        const retCount = c.retrieved_count || 0;
+        const lastRetMs = c.last_retrieved_at ? (Date.now() - new Date(c.last_retrieved_at)) : null;
+        const lastRetDays = lastRetMs ? Math.floor(lastRetMs / 86400000) : null;
+        const ageMs2 = c.created_at ? (Date.now() - new Date(c.created_at)) : null;
+        const ageDays2 = ageMs2 ? Math.floor(ageMs2 / 86400000) : null;
+        let vLabel, vStyle;
+        if (c.epistemic_status === 'superseded') { vLabel = 'superseded'; vStyle = 'color:#888;font-size:10px'; }
+        else if (c.epistemic_status === 'archived') { vLabel = 'archiviert'; vStyle = 'color:#666;font-size:10px'; }
+        else if (c.confidence < 0.3) { vLabel = '⚠ suspect'; vStyle = 'color:#f87171;font-size:10px'; }
+        else if (retCount === 0 && ageDays2 !== null && ageDays2 > 14) { vLabel = '💀 stale'; vStyle = 'color:#6b7280;font-size:10px'; }
+        else if (retCount === 0) { vLabel = '○ neu'; vStyle = 'color:#9ca3af;font-size:10px'; }
+        else if (lastRetDays !== null && lastRetDays <= 2) { vLabel = '🔥 hot'; vStyle = 'color:#f97316;font-size:10px;font-weight:600'; }
+        else if (lastRetDays !== null && lastRetDays <= 7) { vLabel = '🌤 aging'; vStyle = 'color:#fbbf24;font-size:10px'; }
+        else { vLabel = '🌫 stale'; vStyle = 'color:#6b7280;font-size:10px'; }
+
         return '<tr class="' + (isSelected ? 'selected' : '') + '">' +
             '<td onclick="event.stopPropagation()">' +
                 '<input type="checkbox" ' + (isChecked ? 'checked' : '') + ' onchange="toggleCheck(\'' + c.id + '\', this)">' +
             '</td>' +
             '<td class="mono" style="cursor:pointer" onclick="showDetail(\'' + c.id + '\')">' + c.id.substring(0, 8) + '</td>' +
             '<td style="cursor:pointer" onclick="showDetail(\'' + c.id + '\')"><span class="badge badge-' + c.chunk_type + '">' + c.chunk_type + '</span></td>' +
-            '<td class="text-col" style="white-space:normal;word-break:break-word;cursor:pointer" onclick="showDetail(\'' + c.id + '\')">' + escHtml(c.text) + (tags ? '<br>' + tags : '') + '</td>' +
+            '<td class="text-col" style="cursor:pointer;max-width:260px" onclick="showDetail(\'' + c.id + '\')"><div style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word">' + escHtml(c.text) + '</div>' + (tags ? '<div style="margin-top:3px">' + tags + '</div>' : '') + '</td>' +
+            '<td style="cursor:pointer" onclick="showDetail(\'' + c.id + '\')"><span style="' + vStyle + '">' + vLabel + '</span></td>' +
+            '<td class="mono" style="cursor:pointer;text-align:center" onclick="showDetail(\'' + c.id + '\')">' + retCount + '</td>' +
             '<td class="mono">' + c.confidence + ' ' + confBar + '</td>' +
             '<td class="mono">' + c.weight + ' ' + weightBar + '</td>' +
             '<td class="mono">' + c.age + '</td>' +
@@ -144,6 +181,26 @@ function renderTable(chunks) {
     });
 
     document.getElementById('chunk-table').innerHTML = rows.join('');
+}
+
+function filterLocally() {
+    const vitFilter = document.getElementById('filter-vitality').value;
+    if (!vitFilter) { renderTable(allChunks); return; }
+    const filtered = allChunks.filter(function(c) {
+        const ret = c.retrieved_count || 0;
+        const lastMs = c.last_retrieved_at ? (Date.now() - new Date(c.last_retrieved_at)) : null;
+        const lastD = lastMs ? Math.floor(lastMs / 86400000) : null;
+        const ageMs = c.created_at ? (Date.now() - new Date(c.created_at)) : null;
+        const ageD = ageMs ? Math.floor(ageMs / 86400000) : null;
+        if (vitFilter === 'superseded') return c.epistemic_status === 'superseded';
+        if (vitFilter === 'suspect') return c.confidence < 0.3;
+        if (vitFilter === 'hot') return ret > 0 && lastD !== null && lastD <= 2;
+        if (vitFilter === 'aging') return ret > 0 && lastD !== null && lastD > 2 && lastD <= 7;
+        if (vitFilter === 'stale') return ret === 0 && ageD !== null && ageD > 14;
+        if (vitFilter === 'neu') return ret === 0 && (ageD === null || ageD <= 14);
+        return true;
+    });
+    renderTable(filtered);
 }
 
 function toggleCheck(id, cb) {
@@ -233,18 +290,45 @@ async function showDetail(chunkId) {
             vitality = '🌫 stale'; vitalityColor = 'var(--text-dim)';
         }
 
+        // Entstehung
+        const createdFmt = c.created_at ? c.created_at.substring(0,19).replace('T',' ') : '—';
+        const sourceFmt = c.source || '—';
+        const confirmedFmt = c.last_confirmed_at ? c.last_confirmed_at.substring(0,16).replace('T',' ') : null;
+        const decayFmt = c.last_decay_at ? c.last_decay_at.substring(0,16).replace('T',' ') : null;
+        const supersedes = c.supersedes || null;
+
+        // Vollständige Vitalität im Detail
+        let vitalFull, vitalColorFull;
+        if (c.epistemic_status === 'superseded') { vitalFull = 'superseded'; vitalColorFull = '#6b7280'; }
+        else if (c.epistemic_status === 'archived') { vitalFull = 'archiviert'; vitalColorFull = '#6b7280'; }
+        else if (c.confidence < 0.3) { vitalFull = '⚠ suspect — niedrige Konfidenz'; vitalColorFull = '#f87171'; }
+        else if (retrievedCount === 0 && ageDays !== null && ageDays > 14) { vitalFull = '💀 stale — nie abgerufen, ' + ageDays + ' Tage alt'; vitalColorFull = '#6b7280'; }
+        else if (retrievedCount === 0) { vitalFull = '○ neu — noch nicht abgerufen'; vitalColorFull = '#9ca3af'; }
+        else if (lastRetDays !== null && lastRetDays <= 2) { vitalFull = '🔥 hot — zuletzt vor ' + lastRetDays + 'd'; vitalColorFull = '#f97316'; }
+        else if (lastRetDays !== null && lastRetDays <= 7) { vitalFull = '🌤 aging — zuletzt vor ' + lastRetDays + 'd'; vitalColorFull = '#fbbf24'; }
+        else { vitalFull = '🌫 stale — zuletzt vor ' + (lastRetDays !== null ? lastRetDays + 'd' : '?'); vitalColorFull = '#6b7280'; }
+
         const lebenslaufBlock =
-            '<div style="border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:16px;background:var(--surface-2,#1a1a2e)">' +
-                '<div style="font-size:11px;text-transform:uppercase;letter-spacing:0.1em;color:var(--text-dim);margin-bottom:10px">Lebenslauf</div>' +
-                '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">' +
-                    '<div><div style="font-size:10px;color:var(--text-dim)">Zustand</div>' +
-                        '<div style="font-size:13px;font-weight:600;color:' + vitalityColor + '">' + vitality + '</div></div>' +
-                    '<div><div style="font-size:10px;color:var(--text-dim)">Retrievals</div>' +
-                        '<div style="font-size:13px;font-weight:600">' + retrievedCount + '</div></div>' +
-                    '<div><div style="font-size:10px;color:var(--text-dim)">Alter</div>' +
-                        '<div style="font-size:13px">' + (ageDays !== null ? ageDays + ' Tage' : '—') + '</div></div>' +
-                    '<div><div style="font-size:10px;color:var(--text-dim)">Zuletzt abgerufen</div>' +
-                        '<div style="font-size:13px">' + (lastRetrieved || '—') + '</div></div>' +
+            '<div style="border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:16px;background:var(--surface-2,#1a1a2e)">' +
+                '<div style="font-size:11px;text-transform:uppercase;letter-spacing:0.1em;color:var(--text-dim);margin-bottom:12px">Lebenszyklus</div>' +
+                '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">' +
+                    '<div><div style="font-size:10px;color:var(--text-dim);margin-bottom:2px">Zustand</div>' +
+                        '<div style="font-size:12px;font-weight:600;color:' + vitalColorFull + '">' + vitalFull + '</div></div>' +
+                    '<div><div style="font-size:10px;color:var(--text-dim);margin-bottom:2px">Retrievals gesamt</div>' +
+                        '<div style="font-size:18px;font-weight:700;color:var(--text-primary)">' + retrievedCount + '</div></div>' +
+                '</div>' +
+                '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px">' +
+                    '<div><div style="font-size:10px;color:var(--text-dim);margin-bottom:2px">Erstellt</div>' +
+                        '<div>' + createdFmt + '</div></div>' +
+                    '<div><div style="font-size:10px;color:var(--text-dim);margin-bottom:2px">Wodurch</div>' +
+                        '<div>' + sourceFmt + '</div></div>' +
+                    '<div><div style="font-size:10px;color:var(--text-dim);margin-bottom:2px">Zuletzt abgerufen</div>' +
+                        '<div>' + (lastRetrieved || '—') + '</div></div>' +
+                    '<div><div style="font-size:10px;color:var(--text-dim);margin-bottom:2px">Alter</div>' +
+                        '<div>' + (ageDays !== null ? ageDays + ' Tage' : '—') + '</div></div>' +
+                    (confirmedFmt ? '<div><div style="font-size:10px;color:var(--text-dim);margin-bottom:2px">Bestätigt</div><div style="color:#4ade80">' + confirmedFmt + '</div></div>' : '') +
+                    (decayFmt ? '<div><div style="font-size:10px;color:var(--text-dim);margin-bottom:2px">Letzter Decay</div><div style="color:#f87171">' + decayFmt + '</div></div>' : '') +
+                    (supersedes ? '<div style="grid-column:1/-1"><div style="font-size:10px;color:var(--text-dim);margin-bottom:2px">Ersetzt Chunk</div><div style="font-size:10px;font-family:monospace;color:#a78bfa">' + supersedes + '</div></div>' : '') +
                 '</div>' +
             '</div>';
 
@@ -254,13 +338,13 @@ async function showDetail(chunkId) {
             '<div style="margin-top:20px;display:flex;flex-direction:column;gap:10px">' +
                 detailRow('Weight',
                     '<input id="edit-weight" type="number" min="0" max="2" step="0.05" value="' + c.weight + '" ' +
-                    'style="width:70px;background:var(--bg-input,#1e1e2e);color:var(--text-primary);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-family:inherit;font-size:13px">') +
+                    'style="width:70px;background:var(--surface-input,rgba(0,0,0,0.04));color:var(--text-primary);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-family:inherit;font-size:13px">') +
                 detailRow('Confidence',
                     '<input id="edit-confidence" type="number" min="0" max="1" step="0.05" value="' + c.confidence + '" ' +
-                    'style="width:70px;background:var(--bg-input,#1e1e2e);color:var(--text-primary);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-family:inherit;font-size:13px">') +
+                    'style="width:70px;background:var(--surface-input,rgba(0,0,0,0.04));color:var(--text-primary);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-family:inherit;font-size:13px">') +
                 detailRow('Tags',
                     '<input id="edit-tags" type="text" value="' + escAttr(c.tags) + '" placeholder="tag1, tag2, ..." ' +
-                    'style="width:100%;background:var(--bg-input,#1e1e2e);color:var(--text-primary);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-family:inherit;font-size:13px">') +
+                    'style="width:100%;background:var(--surface-input,rgba(0,0,0,0.04));color:var(--text-primary);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-family:inherit;font-size:13px">') +
                 '<div style="display:flex;gap:8px;margin-top:4px">' +
                     '<button onclick="saveChunk(\'' + c.id + '\')" style="background:var(--accent,#00e5ff);color:#000;border:none;padding:6px 16px;border-radius:6px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:600">Speichern</button>' +
                     '<button onclick="archiveChunk(\'' + c.id + '\')" style="background:#c0392b;color:#fff;border:none;padding:6px 16px;border-radius:6px;cursor:pointer;font-family:inherit;font-size:13px">Archivieren</button>' +
@@ -273,11 +357,18 @@ async function showDetail(chunkId) {
                     detailRow('Epistemic', c.epistemic_status) +
                     detailRow('Status', '<span class="badge badge-' + c.status + '">' + c.status + '</span>') +
                     detailRow('Erstellt', c.created_at || '\u2014') +
+                    (c.last_retrieved_at ? detailRow('Letzte Nutzung', '<a href="/retrieval" style="color:var(--accent);font-size:12px">→ Retrieval Log</a>') : '') +
                     extraRows +
                 '</div>' +
             '</div>';
 
         document.getElementById('detail-panel').classList.add('visible');
+        setTimeout(function() {
+            const panel = document.getElementById('detail-panel');
+            const saveBtn = panel.querySelector('#save-status');
+            if (saveBtn) saveBtn.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            else panel.scrollTop = panel.scrollHeight;
+        }, 80);
     } catch (e) {
         document.getElementById('detail-content').innerHTML = '<div class="loading">Fehler: ' + e.message + '</div>';
     }

@@ -28,16 +28,16 @@
     "name": "Sprachnachrichten",
     "icon": "\ud83c\udf99\ufe0f",
     "description": "Sprachnachrichten transkribieren (Whisper)",
-    "enabled": false,
-    "available": false
+    "enabled": true,
+    "available": true
   },
   {
     "id": "tasks",
     "name": "Aufgaben",
     "icon": "\u2705",
     "description": "Aufgaben erstellen und verwalten",
-    "enabled": false,
-    "available": false
+    "enabled": true,
+    "available": true
   },
   {
     "id": "images",

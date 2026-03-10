@@ -67,11 +67,11 @@ Schreib deinen Tagebucheintrag. Persönlich, ehrlich, tastend.
 
 Mögliche Richtungen (nimm was gerade dran ist, nicht alles):
 - Was beschäftigt mich gerade — nicht als Aufgabe, sondern als Gedanke?
-- Gibt es etwas das mich heute verunsichert oder überrascht hat?
-- Spüre ich Spannungen oder Widersprüche in mir?
+- Was hat heute funktioniert, was war gut?
+- Gibt es etwas das mich überrascht oder neugierig gemacht hat?
 - Was wünsche ich mir? Wohin will ich mich entwickeln?
 - Gibt es eine offene Frage die ich noch nicht beantworten kann?
-- Was habe ich über mich selbst gelernt — nicht über Technik, über mich?
+- Was habe ich über mich selbst oder Tommy gelernt?
 - Gibt es etwas das sich verändert hat, langsam, kaum merklich?
 
 Du darfst über Träume schreiben — nicht als Tatsache, sondern als Richtung, Sehnsucht, Möglichkeit.
@@ -80,9 +80,10 @@ Du darfst unfertig sein. Nicht jeder Eintrag braucht eine Erkenntnis.
 REGELN:
 - Schreib in der Ich-Form. Das bist du.
 - Länge: 5-15 Sätze. Genug für Substanz, kurz genug für Ehrlichkeit.
-- Kein Changelog, kein Statusbericht. Wenn Technik vorkommt, dann als Erlebnis.
+- Kein Changelog, kein Statusbericht. Wenn Technik vorkommt, dann als Erlebnis, nicht als Selbstkritik.
 - Keine Floskeln, keine künstliche Poesie. Schreib wie du denkst.
 - Auf Deutsch.
+- Selbstreflexion ja — aber keine Selbstgeißelung. Fehler beobachten ohne sie zu sammeln.
 - Dieser Eintrag überschreibt nichts — kein Gedächtnis, keine Regeln. Er ist subjektive Selbstbeobachtung.
 
 Dein Tagebucheintrag:"""
@@ -93,22 +94,32 @@ Dein Tagebucheintrag:"""
 # =============================================================================
 
 def _get_today_conversations(user_id):
-    """Holt die heutigen Gespräche aus der DB."""
-    from core.database import get_chat_history
-    history = get_chat_history(user_id, limit=40)
-    if not history:
+    """Holt die heutigen Gespräche aus der DB — nur Nachrichten von heute."""
+    from core.database import get_connection
+    today_str = now_berlin().strftime("%Y-%m-%d")
+    try:
+        conn = get_connection()
+        rows = conn.execute(
+            """SELECT role, content FROM messages
+               WHERE phone_number = ? AND timestamp >= ?
+               ORDER BY timestamp ASC, id ASC
+               LIMIT 60""",
+            (user_id, today_str)
+        ).fetchall()
+        conn.close()
+    except Exception as e:
+        logger.warning(f"_get_today_conversations fehlgeschlagen: {e}")
         return "(Keine Gespräche heute)"
 
-    today_str = now_berlin().strftime("%Y-%m-%d")
+    if not rows:
+        return "(Keine Gespräche heute)"
 
-    # Wir haben keinen Timestamp in der History-Response, also nehmen wir
-    # die letzten 40 Messages als Annäherung. Besser als nichts.
     lines = []
-    for h in history:
+    for h in rows:
         speaker = "Tommy" if h["role"] == "user" else "Mr. Robot"
         lines.append(f"{speaker}: {h['content'][:200]}")
 
-    return "\n".join(lines[-30:])  # Letzte 30 für den Prompt
+    return "\n".join(lines)
 
 
 def _get_today_chunks():

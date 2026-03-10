@@ -387,6 +387,26 @@ def init_soul_proposals_table():
         )
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_soul_proposals_ts ON soul_proposals(timestamp DESC)")
+
+    # Heartbeat-Timeline
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS heartbeat_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL UNIQUE,
+            user_id TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            finished_at TEXT,
+            steps_json TEXT,
+            summary TEXT,
+            had_error INTEGER NOT NULL DEFAULT 0
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_hb_runs_ts ON heartbeat_runs(started_at DESC)")
+
+    # Todos
+    from core.todos import init_todos_table
+    init_todos_table(conn)
+
     conn.commit()
     conn.close()
 

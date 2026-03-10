@@ -56,6 +56,19 @@ def check_triggers(user_id, now):
                 "prioritaet": 1,
             })
 
+    # --- Todo-Erinnerungen ---
+    try:
+        from core.todos import get_reminder_message
+        todo_reminder = get_reminder_message(user_id)
+        if todo_reminder:
+            triggers.append({
+                "typ": "todo-erinnerung",
+                "kontext": todo_reminder,
+                "prioritaet": 2,
+            })
+    except Exception as e:
+        logger.warning(f"Todo-Trigger fehlgeschlagen: {e}")
+
     # --- Deadline-Check ---
     deadline_chunks = _check_deadlines(now)
     if deadline_chunks:

@@ -1,0 +1,294 @@
+{% extends "base.html" %}
+{% block title %}Qualität{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Qualität</h1>
+    <p>Wie gut funktioniert das Gedächtnis wirklich</p>
+</div>
+
+<div id="quality-content">
+    <div class="loading">Lade Metriken...</div>
+</div>
+
+<style>
+.metric-section-title {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-4);
+    margin: 24px 0 10px;
+}
+
+.metric-section-title:first-child { margin-top: 0; }
+
+/* Gauge-artige Nutzungsrate */
+.usage-ring-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+    margin-bottom: 4px;
+}
+
+.usage-ring-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px 16px;
+    text-align: center;
+    box-shadow: var(--shadow-sm);
+}
+
+.usage-ring-value {
+    font-size: 32px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--text-1);
+    line-height: 1;
+}
+
+.usage-ring-label {
+    font-size: 11px;
+    color: var(--text-4);
+    margin-top: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.usage-bar {
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    margin: 10px 0 4px;
+    overflow: hidden;
+}
+
+.usage-bar-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.5s ease;
+}
+
+/* Tabellen */
+.q-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+
+.q-table th {
+    text-align: left;
+    padding: 6px 10px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-4);
+    border-bottom: 1px solid var(--border);
+}
+
+.q-table td {
+    padding: 8px 10px;
+    color: var(--text-2);
+    border-bottom: 1px solid var(--border-light);
+    vertical-align: middle;
+}
+
+.q-table tr:last-child td { border-bottom: none; }
+.q-table tr:hover td { background: var(--bg); }
+
+.q-table .mono {
+    font-family: monospace;
+    font-size: 10px;
+    color: var(--text-4);
+}
+
+.q-table .text-preview {
+    max-width: 320px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-2);
+}
+
+/* Confidence Buckets */
+.conf-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+}
+
+.conf-bucket {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 12px;
+    text-align: center;
+    box-shadow: var(--shadow-sm);
+}
+
+.conf-bucket-value { font-size: 24px; font-weight: 700; color: var(--text-1); }
+.conf-bucket-label { font-size: 10px; color: var(--text-4); margin-top: 4px; font-family: monospace; }
+
+/* 2-Spalten Pipeline */
+.pipeline-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+}
+</style>
+
+<script>
+async function loadQuality() {
+    try {
+        const res = await fetch('/api/quality/stats');
+        const d = await res.json();
+        if (d.error) throw new Error(d.error);
+        render(d);
+    } catch(e) {
+        document.getElementById('quality-content').innerHTML =
+            `<div class="loading" style="color:var(--red)">Fehler: ${e.message}</div>`;
+    }
+}
+
+function barColor(pct) {
+    if (pct >= 60) return 'var(--accent)';
+    if (pct >= 30) return 'var(--amber)';
+    return 'var(--red)';
+}
+
+function render(d) {
+    const ftRate = d.ft_7d.total > 0 ? Math.round(d.ft_7d.stored / d.ft_7d.total * 100) : null;
+    const consNoop = d.cons_7d.runs > 0 ? Math.round(d.cons_7d.noop / d.cons_7d.runs * 100) : null;
+
+    let html = '';
+
+    // ── Chunk-Nutzungsquote ─────────────────────────────────
+    html += `<div class="metric-section-title">Chunk-Nutzungsquote</div>
+    <div class="usage-ring-grid">
+        ${usageCard(d.usage_rate_7d, '7 Tage', d.retrieved_7d, d.total)}
+        ${usageCard(d.usage_rate_30d, '30 Tage', d.retrieved_30d, d.total)}
+        ${usageCard(d.usage_rate_ever, 'Gesamt', d.retrieved_ever, d.total)}
+    </div>`;
+
+    // ── Pipeline-Effizienz ─────────────────────────────────
+    html += `<div class="metric-section-title">Pipeline-Effizienz (letzte 7 Tage)</div>
+    <div class="pipeline-grid">
+        <div class="card">
+            <div class="card-header"><div>
+                <div class="card-title">Fast-Track</div>
+                <div class="card-subtitle">${d.ft_7d.stored} gespeichert von ${d.ft_7d.total} Triggern</div>
+            </div></div>
+            <div style="padding:0 4px">
+                <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+                    <span style="font-size:28px;font-weight:700;color:${ftRate !== null && ftRate < 20 ? 'var(--amber)' : 'var(--text-1)'}">${ftRate !== null ? ftRate + '%' : '—'}</span>
+                    <span style="font-size:11px;color:var(--text-4);align-self:flex-end;margin-bottom:6px">Store-Rate</span>
+                </div>
+                <div class="usage-bar"><div class="usage-bar-fill" style="width:${ftRate ?? 0}%;background:${barColor(ftRate ?? 0)}"></div></div>
+                <div style="font-size:11px;color:var(--text-4);margin-top:4px">${ftRate !== null && ftRate < 20 ? '⚠ Niedrig — wenig aus Gesprächen gelernt' : ftRate !== null ? 'Normal' : 'Keine Daten'}</div>
+            </div>
+        </div>
+        <div class="card">
+            <div class="card-header"><div>
+                <div class="card-title">Konsolidierer</div>
+                <div class="card-subtitle">${d.cons_7d.runs} Runs · ${d.cons_7d.actions} Aktionen</div>
+            </div></div>
+            <div style="padding:0 4px">
+                <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+                    <span style="font-size:28px;font-weight:700;color:${consNoop !== null && consNoop > 70 ? 'var(--amber)' : 'var(--text-1)'}">${consNoop !== null ? consNoop + '%' : '—'}</span>
+                    <span style="font-size:11px;color:var(--text-4);align-self:flex-end;margin-bottom:6px">No-Op-Rate</span>
+                </div>
+                <div class="usage-bar"><div class="usage-bar-fill" style="width:${consNoop ?? 0}%;background:${consNoop > 70 ? 'var(--amber)' : 'var(--accent)'}"></div></div>
+                <div style="font-size:11px;color:var(--text-4);margin-top:4px">${consNoop !== null && consNoop > 70 ? '⚠ Viele Runs ohne Ergebnis' : consNoop !== null ? `Ø ${d.cons_7d.runs > 0 ? (d.cons_7d.actions / d.cons_7d.runs).toFixed(1) : '0'} Aktionen/Run` : 'Keine Daten'}</div>
+            </div>
+        </div>
+    </div>`;
+
+    // ── Confidence-Verteilung ──────────────────────────────
+    html += `<div class="metric-section-title">Confidence-Verteilung (aktive Chunks)</div>
+    <div class="conf-grid">
+        ${confBucket('0.0–0.3', d.confidence_buckets['0.0-0.3'], d.total, 'var(--red)')}
+        ${confBucket('0.3–0.6', d.confidence_buckets['0.3-0.6'], d.total, 'var(--amber)')}
+        ${confBucket('0.6–0.8', d.confidence_buckets['0.6-0.8'], d.total, 'var(--blue)')}
+        ${confBucket('0.8+',    d.confidence_buckets['0.8+'],    d.total, 'var(--accent)')}
+    </div>
+    <div style="font-size:11px;color:var(--text-4);margin-top:8px">
+        Ø Confidence: <strong style="color:var(--text-2)">${(Object.entries(d.confidence_buckets).reduce((sum, [k,v]) => {
+            // grober Mittelpunkt pro Bucket
+            const mid = k === '0.8+' ? 0.9 : parseFloat(k.split('-')[0]) + 0.15;
+            return sum + mid * v;
+        }, 0) / (d.total || 1)).toFixed(2)}</strong>
+        &nbsp;·&nbsp; Ø Weight: <strong style="color:var(--text-2)">${d.avg_weight}</strong>
+        &nbsp;·&nbsp; Ø Alter: <strong style="color:var(--text-2)">${d.avg_age_days} Tage</strong>
+    </div>`;
+
+    // ── Top Chunks ─────────────────────────────────────────
+    html += `<div class="metric-section-title">Meistgenutzte Chunks</div>
+    <div class="card" style="padding:0;overflow:hidden">
+        <table class="q-table">
+            <thead><tr>
+                <th>#</th><th>Inhalt</th><th>Typ</th><th>Abrufe</th><th>Zuletzt</th><th>Conf</th>
+            </tr></thead>
+            <tbody>${d.top_chunks.slice(0,10).map((c, i) => `<tr>
+                <td style="color:var(--text-4);font-size:11px">${i+1}</td>
+                <td class="text-preview">${esc(c.text)}</td>
+                <td><span class="badge badge-${c.chunk_type}">${c.chunk_type}</span></td>
+                <td style="font-weight:600;color:var(--accent)">${c.retrieved_count}</td>
+                <td class="mono">${c.last_retrieved_at}</td>
+                <td style="color:var(--text-3)">${c.confidence}</td>
+            </tr>`).join('')}</tbody>
+        </table>
+    </div>`;
+
+    // ── Tote Chunks ────────────────────────────────────────
+    if (d.dead_chunks.length > 0) {
+        html += `<div class="metric-section-title">Nie genutzte Chunks (älter als 14 Tage) <span style="color:var(--red);font-weight:600">${d.dead_chunks.length}</span></div>
+        <div class="card" style="padding:0;overflow:hidden">
+            <table class="q-table">
+                <thead><tr>
+                    <th>Inhalt</th><th>Typ</th><th>Alter</th><th>Conf</th><th></th>
+                </tr></thead>
+                <tbody>${d.dead_chunks.slice(0,15).map(c => `<tr>
+                    <td class="text-preview">${esc(c.text)}</td>
+                    <td><span class="badge badge-${c.chunk_type}">${c.chunk_type}</span></td>
+                    <td style="color:var(--text-4)">${c.age_days}d</td>
+                    <td style="color:var(--text-4)">${c.confidence}</td>
+                    <td><a href="/chunks?id=${c.id}" style="font-size:11px;color:var(--accent);text-decoration:none">→</a></td>
+                </tr>`).join('')}</tbody>
+            </table>
+        </div>`;
+    } else {
+        html += `<div class="metric-section-title">Nie genutzte Chunks</div>
+        <div style="font-size:13px;color:var(--accent);padding:12px 0">✓ Alle Chunks wurden mindestens einmal abgerufen.</div>`;
+    }
+
+    document.getElementById('quality-content').innerHTML = html;
+}
+
+function usageCard(pct, label, count, total) {
+    const color = barColor(pct);
+    return `<div class="usage-ring-card">
+        <div class="usage-ring-value" style="color:${color}">${pct}%</div>
+        <div class="usage-bar" style="margin:10px 0 4px"><div class="usage-bar-fill" style="width:${pct}%;background:${color}"></div></div>
+        <div class="usage-ring-label">${label}</div>
+        <div style="font-size:11px;color:var(--text-4);margin-top:4px">${count} von ${total}</div>
+    </div>`;
+}
+
+function confBucket(label, count, total, color) {
+    const pct = total > 0 ? Math.round(count / total * 100) : 0;
+    return `<div class="conf-bucket">
+        <div class="conf-bucket-value" style="color:${color}">${count}</div>
+        <div style="font-size:11px;color:var(--text-4);margin-top:2px">${pct}%</div>
+        <div class="conf-bucket-label">${label}</div>
+    </div>`;
+}
+
+function esc(str) {
+    return (str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+loadQuality();
+</script>
+{% endblock %}

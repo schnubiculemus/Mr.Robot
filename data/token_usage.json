@@ -10,5 +10,11 @@
     "completion": 44801,
     "total": 447715,
     "calls": 44
+  },
+  "2026-03-10": {
+    "prompt": 355968,
+    "completion": 25919,
+    "total": 381887,
+    "calls": 37
   }
 }

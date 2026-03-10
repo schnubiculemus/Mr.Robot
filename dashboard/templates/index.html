@@ -1,19 +1,25 @@
 {% extends "base.html" %}
-{% block title %}Übersicht{% endblock %}
+{% block title %}Overview{% endblock %}
 
 {% block content %}
 <div class="page-header">
     <h1>Overview</h1>
-    <p>Memory status at a glance</p>
+    <p>Systemstatus und Lageeinschätzung</p>
 </div>
 
+<!-- Lageeinschätzung -->
+<div id="lage-container"></div>
+
+<!-- Kennzahlen -->
 <div class="stats-grid" id="stats-grid">
-    <div class="loading">Lade Stats...</div>
+    <div class="loading">Lade...</div>
 </div>
 
-<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.15em;color:var(--text-dim);margin-bottom:10px;margin-top:4px">System</div>
+<!-- System -->
+<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-4);margin-bottom:10px;margin-top:4px;font-weight:600">System</div>
 <div class="stats-grid" id="system-grid"></div>
 
+<!-- Verteilungen -->
 <div class="card">
     <div class="card-header">
         <div>
@@ -24,24 +30,91 @@
     <div id="type-distribution"></div>
 </div>
 
-<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
     <div class="card">
-        <div class="card-header">
-            <div>
-                <div class="card-title">Nach Quelle</div>
-            </div>
-        </div>
+        <div class="card-header"><div><div class="card-title">Nach Quelle</div></div></div>
         <div id="source-distribution"></div>
     </div>
     <div class="card">
-        <div class="card-header">
-            <div>
-                <div class="card-title">Nach Epistemic Status</div>
-            </div>
-        </div>
+        <div class="card-header"><div><div class="card-title">Nach Epistemic Status</div></div></div>
         <div id="epistemic-distribution"></div>
     </div>
 </div>
+
+<style>
+/* Lageeinschätzung */
+.lage-panel {
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border);
+    padding: 18px 22px;
+    margin-bottom: 24px;
+    box-shadow: var(--shadow-sm);
+}
+
+.lage-panel.lage-ok {
+    background: var(--accent-dim);
+    border-color: rgba(22,163,74,0.2);
+}
+
+.lage-panel.lage-warn {
+    background: var(--amber-dim);
+    border-color: rgba(217,119,6,0.2);
+}
+
+.lage-panel.lage-crit {
+    background: var(--red-dim);
+    border-color: rgba(220,38,38,0.2);
+}
+
+.lage-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+
+.lage-icon { font-size: 18px; line-height: 1; }
+
+.lage-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-1);
+}
+
+.lage-alerts {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.lage-alert {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    font-size: 13px;
+    padding: 8px 12px;
+    border-radius: var(--radius-sm);
+    background: rgba(255,255,255,0.5);
+}
+
+.lage-alert-icon { flex-shrink: 0; font-size: 14px; }
+.lage-alert-text { color: var(--text-2); flex: 1; }
+.lage-alert-link {
+    font-size: 11px;
+    color: var(--accent);
+    text-decoration: none;
+    font-weight: 500;
+    white-space: nowrap;
+}
+.lage-alert-link:hover { text-decoration: underline; }
+
+.lage-ok-text {
+    font-size: 13px;
+    color: var(--accent);
+    font-weight: 500;
+}
+</style>
+
 {% endblock %}
 
 {% block scripts %}
@@ -54,40 +127,151 @@ async function loadStats() {
             fetch('/api/consolidator/stats'),
             fetch('/api/tokens'),
         ]);
-        const data = await res.json();
-        const ft = ftRes.ok ? await ftRes.json() : null;
-        const cons = consRes.ok ? await consRes.json() : null;
-        const tok = tokRes.ok ? await tokRes.json() : null;
 
-        const ftRate = ft && ft.total > 0 ? Math.round((ft.stored / ft.total) * 100) : null;
-        const ftCard = ft
-            ? `<div class="stat-card" style="cursor:pointer" onclick="location.href='/fasttrack'">
+        const data = await res.json();
+        const ft   = ftRes.ok   ? await ftRes.json()   : null;
+        const cons = consRes.ok ? await consRes.json() : null;
+        const tok  = tokRes.ok  ? await tokRes.json()  : null;
+
+        // ── Lageeinschätzung aufbauen ──────────────────────────
+        const alerts = [];
+
+        // Heartbeat überfällig (>60min bei 30min Cronjob)
+        if (data.heartbeat_age_min !== null && data.heartbeat_age_min > 60) {
+            alerts.push({
+                level: 'crit',
+                icon: '⏰',
+                text: `Heartbeat überfällig — letzter Run vor ${data.heartbeat_age_min < 60 ? data.heartbeat_age_min + ' Min' : Math.round(data.heartbeat_age_min/60) + ' Std'} (erwartet alle 30 Min)`,
+                link: null,
+            });
+        }
+
+        // Hohe No-Op Quote (>70% der heutigen Runs ohne Ergebnis)
+        if (cons && cons.today_runs > 3) {
+            const noop_rate = Math.round((cons.null_runs / cons.today_runs) * 100);
+            if (noop_rate > 70) {
+                alerts.push({
+                    level: 'warn',
+                    icon: '🔇',
+                    text: `Konsolidierer: ${noop_rate}% No-Op heute — wenig neue Erkenntnisse aus Gesprächen`,
+                    link: { href: '/consolidator', label: 'Konsolidierer →' },
+                });
+            }
+        }
+
+        // RAM >85%
+        if (data.system.ram_percent > 85) {
+            alerts.push({
+                level: 'crit',
+                icon: '💾',
+                text: `RAM kritisch: ${data.system.ram_percent}% belegt (${data.system.ram_used_gb} / ${data.system.ram_total_gb} GB)`,
+                link: null,
+            });
+        } else if (data.system.ram_percent > 75) {
+            alerts.push({
+                level: 'warn',
+                icon: '💾',
+                text: `RAM erhöht: ${data.system.ram_percent}% belegt`,
+                link: null,
+            });
+        }
+
+        // Disk >80%
+        if (data.system.disk_percent > 80) {
+            alerts.push({
+                level: data.system.disk_percent > 90 ? 'crit' : 'warn',
+                icon: '💿',
+                text: `Disk: ${data.system.disk_percent}% belegt (${data.system.disk_used_gb} / ${data.system.disk_total_gb} GB)`,
+                link: null,
+            });
+        }
+
+        // Fast-Track Store-Rate <20% (viele Trigger, aber kaum gespeichert)
+        if (ft && ft.today_total > 10) {
+            const rate = ft.today_total > 0 ? Math.round((ft.today_stored / ft.today_total) * 100) : 0;
+            if (rate < 20) {
+                alerts.push({
+                    level: 'warn',
+                    icon: '⚡',
+                    text: `Fast-Track Store-Rate niedrig: ${rate}% heute (${ft.today_stored} von ${ft.today_total} Triggern gespeichert)`,
+                    link: { href: '/fasttrack', label: 'Fast-Track →' },
+                });
+            }
+        }
+
+        // Stale Chunks (kein Typ working_state vorhanden aber >100 Chunks)
+        if (data.active_chunks > 100 && !data.by_type['working_state']) {
+            // kein Alert, nur Info — nicht kritisch
+        }
+
+        // Lage rendern
+        const hasCrit = alerts.some(a => a.level === 'crit');
+        const hasWarn = alerts.some(a => a.level === 'warn');
+        const lageClass = hasCrit ? 'lage-crit' : hasWarn ? 'lage-warn' : 'lage-ok';
+        const lageIcon  = hasCrit ? '🔴' : hasWarn ? '🟡' : '🟢';
+        const lageTitle = hasCrit ? 'Kritische Probleme erkannt'
+                        : hasWarn ? 'Hinweise'
+                        : 'Alles läuft normal';
+
+        let lageHtml = `<div class="lage-panel ${lageClass}">
+            <div class="lage-header">
+                <div class="lage-icon">${lageIcon}</div>
+                <div class="lage-title">${lageTitle}</div>
+            </div>`;
+
+        if (alerts.length === 0) {
+            lageHtml += `<div class="lage-ok-text">Kein Handlungsbedarf — System läuft stabil.</div>`;
+        } else {
+            lageHtml += `<div class="lage-alerts">`;
+            for (const a of alerts) {
+                lageHtml += `<div class="lage-alert">
+                    <div class="lage-alert-icon">${a.icon}</div>
+                    <div class="lage-alert-text">${a.text}</div>
+                    ${a.link ? `<a href="${a.link.href}" class="lage-alert-link">${a.link.label}</a>` : ''}
+                </div>`;
+            }
+            lageHtml += `</div>`;
+        }
+        lageHtml += `</div>`;
+        document.getElementById('lage-container').innerHTML = lageHtml;
+
+        // ── Kennzahlen ─────────────────────────────────────────
+        const ftRate = ft && ft.today_total > 0 ? Math.round((ft.today_stored / ft.today_total) * 100) : null;
+
+        const ftCard = ft ? `
+            <div class="stat-card" style="cursor:pointer" onclick="location.href='/fasttrack'">
                 <div class="stat-card-label">Fast-Track heute</div>
                 <div class="stat-card-value" style="color:var(--accent)">${ft.today_stored}</div>
                 <div class="stat-card-sub">${ft.today_total} Trigger · ${ftRate ?? '—'}% Store-Rate</div>
-               </div>`
-            : '';
+            </div>` : '';
 
-        const consCard = cons
-            ? `<div class="stat-card" style="cursor:pointer" onclick="location.href='/consolidator'">
+        const consCard = cons ? `
+            <div class="stat-card" style="cursor:pointer" onclick="location.href='/consolidator'">
                 <div class="stat-card-label">Konsolidierer heute</div>
                 <div class="stat-card-value" style="color:var(--blue)">${cons.today_runs}</div>
                 <div class="stat-card-sub">${cons.null_runs} No-Op · ${cons.retry_runs} Retries</div>
-               </div>`
-            : '';
+            </div>` : '';
 
-        const tokCard = tok
-            ? `<div class="stat-card">
+        const tokCards = tok ? `
+            <div class="stat-card">
                 <div class="stat-card-label">Token heute</div>
-                <div class="stat-card-value" style="color:var(--purple, #a78bfa)">${tok.today.total.toLocaleString()}</div>
+                <div class="stat-card-value" style="color:var(--purple)">${tok.today.total.toLocaleString()}</div>
                 <div class="stat-card-sub">${tok.today.calls} Calls · ${tok.today_vs_yesterday !== null ? (tok.today_vs_yesterday > 0 ? '+' : '') + tok.today_vs_yesterday + '% vs gestern' : '—'}</div>
-               </div>
-               <div class="stat-card">
-                <div class="stat-card-label">Token diese Woche</div>
-                <div class="stat-card-value" style="color:var(--purple, #a78bfa)">${tok.week_total.toLocaleString()}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-card-label">Token Woche</div>
+                <div class="stat-card-value" style="color:var(--purple)">${tok.week_total.toLocaleString()}</div>
                 <div class="stat-card-sub">${tok.week_vs_last_week !== null ? (tok.week_vs_last_week > 0 ? '+' : '') + tok.week_vs_last_week + '% vs Vorwoche' : '—'}</div>
-               </div>`
-            : '';
+            </div>` : '';
+
+        const hbAge = data.heartbeat_age_min;
+        const hbColor = hbAge > 60 ? 'var(--red)' : hbAge > 40 ? 'var(--amber)' : 'var(--text-1)';
+        const hbCard = data.heartbeat_last_run ? `
+            <div class="stat-card" style="cursor:pointer" onclick="location.href='/timeline'">
+                <div class="stat-card-label">Letzter Heartbeat</div>
+                <div class="stat-card-value" style="font-size:15px;color:${hbColor}">${data.heartbeat_last_run}</div>
+                <div class="stat-card-sub">vor ${hbAge < 60 ? hbAge + ' Min' : Math.round(hbAge/60) + ' Std'} · Timeline →</div>
+            </div>` : '';
 
         document.getElementById('stats-grid').innerHTML = `
             <div class="stat-card">
@@ -100,94 +284,69 @@ async function loadStats() {
                 <div class="stat-card-value">${data.archived_chunks}</div>
                 <div class="stat-card-sub">${data.total_chunks} gesamt</div>
             </div>
-            <div class="stat-card">
-                <div class="stat-card-label">Chunk-Typen</div>
-                <div class="stat-card-value">${Object.keys(data.by_type).length}</div>
-                <div class="stat-card-sub">verschiedene Typen aktiv</div>
-            </div>
-            ${ftCard}
-            ${consCard}
-            ${tokCard}
-            ${data.heartbeat_last_run ? `<div class="stat-card">
-                <div class="stat-card-label">Letzter Heartbeat</div>
-                <div class="stat-card-value" style="font-size:15px;color:${data.heartbeat_age_min > 240 ? 'var(--amber)' : 'var(--text-primary)'}">${data.heartbeat_last_run}</div>
-                <div class="stat-card-sub">vor ${data.heartbeat_age_min < 60 ? data.heartbeat_age_min + ' Min' : Math.round(data.heartbeat_age_min/60) + ' Std'}</div>
-            </div>` : ''}
+            ${ftCard}${consCard}${tokCards}${hbCard}
             <div class="stat-card">
                 <div class="stat-card-label">Stand</div>
-                <div class="stat-card-value" style="font-size:16px">${data.timestamp}</div>
+                <div class="stat-card-value" style="font-size:15px">${data.timestamp}</div>
                 <div class="stat-card-sub">zuletzt aktualisiert</div>
-            </div>
-        `;
+            </div>`;
+
+        // ── System ─────────────────────────────────────────────
+        const cpuColor  = data.system.cpu > 80 ? 'var(--red)' : data.system.cpu > 50 ? 'var(--amber)' : 'var(--text-1)';
+        const ramColor  = data.system.ram_percent > 85 ? 'var(--red)' : data.system.ram_percent > 70 ? 'var(--amber)' : 'var(--text-1)';
+        const diskColor = data.system.disk_percent > 85 ? 'var(--red)' : data.system.disk_percent > 70 ? 'var(--amber)' : 'var(--text-1)';
 
         document.getElementById('system-grid').innerHTML = `
             <div class="stat-card">
                 <div class="stat-card-label">CPU</div>
-                <div class="stat-card-value" style="color:${data.system.cpu>80?'var(--red)':data.system.cpu>50?'var(--amber)':'var(--text-primary)'}">${data.system.cpu}%</div>
+                <div class="stat-card-value" style="color:${cpuColor}">${data.system.cpu}%</div>
                 <div class="stat-card-sub">Auslastung</div>
             </div>
             <div class="stat-card">
                 <div class="stat-card-label">RAM</div>
-                <div class="stat-card-value" style="color:${data.system.ram_percent>85?'var(--red)':data.system.ram_percent>70?'var(--amber)':'var(--text-primary)'}">${data.system.ram_used_gb} GB</div>
+                <div class="stat-card-value" style="color:${ramColor}">${data.system.ram_used_gb} GB</div>
                 <div class="stat-card-sub">von ${data.system.ram_total_gb} GB · ${data.system.ram_percent}%</div>
             </div>
             <div class="stat-card">
                 <div class="stat-card-label">Disk</div>
-                <div class="stat-card-value" style="color:${data.system.disk_percent>85?'var(--red)':data.system.disk_percent>70?'var(--amber)':'var(--text-primary)'}">${data.system.disk_used_gb} GB</div>
+                <div class="stat-card-value" style="color:${diskColor}">${data.system.disk_used_gb} GB</div>
                 <div class="stat-card-sub">von ${data.system.disk_total_gb} GB · ${data.system.disk_percent}%</div>
             </div>
-            <div class="stat-card"><div class="stat-card-label">Uptime</div><div class="stat-card-value" style="font-size:14px">${data.system.uptime}</div><div class="stat-card-sub">Server läuft</div></div>
-        `;
+            <div class="stat-card">
+                <div class="stat-card-label">Uptime</div>
+                <div class="stat-card-value" style="font-size:14px">${data.system.uptime}</div>
+                <div class="stat-card-sub">Server läuft</div>
+            </div>`;
 
-        // Type distribution
-        const typeHtml = Object.entries(data.by_type)
+        // ── Verteilungen ───────────────────────────────────────
+        const maxType = Math.max(...Object.values(data.by_type));
+        document.getElementById('type-distribution').innerHTML = Object.entries(data.by_type)
             .sort((a, b) => b[1] - a[1])
             .map(([type, count]) => {
-                const max = Math.max(...Object.values(data.by_type));
-                const pct = Math.round((count / max) * 100);
+                const pct = Math.round((count / maxType) * 100);
                 return `<div style="display:flex;align-items:center;gap:12px;padding:6px 0;">
-                    <span class="badge badge-${type}" style="min-width:100px;text-align:center">${type}</span>
-                    <div style="flex:1;height:6px;background:var(--bg-hover);border-radius:3px;overflow:hidden">
-                        <div style="width:${pct}%;height:100%;background:var(--accent);border-radius:3px"></div>
+                    <span class="badge badge-${type}" style="min-width:110px;text-align:center">${type}</span>
+                    <div style="flex:1;height:5px;background:var(--border);border-radius:3px;overflow:hidden">
+                        <div style="width:${pct}%;height:100%;background:var(--accent);border-radius:3px;transition:width 0.4s"></div>
                     </div>
-                    <span style="color:var(--text-secondary);min-width:30px;text-align:right">${count}</span>
+                    <span style="color:var(--text-3);font-size:12px;min-width:28px;text-align:right">${count}</span>
                 </div>`;
             }).join('');
-        document.getElementById('type-distribution').innerHTML = typeHtml;
 
-        // Source distribution
-        const srcHtml = Object.entries(data.by_source)
-            .sort((a, b) => b[1] - a[1])
-            .map(([src, count]) => `<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12px">
-                <span style="color:var(--text-secondary)">${src}</span>
-                <span style="color:var(--text-primary)">${count}</span>
-            </div>`).join('');
-        document.getElementById('source-distribution').innerHTML = srcHtml;
+        const distRow = (k, v) => `<div style="display:flex;justify-content:space-between;padding:5px 0;font-size:13px;border-bottom:1px solid var(--border-light)">
+            <span style="color:var(--text-3)">${k}</span>
+            <span style="color:var(--text-1);font-weight:500">${v}</span>
+        </div>`;
 
-        // Epistemic distribution
-        const epHtml = Object.entries(data.by_epistemic)
-            .sort((a, b) => b[1] - a[1])
-            .map(([ep, count]) => `<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12px">
-                <span style="color:var(--text-secondary)">${ep}</span>
-                <span style="color:var(--text-primary)">${count}</span>
-            </div>`).join('');
-        document.getElementById('epistemic-distribution').innerHTML = epHtml;
+        document.getElementById('source-distribution').innerHTML =
+            Object.entries(data.by_source).sort((a,b)=>b[1]-a[1]).map(([k,v])=>distRow(k,v)).join('');
+        document.getElementById('epistemic-distribution').innerHTML =
+            Object.entries(data.by_epistemic).sort((a,b)=>b[1]-a[1]).map(([k,v])=>distRow(k,v)).join('');
 
-    } catch (e) {
-        const tokCard = tok
-            ? `<div class="stat-card">
-                <div class="stat-card-label">Token heute</div>
-                <div class="stat-card-value" style="color:var(--purple, #a78bfa)">${tok.today.total.toLocaleString()}</div>
-                <div class="stat-card-sub">${tok.today.calls} Calls · ${tok.today_vs_yesterday !== null ? (tok.today_vs_yesterday > 0 ? '+' : '') + tok.today_vs_yesterday + '% vs gestern' : '—'}</div>
-               </div>
-               <div class="stat-card">
-                <div class="stat-card-label">Token diese Woche</div>
-                <div class="stat-card-value" style="color:var(--purple, #a78bfa)">${tok.week_total.toLocaleString()}</div>
-                <div class="stat-card-sub">${tok.week_vs_last_week !== null ? (tok.week_vs_last_week > 0 ? '+' : '') + tok.week_vs_last_week + '% vs Vorwoche' : '—'}</div>
-               </div>`
-            : '';
-
-        document.getElementById('stats-grid').innerHTML = `<div class="loading">Fehler: ${e.message}</div>`;
+    } catch(e) {
+        document.getElementById('lage-container').innerHTML =
+            `<div class="lage-panel lage-crit"><div class="lage-header"><div class="lage-icon">🔴</div><div class="lage-title">Fehler beim Laden</div></div><div style="font-size:13px;color:var(--red)">${e.message}</div></div>`;
+        document.getElementById('stats-grid').innerHTML = '';
     }
 }
 

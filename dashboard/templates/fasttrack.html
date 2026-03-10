@@ -164,8 +164,9 @@ async function loadEvents() {
     }
 
     tbody.innerHTML = events.map(ev => {
-        const statusBadge = ev.stored
-            ? `<span class="badge badge-active">✓ stored</span>`
+        const statusBadge = ev.stored && ev.chunk_id
+            ? `<a href="/chunks?highlight=${encodeURIComponent(ev.chunk_id)}" title="Chunk öffnen" style="text-decoration:none"><span class="badge badge-active">✓ ${ev.chunk_id.substring(0,8)} ↗</span></a>`
+            : ev.stored ? `<span class="badge badge-active">✓ stored</span>`
             : `<span class="badge badge-archived">✗ skip</span>`;
 
         const typeBadge = ev.chunk_type
@@ -242,7 +243,7 @@ function showDetail(eventId) {
         </div>
         ${ev.chunk_id ? `<div class="detail-row">
             <div class="detail-label">Chunk-ID</div>
-            <div class="detail-value mono"><a href="/chunks?search=${encodeURIComponent(ev.chunk_id)}" style="color:var(--accent)">${escHtml(ev.chunk_id)}</a></div>
+            <div class="detail-value mono"><a href="/chunks?highlight=${encodeURIComponent(ev.chunk_id)}" title="In Chunk Explorer öffnen" style="color:var(--accent);font-family:monospace">${escHtml(ev.chunk_id.substring(0,12))}… ↗</a></div>
         </div>` : ''}
         ${ev.skip_reason ? `<div class="detail-row">
             <div class="detail-label">Skip-Grund</div>

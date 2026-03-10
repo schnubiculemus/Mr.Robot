@@ -102,6 +102,10 @@ def extract_message(payload):
                 sentinel = f"[MEDIA:pdf:{media_url}:{filename}]"
                 combined = (sentinel + "\n" + caption).strip()
                 return from_id, combined, notify_name
+            # Audio/Sprachnachrichten (ogg, mp3, m4a, ptt)
+            if any(t in mimetype.lower() for t in ("audio", "ogg", "mpeg")) and media_url:
+                sentinel = f"[MEDIA:audio:{media_url}:{filename}]"
+                return from_id, sentinel, notify_name
 
         if text:
             return from_id, text, notify_name

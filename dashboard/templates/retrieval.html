@@ -187,9 +187,9 @@ async function runQuery() {
                 rejCell = `<span style="font-size:10px;color:${info.color}">${info.label}</span>`;
             }
 
-            return `<tr style="cursor:pointer;${c.selected ? '' : 'opacity:0.5'}" onclick="showScoreDetail(${idx})">
-                <td>${c.selected ? '<span style="color:var(--accent)">✓</span>' : '<span style="color:var(--text-dim)">✗</span>'}</td>
-                <td class="mono">${c.id.substring(0, 8)}</td>
+            return `<tr style="${c.selected ? '' : 'opacity:0.5'}">
+                <td style="cursor:pointer" onclick="showScoreDetail(${idx})">${c.selected ? '<span style="color:var(--accent)">✓</span>' : '<span style="color:var(--text-dim)">✗</span>'}</td>
+                <td class="mono"><a href="/chunks?highlight=${encodeURIComponent(c.id)}" title="In Chunk Explorer öffnen" style="color:var(--accent);text-decoration:none;font-family:monospace">${c.id.substring(0, 8)}</a></td>
                 <td><span class="badge badge-${c.chunk_type}">${c.chunk_type}</span></td>
                 <td class="text-col">${escHtml(c.text_preview)}</td>
                 <td class="mono">${c.semantic_similarity} ${semBar}</td>
@@ -272,7 +272,7 @@ async function loadRetrievalLog() {
 
         const html = data.entries.map(e => {
             const chunks = (e.chunks || []).map(c =>
-                `<span class="badge badge-${c.type}" style="margin:1px" title="${c.id}">${c.type} (${c.score})</span>`
+                `<a href="/chunks?highlight=${encodeURIComponent(c.id)}" title="Chunk ${c.id} öffnen" style="text-decoration:none"><span class="badge badge-${c.type}" style="margin:1px;cursor:pointer;opacity:0.9;transition:opacity 0.1s" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.9">${c.type} <span class="mono" style="font-size:10px">${c.id.substring(0,6)}</span> (${c.score})</span></a>`
             ).join(' ');
 
             const rejReasons = (e.rejected_reasons || []).map(r => {
