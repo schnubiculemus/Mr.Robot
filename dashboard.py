@@ -38,6 +38,14 @@ from config import DASHBOARD_TOKEN, FLASK_SECRET_KEY, USER_CONTEXTS
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [DASHBOARD] %(message)s")
 logger = logging.getLogger(__name__)
 
+# Todos-Tabelle beim Start sicherstellen
+try:
+    from core.todos import init_todos_table
+    with get_db_connection() as _conn:
+        init_todos_table(_conn)
+except Exception as _e:
+    logger.warning(f"init_todos_table fehlgeschlagen: {_e}")
+
 app = Flask(
     __name__,
     template_folder=os.path.join(PROJECT_DIR, "dashboard", "templates"),
