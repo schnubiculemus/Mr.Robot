@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}Web Search{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Web Search</h1>
+    <p>Alle Suchanfragen die Schnubot eigenständig gestellt hat</p>
+</div>
+
+<div class="card" style="margin-bottom:16px">
+    <div class="card-header">
+        <div>
+            <div class="card-title">Suchanfragen</div>
+            <div class="card-subtitle" id="subtitle">Lade...</div>
+        </div>
+        <input type="text" id="search-filter" placeholder="Filtern..." oninput="filterEntries()"
+            style="background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px;color:var(--text-1);font-family:var(--font);width:200px">
+    </div>
+    <div id="entries-list" style="display:flex;flex-direction:column;gap:0">
+        <div class="loading">Lade Suchanfragen...</div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<style>
+.entry-row {
+    display: flex; align-items: flex-start;
+    padding: 12px 0; border-bottom: 1px solid var(--border); gap: 12px;
+}
+.entry-row:last-child { border-bottom: none; }
+
+.entry-time {
+    font-size: 11px; color: var(--text-4); font-family: var(--font-mono, monospace);
+    white-space: nowrap; padding-top: 2px; min-width: 120px;
+}
+.entry-query {
+    font-size: 13px; font-weight: 600; color: var(--text-1); flex: 1;
+}
+.entry-context {
+    font-size: 11px; color: var(--text-3); margin-top: 3px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 400px;
+}
+.entry-meta {
+    font-size: 11px; color: var(--text-4); white-space: nowrap; padding-top: 2px;
+}
+.badge-ok  { background: var(--accent-dim, #00e5ff22); color: var(--accent, #00e5ff); font-size: 10px; padding: 1px 6px; border-radius: 4px; }
+.badge-err { background: #f8717122; color: #f87171; font-size: 10px; padding: 1px 6px; border-radius: 4px; }
+
+.empty-state { padding: 40px; text-align: center; color: var(--text-4); font-size: 13px; }
+</style>
+
+<script>
+let allEntries = [];
+
+async function loadEntries() {
+    const res = await fetch('/api/search-log');
+    const data = await res.json();
+    allEntries = data.entries || [];
+    render(allEntries);
+    document.getElementById('subtitle').textContent =
+        allEntries.length + ' Suchanfragen gesamt';
+}
+
+function formatTs(ts) {
+    if (!ts) return '–';
+    const d = new Date(ts);
+    const pad = n => String(n).padStart(2, '0');
+    return d.toLocaleDateString('de-DE', {day:'2-digit', month:'2-digit', year:'2-digit'}) +
+        ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+}
+
+function render(entries) {
+    const list = document.getElementById('entries-list');
+    if (!entries.length) {
+        list.innerHTML = '<div class="empty-state">Noch keine Suchanfragen gespeichert.</div>';
+        return;
+    }
+    list.innerHTML = entries.map(e => `
+        <div class="entry-row">
+            <div class="entry-time">${formatTs(e.timestamp)}</div>
+            <div style="flex:1;min-width:0">
+                <div class="entry-query">${escHtml(e.query)}</div>
+                ${e.user_message_preview ? `<div class="entry-context">↳ "${escHtml(e.user_message_preview)}"</div>` : ''}
+            </div>
+            <div class="entry-meta">
+                <span class="${e.success ? 'badge-ok' : 'badge-err'}">${e.success ? 'ok' : 'fehler'}</span>
+                ${e.result_length ? `<span style="margin-left:6px;color:var(--text-4)">${e.result_length} Z.</span>` : ''}
+            </div>
+        </div>
+    `).join('');
+}
+
+function escHtml(s) {
+    return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function filterEntries() {
+    const q = document.getElementById('search-filter').value.toLowerCase();
+    if (!q) { render(allEntries); return; }
+    render(allEntries.filter(e =>
+        e.query.toLowerCase().includes(q) ||
+        (e.user_message_preview || '').toLowerCase().includes(q)
+    ));
+}
+
+loadEntries();
+</script>
+{% endblock %}

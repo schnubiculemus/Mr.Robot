@@ -413,6 +413,24 @@ def run_heartbeat(user_id, context_name):
             logger.warning(f"Introspection fehlgeschlagen: {e}")
             hb_run.step("introspection", "error", str(e)[:80])
 
+        # 3e. Moltbook Exploration (autonom, kuratorisch)
+        try:
+            state = load_state()
+            last_moltbook = state.get(f"{user_id}_last_moltbook")
+            from core.moltbook_explorer import run_moltbook_exploration
+            chunk_id = run_moltbook_exploration(user_id, last_moltbook)
+            if chunk_id:
+                state = load_state()
+                state[f"{user_id}_last_moltbook"] = to_iso(now)
+                save_state(state)
+                logger.info(f"MoltbookExplorer: Reflexion gespeichert: {chunk_id[:8]}")
+                hb_run.step("moltbook", "ok", f"Exploration: {chunk_id[:8]}")
+            else:
+                hb_run.step("moltbook", "skip", "")
+        except Exception as e:
+            logger.warning(f"MoltbookExplorer fehlgeschlagen: {e}")
+            hb_run.step("moltbook", "error", str(e)[:80])
+
         # 4. Proaktive Nachrichten
         try:
             is_morning = 7 <= berlin.hour < 10

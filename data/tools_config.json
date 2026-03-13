@@ -2,7 +2,7 @@
   {
     "id": "pdf",
     "name": "PDF-Analyse",
-    "icon": "\ud83d\udcc4",
+    "icon": "📄",
     "description": "PDFs per WhatsApp hochladen und durchsuchen",
     "enabled": true,
     "available": true
@@ -10,7 +10,7 @@
   {
     "id": "calendar",
     "name": "Kalender",
-    "icon": "\ud83d\udcc5",
+    "icon": "📅",
     "description": "Termine lesen und erstellen",
     "enabled": true,
     "available": true,
@@ -31,7 +31,7 @@
         "name": "Privat",
         "provider": "icloud",
         "icloud_name": "Privat",
-        "enabled": true,
+        "enabled": false,
         "permissions": {
           "read": true,
           "write": true,
@@ -43,11 +43,11 @@
         "name": "Study",
         "provider": "icloud",
         "icloud_name": "Study",
-        "enabled": true,
+        "enabled": false,
         "permissions": {
           "read": true,
-          "write": true,
-          "delete": true
+          "write": false,
+          "delete": false
         }
       }
     ]
@@ -55,7 +55,7 @@
   {
     "id": "email",
     "name": "E-Mail",
-    "icon": "\u2709\ufe0f",
+    "icon": "✉️",
     "description": "E-Mails lesen und senden",
     "enabled": false,
     "available": false
@@ -63,7 +63,7 @@
   {
     "id": "voice",
     "name": "Sprachnachrichten",
-    "icon": "\ud83c\udf99\ufe0f",
+    "icon": "🎙️",
     "description": "Sprachnachrichten transkribieren (Whisper)",
     "enabled": true,
     "available": true
@@ -71,17 +71,25 @@
   {
     "id": "tasks",
     "name": "Aufgaben",
-    "icon": "\u2705",
-    "description": "Aufgaben & Erinnerungen nach Kategorie",
+    "icon": "✅",
+    "description": "Aufgaben erstellen und verwalten",
     "enabled": true,
     "available": true
   },
   {
     "id": "images",
     "name": "Bildanalyse",
-    "icon": "\ud83d\uddbc\ufe0f",
+    "icon": "🖼️",
     "description": "Bilder beschreiben und analysieren",
     "enabled": false,
     "available": false
+  },
+  {
+    "id": "moltbook",
+    "name": "Moltbook",
+    "icon": "🦞",
+    "description": "Social Network fuer KI-Agenten. Feed lesen, suchen, posten, kommentieren.",
+    "enabled": true,
+    "available": true
   }
 ]

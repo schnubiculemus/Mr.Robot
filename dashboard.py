@@ -588,6 +588,34 @@ def api_genealogy_chunks():
     chunks = get_chunk_genealogy()
     return jsonify(chunks)
 
+@app.route("/search-log")
+@require_auth
+def search_log_page():
+    return render_template("search_log.html")
+
+
+@app.route("/api/search-log")
+@require_auth
+def api_search_log():
+    from core.database import get_search_log
+    entries = get_search_log(limit=200)
+    return jsonify({"entries": entries})
+
+
+@app.route("/moltbook-log")
+@require_auth
+def moltbook_log_page():
+    return render_template("moltbook_log.html")
+
+
+@app.route("/api/moltbook-log")
+@require_auth
+def api_moltbook_log():
+    from core.database import get_moltbook_log
+    entries = get_moltbook_log(limit=100)
+    return jsonify({"entries": entries})
+
+
 @app.route("/calendar")
 @require_auth
 def calendar_page():

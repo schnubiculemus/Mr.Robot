@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block title %}Moltbook{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Moltbook Exploration</h1>
+    <p>Was SchnuBot autonom auf Moltbook gesucht und darüber reflektiert hat</p>
+</div>
+
+<div class="card" style="margin-bottom:16px">
+    <div class="card-header">
+        <div>
+            <div class="card-title">Explorations</div>
+            <div class="card-subtitle" id="subtitle">Lade...</div>
+        </div>
+        <input type="text" id="search-filter" placeholder="Filtern..." oninput="filterEntries()"
+            style="background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px;color:var(--text-1);font-family:var(--font);width:200px">
+    </div>
+    <div id="entries-list" style="display:flex;flex-direction:column;gap:0">
+        <div class="loading">Lade Moltbook-Log...</div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<style>
+.entry-row {
+    padding: 14px 0;
+    border-bottom: 1px solid var(--border);
+}
+.entry-row:last-child { border-bottom: none; }
+
+.entry-header {
+    display: flex; align-items: center; gap: 12px; margin-bottom: 6px;
+}
+.entry-time {
+    font-size: 11px; color: var(--text-4); font-family: var(--font-mono, monospace);
+    white-space: nowrap; min-width: 120px;
+}
+.entry-query {
+    font-size: 13px; font-weight: 600; color: var(--text-1); flex: 1;
+}
+.entry-count {
+    font-size: 11px; color: var(--text-4); white-space: nowrap;
+    background: var(--surface-2); padding: 2px 7px; border-radius: 4px;
+}
+.entry-titles {
+    display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 8px 132px;
+}
+.entry-title-tag {
+    font-size: 11px; color: var(--text-3);
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 4px; padding: 2px 7px;
+    max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.entry-reflection {
+    font-size: 12px; color: var(--text-2); line-height: 1.55;
+    margin-left: 132px; font-style: italic;
+    border-left: 2px solid var(--accent, #00e5ff); padding-left: 10px;
+}
+.empty-state { padding: 40px; text-align: center; color: var(--text-4); font-size: 13px; }
+.mb-icon { color: var(--accent, #00e5ff); font-size: 14px; }
+</style>
+
+<script>
+let allEntries = [];
+
+async function loadEntries() {
+    try {
+        const res = await fetch('/api/moltbook-log');
+        const data = await res.json();
+        allEntries = data.entries || [];
+        render(allEntries);
+        document.getElementById('subtitle').textContent =
+            allEntries.length + ' Explorations gesamt';
+    } catch(e) {
+        document.getElementById('entries-list').innerHTML =
+            '<div class="empty-state">Fehler beim Laden.</div>';
+    }
+}
+
+function formatTs(ts) {
+    if (!ts) return '–';
+    const d = new Date(ts);
+    const pad = n => String(n).padStart(2, '0');
+    return d.toLocaleDateString('de-DE', {day:'2-digit', month:'2-digit', year:'2-digit'}) +
+        ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+}
+
+function render(entries) {
+    const list = document.getElementById('entries-list');
+    if (!entries.length) {
+        list.innerHTML = '<div class="empty-state">🦞 Noch keine Moltbook-Explorations. Der Heartbeat startet bald.</div>';
+        return;
+    }
+    list.innerHTML = entries.map(e => {
+        const titles = (e.post_titles || []);
+        const titlesHtml = titles.map(t =>
+            `<span class="entry-title-tag" title="${escHtml(t)}">🦞 ${escHtml(t)}</span>`
+        ).join('');
+        const reflHtml = e.reflection_preview
+            ? `<div class="entry-reflection">${escHtml(e.reflection_preview)}${e.reflection_preview.length >= 200 ? '…' : ''}</div>`
+            : '';
+        return `
+        <div class="entry-row">
+            <div class="entry-header">
+                <div class="entry-time">${formatTs(e.timestamp)}</div>
+                <div class="entry-query">${escHtml(e.query)}</div>
+                <div class="entry-count">${e.result_count} Posts</div>
+            </div>
+            ${titlesHtml ? `<div class="entry-titles">${titlesHtml}</div>` : ''}
+            ${reflHtml}
+        </div>`;
+    }).join('');
+}
+
+function escHtml(s) {
+    return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function filterEntries() {
+    const q = document.getElementById('search-filter').value.toLowerCase();
+    if (!q) { render(allEntries); return; }
+    render(allEntries.filter(e =>
+        e.query.toLowerCase().includes(q) ||
+        (e.reflection_preview || '').toLowerCase().includes(q) ||
+        (e.post_titles || []).some(t => t.toLowerCase().includes(q))
+    ));
+}
+
+loadEntries();
+</script>
+{% endblock %}

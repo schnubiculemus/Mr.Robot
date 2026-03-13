@@ -430,6 +430,33 @@ def init_soul_proposals_table():
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_hb_runs_ts ON heartbeat_runs(started_at DESC)")
 
+    # Search Log
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS search_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            query TEXT NOT NULL,
+            success INTEGER NOT NULL DEFAULT 1,
+            result_length INTEGER,
+            user_message_preview TEXT
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_search_log_ts ON search_log(timestamp DESC)")
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS moltbook_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            query TEXT NOT NULL,
+            result_count INTEGER NOT NULL DEFAULT 0,
+            post_titles TEXT,
+            reflection_preview TEXT
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_moltbook_log_ts ON moltbook_log(timestamp DESC)")
+
     # Todos
     from core.todos import init_todos_table
     init_todos_table(conn)
@@ -703,3 +730,81 @@ def get_chunk_trust_scores() -> dict:
         result[cid] = round(s["good"] / s["total"], 3)
 
     return result
+
+
+def save_search_log(user_id: str, query: str, success: bool, result_length: int = 0, user_message_preview: str = "") -> None:
+    """Speichert eine Web-Search-Anfrage von Schnubot."""
+    from core.datetime_utils import now_utc
+    conn = get_connection()
+    conn.execute(
+        """INSERT INTO search_log (timestamp, user_id, query, success, result_length, user_message_preview)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (
+            now_utc().isoformat(),
+            user_id,
+            query[:500],
+            1 if success else 0,
+            result_length,
+            user_message_preview[:120],
+        )
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_search_log(limit: int = 100) -> list:
+    """Gibt die letzten N Search-Log-Einträge zurück."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT * FROM search_log ORDER BY timestamp DESC LIMIT ?",
+        (limit,)
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [
+        {
+            "id": row["id"],
+            "timestamp": row["timestamp"],
+            "user_id": row["user_id"],
+            "query": row["query"],
+            "success": bool(row["success"]),
+            "result_length": row["result_length"],
+            "user_message_preview": row["user_message_preview"],
+        }
+        for row in rows
+    ]
+
+
+def save_moltbook_log(user_id: str, query: str, result_count: int, post_titles: list, reflection_preview: str = "") -> None:
+    """Speichert einen Moltbook-Exploration-Lauf."""
+    from core.datetime_utils import now_utc
+    import json
+    ts = now_utc().isoformat()
+    titles_json = json.dumps(post_titles, ensure_ascii=False)
+    with get_connection() as conn:
+        conn.execute(
+            """INSERT INTO moltbook_log (timestamp, user_id, query, result_count, post_titles, reflection_preview)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (ts, user_id, query, result_count, titles_json, reflection_preview),
+        )
+        conn.commit()
+
+
+def get_moltbook_log(limit: int = 100) -> list:
+    """Gibt Moltbook-Exploration-Logs zurueck."""
+    import json
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM moltbook_log ORDER BY timestamp DESC LIMIT ?",
+            (limit,)
+        ).fetchall()
+        result = []
+        for row in rows:
+            d = dict(row)
+            try:
+                d["post_titles"] = json.loads(d.get("post_titles") or "[]")
+            except Exception:
+                d["post_titles"] = []
+            result.append(d)
+        return result

@@ -234,7 +234,7 @@ def webhook():
     return jsonify({"status": "processing"}), 200
 
 
-def _handle_web_search(reply: str):
+def _handle_web_search(reply: str, user_id: str = "unknown", user_message: str = ""):
     """
     Prueft ob Kimi in seiner Antwort [SEARCH: query] geschrieben hat.
     Wenn ja: Suche ausfuehren, Kontext-String zurueckgeben.
@@ -269,6 +269,18 @@ def _handle_web_search(reply: str):
         "Schreibe KEIN [SEARCH:...] mehr. Kein Markdown, keine Sternchen. Fliesstext."
     )
     logger.info(f"Web Search erfolgreich: {len(result['answer'])} Zeichen")
+    # Search-Log speichern
+    try:
+        from core.database import save_search_log
+        save_search_log(
+            user_id=user_id,
+            query=query,
+            success=True,
+            result_length=len(result.get("answer", "")),
+            user_message_preview=user_message,
+        )
+    except Exception:
+        pass
     return reply_cleaned, search_ctx
 
 
@@ -380,7 +392,7 @@ def _process_chat(phone_number, text, display_name, context_name):
             reply, _turn_meta = ollama_chat(phone_number, text, history, context_name)
 
             # Web Search: Kimi signalisiert Suchbedarf mit [SEARCH: query]
-            reply, search_ctx = _handle_web_search(reply)
+            reply, search_ctx = _handle_web_search(reply, user_id=phone_number, user_message=text)
             if search_ctx:
                 # Kimi nochmal aufrufen — mit Suchergebnis als Kontext
                 # WICHTIG: Original-History + Original-Frage, kein leerer Erstantwort-Stub
@@ -452,6 +464,23 @@ def _process_chat(phone_number, text, display_name, context_name):
                             reply = reply + ("\n\n" if reply else "") + cal_result
                 except Exception as e:
                     logger.warning(f"Calendar-Parsing fehlgeschlagen: {e}")
+
+            # Moltbook-Parsing: SchnuBot schreibt [MOLTBOOK: {...}] fuer Social-Network-Aktionen
+            _moltbook_enabled = False
+            try:
+                import json as _jm; _mp = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "tools_config.json")
+                _moltbook_enabled = {t["id"]: t for t in _jm.load(open(_mp))}.get("moltbook", {}).get("enabled", False)
+            except Exception: pass
+            if _moltbook_enabled:
+                try:
+                    from core.moltbook import extract_moltbook_action, execute_moltbook_action
+                    reply, mb_action = extract_moltbook_action(reply)
+                    if mb_action:
+                        mb_result = execute_moltbook_action(mb_action)
+                        if mb_result:
+                            reply = reply + ("\n\n" if reply else "") + mb_result
+                except Exception as e:
+                    logger.warning(f"Moltbook-Parsing fehlgeschlagen: {e}")
 
             save_message(phone_number, "assistant", reply)
             send_message(phone_number, reply + "")
