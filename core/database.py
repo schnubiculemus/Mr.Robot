@@ -102,6 +102,33 @@ def init_db():
         ON consolidator_events(timestamp DESC)
     """)
 
+    # MIRROR: Turn-Logging
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS mirror_turns (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            turn_id TEXT UNIQUE NOT NULL,
+            timestamp TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            user_message_preview TEXT,
+            active_chunks_json TEXT,
+            rule_stack_json TEXT,
+            response_profile_json TEXT,
+            preflight_status TEXT,
+            preflight_issues_json TEXT,
+            pattern_flags_json TEXT
+        )
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_mirror_turns_ts
+        ON mirror_turns(timestamp DESC)
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_mirror_turns_user
+        ON mirror_turns(user_id, timestamp DESC)
+    """)
+
     conn.commit()
     conn.close()
     logger.info("Datenbank initialisiert (WAL-Modus)")
@@ -450,3 +477,229 @@ def update_soul_proposal_status(proposal_id, status):
     )
     conn.commit()
     conn.close()
+
+
+# =============================================================================
+# MIRROR: Turn-Logging
+# =============================================================================
+
+def save_mirror_turn(turn: dict) -> None:
+    """Speichert ein MIRROR Turn-Objekt."""
+    import json
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            INSERT OR REPLACE INTO mirror_turns (
+                turn_id, timestamp, user_id, user_message_preview,
+                active_chunks_json, rule_stack_json, response_profile_json,
+                preflight_status, preflight_issues_json, pattern_flags_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            turn["turn_id"],
+            turn["timestamp"],
+            turn["user_id"],
+            turn.get("user_message_preview", ""),
+            json.dumps(turn.get("active_chunks", []), ensure_ascii=False),
+            json.dumps(turn.get("rule_stack", []), ensure_ascii=False),
+            json.dumps(turn.get("response_profile", {}), ensure_ascii=False),
+            turn.get("preflight", {}).get("status", "green"),
+            json.dumps(turn.get("preflight", {}).get("issues", []), ensure_ascii=False),
+            json.dumps(turn.get("pattern_flags", []), ensure_ascii=False),
+        ))
+        conn.commit()
+    except Exception as e:
+        logger.warning(f"save_mirror_turn Fehler: {e}")
+    finally:
+        conn.close()
+
+
+def get_mirror_turns(limit: int = 50, user_id: str = None) -> list:
+    """Holt die letzten N Turn-Objekte, optional gefiltert nach User."""
+    import json
+    conn = get_connection()
+    cursor = conn.cursor()
+    if user_id:
+        cursor.execute(
+            "SELECT * FROM mirror_turns WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?",
+            (user_id, limit)
+        )
+    else:
+        cursor.execute(
+            "SELECT * FROM mirror_turns ORDER BY timestamp DESC LIMIT ?",
+            (limit,)
+        )
+    rows = cursor.fetchall()
+    conn.close()
+
+    result = []
+    for row in rows:
+        result.append({
+            "turn_id": row["turn_id"],
+            "timestamp": row["timestamp"],
+            "user_id": row["user_id"],
+            "user_message_preview": row["user_message_preview"],
+            "active_chunks": json.loads(row["active_chunks_json"] or "[]"),
+            "rule_stack": json.loads(row["rule_stack_json"] or "[]"),
+            "response_profile": json.loads(row["response_profile_json"] or "{}"),
+            "preflight": {
+                "status": row["preflight_status"],
+                "issues": json.loads(row["preflight_issues_json"] or "[]"),
+            },
+            "pattern_flags": json.loads(row["pattern_flags_json"] or "[]"),
+        })
+    return result
+
+
+def get_mirror_stats(days: int = 7) -> dict:
+    """Aggregierte Pattern-Statistiken der letzten N Tage."""
+    import json
+    from datetime import timedelta
+    from core.datetime_utils import now_utc
+    since = (now_utc() - timedelta(days=days)).isoformat()
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT pattern_flags_json, preflight_status FROM mirror_turns WHERE timestamp >= ? ORDER BY timestamp DESC",
+        (since,)
+    )
+    rows = cursor.fetchall()
+    conn.close()
+
+    pattern_counts = {}
+    status_counts = {"green": 0, "yellow": 0, "orange": 0, "red": 0}
+    total = len(rows)
+
+    for row in rows:
+        status = row["preflight_status"] or "green"
+        status_counts[status] = status_counts.get(status, 0) + 1
+        flags = json.loads(row["pattern_flags_json"] or "[]")
+        for flag in flags:
+            pid = flag.get("type", "?")
+            pattern_counts[pid] = pattern_counts.get(pid, 0) + 1
+
+    return {
+        "total_turns": total,
+        "days": days,
+        "preflight_distribution": status_counts,
+        "pattern_counts": pattern_counts,
+    }
+
+
+def get_chunk_genealogy() -> list:
+    """
+    Memory Genealogy: Aggregiert alle Chunks aus mirror_turns.
+    Gibt pro Chunk zurück:
+      - wie oft gezogen (appearances)
+      - in wie vielen Turns mit Flags (flagged_turns)
+      - in wie vielen Turns mit Preflight rot/orange (bad_turns)
+      - zuletzt gesehen (last_seen)
+      - zuerst gesehen (first_seen)
+      - preview + type
+    """
+    import json
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT active_chunks_json, rule_stack_json, pattern_flags_json, preflight_status, timestamp FROM mirror_turns ORDER BY timestamp ASC"
+    )
+    rows = cursor.fetchall()
+    conn.close()
+
+    chunk_stats = {}  # chunk_id -> stats dict
+
+    for row in rows:
+        ts = row["timestamp"]
+        status = row["preflight_status"] or "green"
+        flags = json.loads(row["pattern_flags_json"] or "[]")
+        has_flags = len(flags) > 0
+        is_bad = status in ("orange", "red")
+
+        chunks = json.loads(row["active_chunks_json"] or "[]")
+        rules = json.loads(row["rule_stack_json"] or "[]")
+
+        for c in chunks + rules:
+            cid = c.get("id", "?")
+            if cid == "?":
+                continue
+            if cid not in chunk_stats:
+                chunk_stats[cid] = {
+                    "id": cid,
+                    "type": c.get("type", "?"),
+                    "preview": c.get("preview", ""),
+                    "appearances": 0,
+                    "flagged_turns": 0,
+                    "bad_turns": 0,
+                    "first_seen": ts,
+                    "last_seen": ts,
+                    "scores": [],
+                }
+            s = chunk_stats[cid]
+            s["appearances"] += 1
+            if has_flags:
+                s["flagged_turns"] += 1
+            if is_bad:
+                s["bad_turns"] += 1
+            if ts > s["last_seen"]:
+                s["last_seen"] = ts
+            score = c.get("score", 0.0)
+            if score:
+                s["scores"].append(score)
+
+    result = []
+    for s in chunk_stats.values():
+        scores = s.pop("scores", [])
+        s["avg_score"] = round(sum(scores) / len(scores), 3) if scores else 0.0
+        s["flag_rate"] = round(s["flagged_turns"] / max(s["appearances"], 1), 2)
+        result.append(s)
+
+    result.sort(key=lambda x: x["appearances"], reverse=True)
+    return result
+
+
+def get_chunk_trust_scores() -> dict:
+    """
+    Berechnet einen Trust-Score pro Chunk-ID basierend auf Turn-History.
+
+    Trust = Anteil der Turns in denen der Chunk aktiv war und das Preflight
+    grün war. Chunks die oft in roten/orangen Turns auftauchen bekommen
+    einen niedrigen Trust-Score.
+
+    Returns:
+        Dict: chunk_id → trust_score (0.0 - 1.0)
+        Nur Chunks mit mindestens 3 Appearances werden berücksichtigt.
+    """
+    import json
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT active_chunks_json, preflight_status FROM mirror_turns ORDER BY timestamp DESC LIMIT 500"
+    )
+    rows = cursor.fetchall()
+    conn.close()
+
+    stats = {}  # chunk_id → {total: int, good: int}
+
+    for row in rows:
+        chunks = json.loads(row["active_chunks_json"] or "[]")
+        status = row["preflight_status"] or "green"
+        is_good = status == "green"
+
+        for c in chunks:
+            cid = c.get("id")
+            if not cid:
+                continue
+            if cid not in stats:
+                stats[cid] = {"total": 0, "good": 0}
+            stats[cid]["total"] += 1
+            if is_good:
+                stats[cid]["good"] += 1
+
+    result = {}
+    for cid, s in stats.items():
+        if s["total"] < 3:
+            continue  # zu wenig Daten
+        result[cid] = round(s["good"] / s["total"], 3)
+
+    return result

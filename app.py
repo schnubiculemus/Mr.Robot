@@ -8,6 +8,7 @@ from config import WAHA_API_KEY, BOT_NAME, WEBHOOK_SECRET, USER_CONTEXTS, OWNER_
 from core.websearch import search as web_search, format_for_kimi as format_search_result
 from core.database import init_db, get_or_create_user, save_message, get_chat_history
 from core.ollama_client import chat as ollama_chat
+from core.mirror import build_turn, save_turn
 from core.whatsapp import send_message, extract_message, init_waha
 from core.document import is_media_message, parse_media_sentinel, download_media, extract_pdf_text, build_doc_session, search_doc_session, get_doc_session
 from core.voice import transcribe_audio, store_voice_chunk
@@ -271,6 +272,92 @@ def _handle_web_search(reply: str):
     return reply_cleaned, search_ctx
 
 
+def _handle_introspect(reply: str):
+    """
+    Prueft ob Kimi [INTROSPECT] geschrieben hat.
+    Wenn ja: MIRROR-Daten aufbereiten und als Kontext zurueckgeben.
+    Kimi bekommt dann einen zweiten Call mit ihren eigenen Verhaltensmustern.
+
+    Returns:
+        (reply_cleaned, introspect_context_or_None)
+    """
+    if "[INTROSPECT]" not in reply.upper():
+        return reply, None
+
+    reply_cleaned = re.sub(r"\[INTROSPECT\]", "", reply, flags=re.IGNORECASE).strip()
+    reply_cleaned = re.sub(r"\n{3,}", "\n\n", reply_cleaned).strip()
+    logger.info("Kimi ruft INTROSPECT auf — lade MIRROR-Daten")
+
+    try:
+        from core.database import get_mirror_turns, get_mirror_stats, get_chunk_genealogy
+
+        stats = get_mirror_stats(days=14)
+        turns = get_mirror_turns(limit=20)
+        genealogy = get_chunk_genealogy()
+
+        total = stats.get("total_turns", 0)
+        dist = stats.get("preflight_distribution", {})
+        green_pct = round(dist.get("green", 0) / max(total, 1) * 100)
+        bad_pct = round((dist.get("orange", 0) + dist.get("red", 0)) / max(total, 1) * 100)
+
+        pattern_counts = stats.get("pattern_counts", {})
+        pattern_names = {
+            "aufzaehlung":   "Aufzählungs-Falle",
+            "projektmodus":  "Projektmodus-Versteck",
+            "regel_relapse": "Regel-Rückfall (Markdown)",
+            "uebervorsicht": "Übervorsicht / Nachfrage",
+            "selbstkritik":  "Selbstkritik im Chat",
+        }
+        pattern_lines = []
+        for pid, count in sorted(pattern_counts.items(), key=lambda x: -x[1]):
+            name = pattern_names.get(pid, pid)
+            pattern_lines.append(f"  {name}: {count}x in {total} Turns")
+
+        flagged_turns = [t for t in turns if t.get("pattern_flags")][:5]
+        flagged_lines = []
+        for t in flagged_turns:
+            ts = t["timestamp"][:16].replace("T", " ")
+            flags = ", ".join(f["name"] for f in t["pattern_flags"])
+            preview = t.get("user_message_preview", "")[:60]
+            flagged_lines.append(f"  [{ts}] \'{preview}\' → {flags}")
+
+        risky = [c for c in genealogy if c["appearances"] >= 3 and c["flag_rate"] > 0.3]
+        risky = sorted(risky, key=lambda x: -x["flag_rate"])[:5]
+        risky_lines = []
+        for c in risky:
+            risky_lines.append(
+                "  [" + c["type"] + "] \"" + c["preview"][:60] + "\" — "
+                + str(c["appearances"]) + "x gezogen, " + str(int(c["flag_rate"]*100)) + "% mit Flags"
+            )
+
+        ctx_parts = [
+            "INTROSPEKTIONS-DATEN — deine eigenen Verhaltensmuster der letzten 14 Tage:\n",
+            f"Turns gesamt: {total} | Grün: {green_pct}% | Problematisch: {bad_pct}%\n",
+        ]
+        if pattern_lines:
+            ctx_parts.append("Häufigste Muster:\n" + "\n".join(pattern_lines))
+        else:
+            ctx_parts.append("Keine Pattern-Flags in diesem Zeitraum.")
+        if flagged_lines:
+            ctx_parts.append("\nLetzte problematische Turns:\n" + "\n".join(flagged_lines))
+        if risky_lines:
+            ctx_parts.append("\nChunks die oft mit schlechten Turns zusammenfallen:\n" + "\n".join(risky_lines))
+        ctx_parts.append(
+            "\nReflektiere ehrlich was diese Daten über dich aussagen. "
+            "Kein Markdown, keine Listen, kein Selbstmitleid. Fliesstext. "
+            "Schreibe KEIN [INTROSPECT] mehr."
+        )
+
+        introspect_ctx = "\n".join(ctx_parts)
+        logger.info(f"INTROSPECT Kontext gebaut: {len(introspect_ctx)} Zeichen")
+        return reply_cleaned, introspect_ctx
+
+    except Exception as e:
+        logger.error(f"INTROSPECT fehlgeschlagen: {e}")
+        return reply_cleaned, None
+
+
+
 def _process_chat(phone_number, text, display_name, context_name):
     """
     Verarbeitet eine Chat-Nachricht im Background-Thread.
@@ -290,7 +377,7 @@ def _process_chat(phone_number, text, display_name, context_name):
             history = get_chat_history(phone_number)
 
             # Kimi-Antwort generieren (kann bis zu 120s dauern)
-            reply = ollama_chat(phone_number, text, history, context_name)
+            reply, _turn_meta = ollama_chat(phone_number, text, history, context_name)
 
             # Web Search: Kimi signalisiert Suchbedarf mit [SEARCH: query]
             reply, search_ctx = _handle_web_search(reply)
@@ -299,7 +386,7 @@ def _process_chat(phone_number, text, display_name, context_name):
                 # WICHTIG: Original-History + Original-Frage, kein leerer Erstantwort-Stub
                 logger.info(f"Web Search: starte zweiten Kimi-Call mit Suchergebnis")
                 try:
-                    search_reply = ollama_chat(phone_number, text, history, context_name,
+                    search_reply, _ = ollama_chat(phone_number, text, history, context_name,
                                         doc_context=search_ctx)
                     # Sicherstellen dass der zweite Call nicht nochmal sucht
                     search_reply = re.sub(r"\[SEARCH:\s*.+?\]", "", search_reply or "", flags=re.IGNORECASE).strip()
@@ -311,6 +398,23 @@ def _process_chat(phone_number, text, display_name, context_name):
                         logger.warning("Web Search: zweiter Call leer — behalte bereinigte Erstantwort")
                 except Exception as e:
                     logger.error(f"Web Search: zweiter Kimi-Call fehlgeschlagen: {e}")
+
+            # INTROSPECT: Kimi ruft ihre eigenen MIRROR-Daten ab
+            reply, introspect_ctx = _handle_introspect(reply)
+            if introspect_ctx:
+                logger.info("INTROSPECT: starte zweiten Kimi-Call mit Selbstreflexions-Daten")
+                try:
+                    introspect_reply, _ = ollama_chat(phone_number, text, history, context_name,
+                                            doc_context=introspect_ctx)
+                    introspect_reply = re.sub(r"\[INTROSPECT\]", "", introspect_reply or "", flags=re.IGNORECASE).strip()
+                    introspect_reply = re.sub(r"\n{3,}", "\n\n", introspect_reply).strip()
+                    if introspect_reply:
+                        reply = introspect_reply
+                        logger.info(f"INTROSPECT: zweiter Call erfolgreich ({len(reply)} Zeichen)")
+                    else:
+                        logger.warning("INTROSPECT: zweiter Call leer")
+                except Exception as e:
+                    logger.error(f"INTROSPECT: zweiter Kimi-Call fehlgeschlagen: {e}")
 
             # [gespeichert] Signal entfernen
             reply = re.sub(r"\s*\[gespeichert\]\s*", " ", reply).strip()
@@ -332,10 +436,40 @@ def _process_chat(phone_number, text, display_name, context_name):
                 except Exception as e:
                     logger.warning(f"Todo-Parsing fehlgeschlagen: {e}")
 
+            # Calendar-Parsing: Kimi schreibt [CALENDAR_ACTION: {...}] für Kalender-Ops
+            _calendar_enabled = False
+            try:
+                import json as _jc; _cp = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "tools_config.json")
+                _calendar_enabled = {t["id"]: t for t in _jc.load(open(_cp))}.get("calendar", {}).get("enabled", False)
+            except Exception: pass
+            if _calendar_enabled:
+                try:
+                    from core.calendar.calendar_router import extract_calendar_action, execute_calendar_action
+                    reply, cal_action = extract_calendar_action(reply)
+                    if cal_action:
+                        cal_result = execute_calendar_action(cal_action)
+                        if cal_result:
+                            reply = reply + ("\n\n" if reply else "") + cal_result
+                except Exception as e:
+                    logger.warning(f"Calendar-Parsing fehlgeschlagen: {e}")
+
             save_message(phone_number, "assistant", reply)
             send_message(phone_number, reply + "")
 
             logger.info(f"Antwort an {display_name}: {reply[:100]}")
+
+            # MIRROR: Turn-Objekt bauen und speichern (non-blocking)
+            try:
+                turn = build_turn(
+                    user_id=phone_number,
+                    user_message=text,
+                    response=reply,
+                    chunks=_turn_meta.get("chunks", []),
+                    global_rules=_turn_meta.get("global_rules", []),
+                )
+                _chat_pool.submit(save_turn, turn)
+            except Exception as _me:
+                logger.warning(f"MIRROR turn-logging fehlgeschlagen: {_me}")
 
             # Fast-Track NACH der Antwort (P1.3): Memory-Writes erst wenn Antwort raus ist
             _chat_pool.submit(_safe_fast_track, phone_number, text)
@@ -654,7 +788,8 @@ def _answer_doc_query(phone_number, query, context_name):
             f'Das Retrieval hat keine ausreichend relevanten Stellen gefunden. '
             f'Antworte ehrlich dass du dazu nichts Belastbares im Dokument gefunden hast.'
         )
-        return ollama_chat(phone_number, query, history, context_name, doc_context=no_result_ctx)
+        reply, _ = ollama_chat(phone_number, query, history, context_name, doc_context=no_result_ctx)
+        return reply
 
     relevance_hint = "Die Treffer sind sehr relevant." if relevance == "strong" else "Die Treffer sind nur indirekt relevant — nutze sie als Hintergrund, aber beantworte die Frage direkt."
 
@@ -673,7 +808,8 @@ def _answer_doc_query(phone_number, query, context_name):
     # History laden damit Kimi Kontext ueber den User hat (letzte 6 Nachrichten)
     history = get_chat_history(phone_number)[-6:] if get_chat_history(phone_number) else []
 
-    return ollama_chat(phone_number, query, history, context_name, doc_context=doc_ctx)
+    reply, _ = ollama_chat(phone_number, query, history, context_name, doc_context=doc_ctx)
+    return reply
 
 
 def _handle_doc_followup(phone_number, query, context_name):

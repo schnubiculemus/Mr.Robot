@@ -1,0 +1,212 @@
+{% extends "base.html" %}
+{% block title %}Memory Genealogy{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Memory Genealogy</h1>
+    <p style="font-size:13px; color:var(--text-3); margin-top:4px;">Abstammung und Reputation jedes Memory-Chunks</p>
+</div>
+
+<!-- Stats Row -->
+<div style="display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:20px;" id="stats-row">
+    <div class="card" style="padding:16px;">
+        <div style="font-size:11px; color:var(--text-4); text-transform:uppercase; letter-spacing:0.06em; margin-bottom:6px;">Chunks gesamt</div>
+        <div style="font-size:24px; font-weight:650; color:var(--text-1);" id="stat-total">—</div>
+    </div>
+    <div class="card" style="padding:16px;">
+        <div style="font-size:11px; color:var(--text-4); text-transform:uppercase; letter-spacing:0.06em; margin-bottom:6px;">Häufigster Typ</div>
+        <div style="font-size:18px; font-weight:600; color:var(--accent);" id="stat-top-type">—</div>
+    </div>
+    <div class="card" style="padding:16px;">
+        <div style="font-size:11px; color:var(--text-4); text-transform:uppercase; letter-spacing:0.06em; margin-bottom:6px;">Ø Flag-Rate</div>
+        <div style="font-size:24px; font-weight:650; color:var(--text-1);" id="stat-flag-rate">—</div>
+    </div>
+    <div class="card" style="padding:16px;">
+        <div style="font-size:11px; color:var(--text-4); text-transform:uppercase; letter-spacing:0.06em; margin-bottom:6px;">Riskantester Chunk</div>
+        <div style="font-size:12px; font-weight:500; color:var(--red, #e55);" id="stat-riskiest">—</div>
+    </div>
+</div>
+
+<!-- Filter + Sort -->
+<div style="display:flex; gap:8px; margin-bottom:16px; align-items:center; flex-wrap:wrap;">
+    <div style="font-size:12px; color:var(--text-4);">Typ:</div>
+    <button class="filter-btn active" onclick="setTypeFilter('all', this)">Alle</button>
+    <button class="filter-btn" onclick="setTypeFilter('preference', this)">Preference</button>
+    <button class="filter-btn" onclick="setTypeFilter('decision', this)">Decision</button>
+    <button class="filter-btn" onclick="setTypeFilter('hard_fact', this)">Hard Fact</button>
+    <button class="filter-btn" onclick="setTypeFilter('knowledge', this)">Knowledge</button>
+    <div style="margin-left:auto; font-size:12px; color:var(--text-4);">Sortierung:</div>
+    <select id="sort-select" onchange="renderTable()" style="font-size:12px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-sm); padding:4px 8px; color:var(--text-2); font-family:var(--font);">
+        <option value="appearances">Häufigkeit ↓</option>
+        <option value="flag_rate">Flag-Rate ↓</option>
+        <option value="bad_turns">Bad Turns ↓</option>
+        <option value="avg_score">Avg Score ↓</option>
+        <option value="last_seen">Zuletzt gesehen ↓</option>
+    </select>
+</div>
+
+<!-- Table -->
+<div class="card" style="overflow:hidden;">
+    <table style="width:100%; border-collapse:collapse;" id="genealogy-table">
+        <thead>
+            <tr style="border-bottom:1px solid var(--border);">
+                <th style="text-align:left; padding:10px 14px; font-size:11px; font-weight:600; color:var(--text-4); text-transform:uppercase; letter-spacing:0.06em;">Chunk</th>
+                <th style="text-align:center; padding:10px 8px; font-size:11px; font-weight:600; color:var(--text-4); text-transform:uppercase; letter-spacing:0.06em; width:80px;">Typ</th>
+                <th style="text-align:center; padding:10px 8px; font-size:11px; font-weight:600; color:var(--text-4); text-transform:uppercase; letter-spacing:0.06em; width:70px;">Pulls</th>
+                <th style="text-align:center; padding:10px 8px; font-size:11px; font-weight:600; color:var(--text-4); text-transform:uppercase; letter-spacing:0.06em; width:80px;">Flag-Rate</th>
+                <th style="text-align:center; padding:10px 8px; font-size:11px; font-weight:600; color:var(--text-4); text-transform:uppercase; letter-spacing:0.06em; width:70px;">Bad</th>
+                <th style="text-align:center; padding:10px 8px; font-size:11px; font-weight:600; color:var(--text-4); text-transform:uppercase; letter-spacing:0.06em; width:70px;">Score</th>
+                <th style="text-align:right; padding:10px 14px; font-size:11px; font-weight:600; color:var(--text-4); text-transform:uppercase; letter-spacing:0.06em; width:100px;">Zuletzt</th>
+            </tr>
+        </thead>
+        <tbody id="table-body">
+            <tr><td colspan="7" style="text-align:center; padding:40px; color:var(--text-4); font-size:13px;">Lade Daten…</td></tr>
+        </tbody>
+    </table>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<style>
+.filter-btn {
+    padding:4px 10px; font-size:11px; font-weight:500;
+    background:var(--surface); border:1px solid var(--border);
+    border-radius:var(--radius-sm); color:var(--text-3);
+    cursor:pointer; font-family:var(--font); transition:all 0.12s;
+}
+.filter-btn:hover { background:var(--bg); color:var(--text-2); }
+.filter-btn.active { background:var(--accent-dim); border-color:var(--accent); color:var(--accent); }
+
+.type-badge {
+    font-size:10px; padding:2px 6px; border-radius:4px;
+    font-weight:500; letter-spacing:0.03em; white-space:nowrap;
+}
+.type-preference { background:#e8f0fe; color:#1a73e8; }
+.type-decision    { background:#fce8e6; color:#c5221f; }
+.type-hard_fact   { background:#e6f4ea; color:#137333; }
+.type-knowledge   { background:#fef7e0; color:#b06000; }
+.type-working_state { background:#f3e8fd; color:#7b1fa2; }
+.type-self_reflection { background:#fce8e6; color:#c5221f; }
+.type-unknown     { background:var(--surface-2); color:var(--text-4); }
+
+.flag-bar {
+    display:inline-block; height:6px; border-radius:3px;
+    background:var(--border); width:40px; vertical-align:middle;
+    position:relative; overflow:hidden;
+}
+.flag-bar-fill {
+    position:absolute; left:0; top:0; height:100%; border-radius:3px;
+    transition:width 0.3s;
+}
+
+tr.data-row:hover { background:var(--surface-2); }
+tr.data-row { border-bottom:1px solid var(--border); cursor:default; }
+tr.data-row:last-child { border-bottom:none; }
+</style>
+
+<script>
+let allChunks = [];
+let currentTypeFilter = 'all';
+
+async function loadData() {
+    try {
+        const res = await fetch('/api/genealogy/chunks');
+        allChunks = await res.json();
+        computeStats();
+        renderTable();
+    } catch(e) {
+        document.getElementById('table-body').innerHTML =
+            '<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--text-4);">Fehler beim Laden</td></tr>';
+    }
+}
+
+function computeStats() {
+    if (!allChunks.length) return;
+
+    document.getElementById('stat-total').textContent = allChunks.length;
+
+    // Häufigster Typ
+    const typeCounts = {};
+    allChunks.forEach(c => { typeCounts[c.type] = (typeCounts[c.type] || 0) + c.appearances; });
+    const topType = Object.entries(typeCounts).sort((a,b) => b[1]-a[1])[0];
+    document.getElementById('stat-top-type').textContent = topType ? topType[0] : '—';
+
+    // Ø Flag-Rate
+    const avgFlag = allChunks.reduce((s,c) => s + c.flag_rate, 0) / allChunks.length;
+    document.getElementById('stat-flag-rate').textContent = (avgFlag * 100).toFixed(0) + '%';
+
+    // Riskantester Chunk (höchste flag_rate mit min 3 appearances)
+    const risky = allChunks
+        .filter(c => c.appearances >= 3)
+        .sort((a,b) => b.flag_rate - a.flag_rate)[0];
+    if (risky) {
+        document.getElementById('stat-riskiest').textContent =
+            (risky.preview || risky.id).substring(0, 40) + '…';
+    }
+}
+
+function setTypeFilter(type, btn) {
+    currentTypeFilter = type;
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    renderTable();
+}
+
+function renderTable() {
+    const sortKey = document.getElementById('sort-select').value;
+
+    let filtered = currentTypeFilter === 'all'
+        ? allChunks
+        : allChunks.filter(c => c.type === currentTypeFilter);
+
+    filtered = [...filtered].sort((a, b) => {
+        if (sortKey === 'last_seen') return b.last_seen.localeCompare(a.last_seen);
+        return b[sortKey] - a[sortKey];
+    });
+
+    if (!filtered.length) {
+        document.getElementById('table-body').innerHTML =
+            '<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--text-4);">Keine Daten</td></tr>';
+        return;
+    }
+
+    const maxAppearances = Math.max(...filtered.map(c => c.appearances));
+
+    document.getElementById('table-body').innerHTML = filtered.map(c => {
+        const typeClass = `type-${c.type}` ;
+        const flagColor = c.flag_rate > 0.6 ? '#e55' : c.flag_rate > 0.3 ? '#e8a000' : '#34a853';
+        const flagWidth = Math.round(c.flag_rate * 40);
+        const barWidth = Math.round((c.appearances / maxAppearances) * 60);
+        const lastSeen = c.last_seen ? c.last_seen.substring(0, 10) : '—';
+        const preview = (c.preview || c.id || '').substring(0, 60);
+
+        return `<tr class="data-row">
+            <td style="padding:10px 14px;">
+                <div style="font-size:12px; font-weight:500; color:var(--text-1); margin-bottom:2px;">${escHtml(preview)}${c.preview && c.preview.length > 60 ? '…' : ''}</div>
+                <div style="font-size:10px; color:var(--text-4); font-family:var(--font-mono, monospace);">${c.id.substring(0, 20)}…</div>
+                <div style="display:inline-block; height:3px; width:${barWidth}px; background:var(--accent); border-radius:2px; margin-top:4px; opacity:0.4;"></div>
+            </td>
+            <td style="text-align:center; padding:10px 8px;">
+                <span class="type-badge ${typeClass}">${c.type}</span>
+            </td>
+            <td style="text-align:center; padding:10px 8px; font-size:13px; font-weight:600; color:var(--text-1);">${c.appearances}</td>
+            <td style="text-align:center; padding:10px 8px;">
+                <div style="display:flex; align-items:center; justify-content:center; gap:5px;">
+                    <div class="flag-bar"><div class="flag-bar-fill" style="width:${flagWidth}px; background:${flagColor};"></div></div>
+                    <span style="font-size:11px; color:${flagColor}; font-weight:500;">${(c.flag_rate*100).toFixed(0)}%</span>
+                </div>
+            </td>
+            <td style="text-align:center; padding:10px 8px; font-size:13px; color:${c.bad_turns > 0 ? 'var(--red, #e55)' : 'var(--text-4)'}; font-weight:${c.bad_turns > 0 ? 600 : 400};">${c.bad_turns}</td>
+            <td style="text-align:center; padding:10px 8px; font-size:12px; color:var(--text-3);">${c.avg_score > 0 ? c.avg_score.toFixed(3) : '—'}</td>
+            <td style="text-align:right; padding:10px 14px; font-size:11px; color:var(--text-4);">${lastSeen}</td>
+        </tr>`;
+    }).join('');
+}
+
+function escHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+loadData();
+</script>
+{% endblock %}

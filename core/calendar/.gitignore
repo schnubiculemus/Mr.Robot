@@ -1,0 +1,11 @@
+venv/
+__pycache__/
+*.pyc
+data/chromadb/
+bot.db
+*.log
+.env
+logs/
+heartbeat_state.json
+legacy/*.json
+.DS_Store

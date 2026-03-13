@@ -12,8 +12,45 @@
     "name": "Kalender",
     "icon": "\ud83d\udcc5",
     "description": "Termine lesen und erstellen",
-    "enabled": false,
-    "available": false
+    "enabled": true,
+    "available": true,
+    "sub_calendars": [
+      {
+        "id": "calendar_work",
+        "name": "Arbeit",
+        "provider": "google",
+        "enabled": true,
+        "permissions": {
+          "read": true,
+          "write": true,
+          "delete": true
+        }
+      },
+      {
+        "id": "calendar_private",
+        "name": "Privat",
+        "provider": "icloud",
+        "icloud_name": "Privat",
+        "enabled": true,
+        "permissions": {
+          "read": true,
+          "write": true,
+          "delete": true
+        }
+      },
+      {
+        "id": "calendar_study",
+        "name": "Study",
+        "provider": "icloud",
+        "icloud_name": "Study",
+        "enabled": true,
+        "permissions": {
+          "read": true,
+          "write": true,
+          "delete": true
+        }
+      }
+    ]
   },
   {
     "id": "email",
@@ -35,7 +72,7 @@
     "id": "tasks",
     "name": "Aufgaben",
     "icon": "\u2705",
-    "description": "Aufgaben erstellen und verwalten",
+    "description": "Aufgaben & Erinnerungen nach Kategorie",
     "enabled": true,
     "available": true
   },

@@ -669,6 +669,19 @@
                         </svg>
                         Diary
                     </a>
+                    <a href="/mirror" class="nav-link {% if request.path == '/mirror' %}active{% endif %}">
+                        <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="8" cy="8" r="5"/>
+                            <path d="M8 5v3l2 1.5"/>
+                        </svg>
+                        MIRROR
+                    </a>
+                    <a href="/genealogy" class="nav-link {% if request.path == '/genealogy' %}active{% endif %}">
+                        <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M8 2v4M5 6H3a1 1 0 00-1 1v2a1 1 0 001 1h2M11 6h2a1 1 0 011 1v2a1 1 0 01-1 1h-2M5 9v1a1 1 0 001 1h4a1 1 0 001-1V9M5 6a1 1 0 011-1h4a1 1 0 011 1v3H5V6z"/>
+                        </svg>
+                        Genealogy
+                    </a>
                 </div>
                 <hr style="border:none;border-top:1px solid var(--border,#2a2a3e);margin:8px 8px 10px">
                 <div class="nav-section">
@@ -680,6 +693,13 @@
                             <path d="M12 12l.6.6 1.4-1.4"/>
                         </svg>
                         Listen
+                    </a>
+                    <a href="/calendar" class="nav-link {% if request.path == '/calendar' %}active{% endif %}">
+                        <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+                            <rect x="2" y="3" width="12" height="11" rx="1.5"/>
+                            <path d="M5 1v3M11 1v3M2 7h12"/>
+                        </svg>
+                        Kalender
                     </a>
                 </div>
             </nav>

@@ -424,8 +424,7 @@ REGELN:
 
 
 def send_proactive(user_id, message):
-    tagged = message + "\n\n[kimi/proaktiv]"
-    send_message(user_id, tagged)
+    send_message(user_id, message)
     save_message(user_id, "assistant", message)
     logger.info(f"Proaktive Nachricht gesendet: {message[:100]}")
 

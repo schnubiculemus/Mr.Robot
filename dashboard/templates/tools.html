@@ -23,113 +23,126 @@
 {% block scripts %}
 <style>
 .tool-row {
-    display: flex;
-    align-items: center;
-    padding: 16px 0;
-    border-bottom: 1px solid var(--border);
-    gap: 16px;
+    display: flex; align-items: center;
+    padding: 16px 0; border-bottom: 1px solid var(--border); gap: 16px;
 }
-.tool-row:last-child {
-    border-bottom: none;
-}
-.tool-icon {
-    font-size: 24px;
-    width: 36px;
-    text-align: center;
-    flex-shrink: 0;
-}
-.tool-info {
-    flex: 1;
-}
+.tool-row:last-child { border-bottom: none; }
+.tool-icon { font-size: 22px; width: 36px; text-align: center; flex-shrink: 0; }
+.tool-info { flex: 1; }
 .tool-name {
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text-primary);
-    display: flex;
-    align-items: center;
-    gap: 8px;
+    font-size: 14px; font-weight: 600; color: var(--text-1);
+    display: flex; align-items: center; gap: 8px;
 }
-.tool-desc {
-    font-size: 12px;
-    color: var(--text-dim);
-    margin-top: 3px;
-}
-.tool-badge {
-    font-size: 10px;
-    padding: 2px 7px;
-    border-radius: 10px;
-    font-weight: 500;
-    letter-spacing: 0.05em;
-}
-.badge-soon {
-    background: var(--surface-2, #2a2a3a);
-    color: var(--text-dim);
-}
-.badge-active {
-    background: rgba(16, 185, 129, 0.15);
-    color: var(--green, #10b981);
-}
+.tool-desc { font-size: 12px; color: var(--text-3); margin-top: 3px; }
 
-/* Toggle Switch */
-.toggle {
-    position: relative;
-    width: 44px;
-    height: 24px;
-    flex-shrink: 0;
-}
-.toggle input {
-    opacity: 0;
-    width: 0;
-    height: 0;
-}
+.tool-badge { font-size: 10px; padding: 2px 7px; border-radius: 10px; font-weight: 500; letter-spacing: 0.05em; }
+.badge-soon { background: var(--surface-2, #f0efee); color: var(--text-4); }
+.badge-active { background: var(--accent-light); color: var(--accent); }
+
+/* Toggle */
+.toggle { position: relative; width: 44px; height: 24px; flex-shrink: 0; }
+.toggle input { opacity: 0; width: 0; height: 0; }
 .toggle-slider {
-    position: absolute;
-    cursor: pointer;
-    inset: 0;
-    background: var(--surface-2, #2a2a3a);
-    border-radius: 24px;
-    transition: 0.2s;
-    border: 1px solid var(--border);
+    position: absolute; cursor: pointer; inset: 0;
+    background: var(--border); border-radius: 24px;
+    transition: 0.2s; border: 1px solid var(--border);
 }
 .toggle-slider:before {
-    content: "";
-    position: absolute;
-    height: 16px;
-    width: 16px;
-    left: 3px;
-    bottom: 3px;
-    background: var(--text-dim);
-    border-radius: 50%;
-    transition: 0.2s;
+    content: ""; position: absolute;
+    height: 16px; width: 16px; left: 3px; bottom: 3px;
+    background: white; border-radius: 50%; transition: 0.2s;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.15);
 }
-.toggle input:checked + .toggle-slider {
-    background: var(--accent, #6366f1);
-    border-color: var(--accent, #6366f1);
+.toggle input:checked + .toggle-slider { background: var(--accent); border-color: var(--accent); }
+.toggle input:checked + .toggle-slider:before { transform: translateX(20px); }
+.toggle input:disabled + .toggle-slider { opacity: 0.4; cursor: not-allowed; }
+.toggle-sm { width: 36px; height: 22px; }
+.toggle-sm .toggle-slider:before { height: 14px; width: 14px; left: 3px; bottom: 3px; }
+.toggle-sm input:checked + .toggle-slider::before { transform: translateX(14px) !important; }
+
+/* Kalender Sub-Panel */
+.calendar-expand-btn {
+    background: none; border: none; cursor: pointer;
+    font-size: 11px; color: var(--text-3); padding: 0;
+    font-family: var(--font); display: flex; align-items: center; gap: 4px;
+    margin-top: 4px; transition: color 0.12s;
 }
-.toggle input:checked + .toggle-slider:before {
-    transform: translateX(20px);
-    background: white;
+.calendar-expand-btn:hover { color: var(--text-1); }
+
+.calendar-sub {
+    margin-left: 52px; margin-bottom: 8px;
+    display: none;
+    flex-direction: column; gap: 0;
+    background: var(--surface-2, #fafaf9);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
 }
-.toggle input:disabled + .toggle-slider {
-    opacity: 0.4;
-    cursor: not-allowed;
+.calendar-sub.open { display: flex; }
+
+.sub-cal-row {
+    display: flex; align-items: center;
+    padding: 10px 14px; gap: 12px;
+    border-bottom: 1px solid var(--border-light);
 }
+.sub-cal-row:last-child { border-bottom: none; }
+
+.sub-cal-name { font-size: 13px; font-weight: 500; color: var(--text-2); flex: 1; }
+.sub-cal-provider {
+    font-size: 10px; padding: 2px 6px; border-radius: 4px;
+    font-weight: 500; letter-spacing: 0.04em;
+}
+.provider-google { background: #e8f0fe; color: #1a73e8; }
+.provider-icloud  { background: #f0f0f5; color: #555; }
+
+.permissions-row {
+    display: flex; gap: 6px; margin-top: 6px; margin-left: 52px; margin-bottom: 12px;
+    display: none;
+}
+.permissions-row.open { display: flex; }
+
+.perm-group { display: flex; flex-direction: column; gap: 4px; }
+.perm-label-cal { font-size: 10px; font-weight: 600; color: var(--text-4); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 2px; }
+
+.perm-chip {
+    display: flex; align-items: center; gap: 5px;
+    padding: 3px 8px; border-radius: 4px; font-size: 11px;
+    background: var(--surface); border: 1px solid var(--border);
+    color: var(--text-3); cursor: pointer; transition: all 0.12s;
+    user-select: none;
+}
+.perm-chip.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+.perm-chip.disabled-perm { opacity: 0.4; cursor: not-allowed; }
 </style>
 
 <script>
+let toolsData = [];
+
 async function loadTools() {
     const res = await fetch('/api/tools');
-    const tools = await res.json();
+    toolsData = await res.json();
+    renderTools();
+}
 
-    document.getElementById('tools-list').innerHTML = tools.map(t => `
+function renderTools() {
+    document.getElementById('tools-list').innerHTML = toolsData.map(t => {
+        const hasSubCals = t.sub_calendars && t.sub_calendars.length > 0;
+        const expandBtn = hasSubCals ? `
+            <button class="calendar-expand-btn" onclick="toggleCalExpand()" id="cal-expand-btn">
+                <span id="cal-expand-arrow">▸</span> Kalender konfigurieren
+            </button>` : '';
+
+        const mainRow = `
         <div class="tool-row" id="row-${t.id}">
             <div class="tool-icon">${t.icon}</div>
             <div class="tool-info">
                 <div class="tool-name">
                     ${t.name}
-                    ${!t.available ? '<span class="tool-badge badge-soon">Bald verfügbar</span>' : t.enabled ? '<span class="tool-badge badge-active">Aktiv</span>' : ''}
+                    ${!t.available ? '<span class="tool-badge badge-soon">Bald verfügbar</span>'
+                      : t.enabled ? '<span class="tool-badge badge-active">Aktiv</span>' : ''}
                 </div>
                 <div class="tool-desc">${t.description}</div>
+                ${expandBtn}
             </div>
             <label class="toggle">
                 <input type="checkbox"
@@ -139,8 +152,61 @@ async function loadTools() {
                     onchange="toggleTool('${t.id}', this.checked)">
                 <span class="toggle-slider"></span>
             </label>
-        </div>
-    `).join('');
+        </div>`;
+
+        if (!hasSubCals) return mainRow;
+
+        const subRows = t.sub_calendars.map(cal => {
+            const providerClass = cal.provider === 'google' ? 'provider-google' : 'provider-icloud';
+            const providerLabel = cal.provider === 'google' ? 'Google' : 'iCloud';
+            return `
+            <div class="sub-cal-row">
+                <div class="sub-cal-name">${cal.name}</div>
+                <span class="sub-cal-provider ${providerClass}">${providerLabel}</span>
+                <label class="toggle toggle-sm">
+                    <input type="checkbox"
+                        ${cal.enabled ? 'checked' : ''}
+                        ${!t.enabled ? 'disabled' : ''}
+                        onchange="toggleSubCal('${cal.id}', this.checked)">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div class="perm-sub-row" id="perms-${cal.id}" style="padding:6px 14px 10px; background:var(--surface-2); border-bottom:1px solid var(--border-light); display:${cal.enabled ? 'flex' : 'none'}; gap:8px;">
+                ${renderPermChips(cal)}
+            </div>`;
+        }).join('');
+
+        return mainRow + `<div class="calendar-sub" id="cal-sub">${subRows}</div>`;
+    }).join('');
+}
+
+function renderPermChips(cal) {
+    const perms = cal.permissions || {};
+    const items = [
+        { key: 'read',   label: 'Lesen',     icon: '👁' },
+        { key: 'write',  label: 'Schreiben', icon: '✏️' },
+        { key: 'delete', label: 'Löschen',   icon: '🗑' },
+    ];
+    return items.map(p => {
+        const isRead = p.key === 'read';
+        const active = (isRead || perms[p.key]) ? 'active' : '';
+        // removed old line
+
+        const locked = isRead ? 'disabled-perm' : '';
+        return `<div class="perm-chip ${active} ${locked}"
+                     onclick="togglePerm('${cal.id}','${p.key}',this)"
+                     title="${p.label}">
+            ${p.icon} ${p.label}
+        </div>`;
+    }).join('');
+}
+
+function toggleCalExpand() {
+    const sub = document.getElementById('cal-sub');
+    const arrow = document.getElementById('cal-expand-arrow');
+    if (!sub) return;
+    const open = sub.classList.toggle('open');
+    arrow.textContent = open ? '▾' : '▸';
 }
 
 async function toggleTool(id, enabled) {
@@ -155,8 +221,37 @@ async function toggleTool(id, enabled) {
         document.getElementById(`toggle-${id}`).checked = !enabled;
         return;
     }
-    // Badge aktualisieren
-    loadTools();
+    await loadTools();
+}
+
+async function toggleSubCal(calId, enabled) {
+    const res = await fetch(`/api/tools/calendar/sub/${calId}`, {
+        method: 'PATCH',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({enabled})
+    });
+    if (!res.ok) { alert('Fehler beim Speichern'); return; }
+    // Perm-Row zeigen/verstecken
+    const permRow = document.getElementById(`perms-${calId}`);
+    if (permRow) permRow.style.display = enabled ? 'flex' : 'none';
+    // Daten aktualisieren
+    await loadTools();
+    // Sub-Panel offen lassen
+    const sub = document.getElementById('cal-sub');
+    if (sub) sub.classList.add('open');
+    const arrow = document.getElementById('cal-expand-arrow');
+    if (arrow) arrow.textContent = '▾';
+}
+
+async function togglePerm(calId, permKey, el) {
+    if (permKey === 'read') return; // Lesen kann nicht deaktiviert werden
+    const active = el.classList.toggle('active');
+    const res = await fetch(`/api/tools/calendar/sub/${calId}/perm`, {
+        method: 'PATCH',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({perm: permKey, value: active})
+    });
+    if (!res.ok) { el.classList.toggle('active'); alert('Fehler beim Speichern'); }
 }
 
 loadTools();

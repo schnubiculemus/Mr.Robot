@@ -395,6 +395,24 @@ def run_heartbeat(user_id, context_name):
             logger.warning(f"Tagebuch fehlgeschlagen: {e}")
             hb_run.step("tagebuch", "error", str(e)[:80])
 
+        # 3d. Introspection (MIRROR-basiert, datengetrieben)
+        try:
+            state = load_state()
+            last_introspection = state.get(f"{user_id}_last_introspection")
+            from introspection import run_introspection
+            chunk_id = run_introspection(user_id, last_introspection)
+            if chunk_id:
+                state = load_state()
+                state[f"{user_id}_last_introspection"] = to_iso(now)
+                save_state(state)
+                logger.info(f"Introspection erzeugt: {chunk_id[:8]}")
+                hb_run.step("introspection", "ok", f"Introspection: {chunk_id[:8]}")
+            else:
+                hb_run.step("introspection", "skip", "")
+        except Exception as e:
+            logger.warning(f"Introspection fehlgeschlagen: {e}")
+            hb_run.step("introspection", "error", str(e)[:80])
+
         # 4. Proaktive Nachrichten
         try:
             is_morning = 7 <= berlin.hour < 10

@@ -7,6 +7,7 @@ Fallback und Logging.
 """
 
 import logging
+import time
 import json
 from datetime import datetime, timezone
 from core.datetime_utils import safe_parse_dt, now_utc
@@ -36,6 +37,37 @@ if not retrieval_logger.handlers:
     handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
     retrieval_logger.addHandler(handler)
     retrieval_logger.setLevel(logging.INFO)
+
+
+# =============================================================================
+# Trust-Cache (MIRROR-basiert)
+# Chunk-Trust-Scores werden gecacht um DB-Scans zu vermeiden.
+# TTL: 300s — Trust ändert sich langsam.
+# =============================================================================
+
+_trust_cache = None
+_trust_cache_time = 0
+_TRUST_CACHE_TTL = 300  # Sekunden
+
+# Malus-Stärke: wie stark zieht niedriger Trust den Score runter?
+# 0.0 = kein Einfluss, 0.15 = max 15% Abzug bei Trust=0.0
+_TRUST_MALUS_STRENGTH = 0.12
+
+
+def _get_trust_scores() -> dict:
+    """Gibt gecachte Trust-Scores zurück. Lädt bei Cache-Miss aus DB."""
+    global _trust_cache, _trust_cache_time
+    if _trust_cache is not None and (time.time() - _trust_cache_time) < _TRUST_CACHE_TTL:
+        return _trust_cache
+    try:
+        from core.database import get_chunk_trust_scores
+        _trust_cache = get_chunk_trust_scores()
+        _trust_cache_time = time.time()
+    except Exception as e:
+        logger.warning(f"Trust-Scores konnten nicht geladen werden: {e}")
+        _trust_cache = {}
+        _trust_cache_time = time.time()
+    return _trust_cache
 
 
 # =============================================================================
@@ -121,6 +153,17 @@ def compute_score(chunk):
     decay = compute_type_decay(chunk.get("chunk_type"), chunk.get("created_at", ""))
     recency_with_decay = recency * decay
 
+    # 7. Trust-Malus (MIRROR-basiert)
+    # Chunks die oft in problematischen Turns auftauchen bekommen einen Abzug.
+    # Nur anwenden wenn genug Daten vorhanden (Trust-Score existiert im Cache).
+    trust_scores = _get_trust_scores()
+    chunk_id = chunk.get("id", "")
+    trust_malus = 0.0
+    if chunk_id in trust_scores:
+        trust = trust_scores[chunk_id]
+        # Malus steigt je niedriger der Trust (max _TRUST_MALUS_STRENGTH bei Trust=0.0)
+        trust_malus = _TRUST_MALUS_STRENGTH * (1.0 - trust)
+
     # Gewichteter Score
     score = (
         w["semantic"]    * semantic
@@ -129,7 +172,9 @@ def compute_score(chunk):
         + w["recency"]     * recency_with_decay
         + w["confidence"]  * confidence
         + w["type_factor"] * type_factor
+        - trust_malus
     )
+    score = max(score, 0.0)  # Kein negativer Score
 
     return score, {
         "semantic": round(semantic, 3),
@@ -139,6 +184,7 @@ def compute_score(chunk):
         "confidence": round(confidence, 3),
         "type_factor": round(type_factor, 3),
         "decay": round(decay, 3),
+        "trust_malus": round(trust_malus, 3),
     }
 
 

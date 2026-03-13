@@ -16,3 +16,7 @@ soul_pr_pending.json
 
 # Backups
 backups/
+data/credentials.json
+data/token.json
+data/bot.db-shm
+data/bot.db-wal

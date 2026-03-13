@@ -80,21 +80,21 @@ def _save_run(run: HeartbeatRun):
     """Schreibt den Run in die DB."""
     from core.database import get_connection
     summary = _build_summary(run.steps)
-    conn = get_connection()
-    conn.execute("""
-        INSERT INTO heartbeat_runs
-            (run_id, user_id, started_at, finished_at, steps_json, summary, had_error)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (
-        run.run_id,
-        run.user_id,
-        run.started_at,
-        run.finished_at,
-        json.dumps(run.steps, ensure_ascii=False),
-        summary,
-        1 if run.had_error else 0,
-    ))
-    conn.commit()
+    with get_connection() as conn:
+        conn.execute("""
+            INSERT INTO heartbeat_runs
+                (run_id, user_id, started_at, finished_at, steps_json, summary, had_error)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            run.run_id,
+            run.user_id,
+            run.started_at,
+            run.finished_at,
+            json.dumps(run.steps, ensure_ascii=False),
+            summary,
+            1 if run.had_error else 0,
+        ))
+        conn.commit()
 
 
 def _build_summary(steps: list) -> str:
@@ -115,6 +115,7 @@ def _build_summary(steps: list) -> str:
                 "deduplizierung": "Dedup.",
                 "decay": "Decay",
                 "reflexion": "Reflexion",
+                "introspection": "Introspection",
                 "tagebuch": "Tagebuch",
                 "proaktiv": "Proaktiv",
                 "autonomie": "Autonomie",
@@ -130,13 +131,13 @@ def _build_summary(steps: list) -> str:
 def get_recent_runs(limit: int = 50) -> list:
     """Gibt die letzten N Heartbeat-Runs zurück."""
     from core.database import get_connection
-    conn = get_connection()
-    rows = conn.execute("""
-        SELECT run_id, user_id, started_at, finished_at, steps_json, summary, had_error
-        FROM heartbeat_runs
-        ORDER BY started_at DESC
-        LIMIT ?
-    """, (limit,)).fetchall()
+    with get_connection() as conn:
+        rows = conn.execute("""
+            SELECT run_id, user_id, started_at, finished_at, steps_json, summary, had_error
+            FROM heartbeat_runs
+            ORDER BY started_at DESC
+            LIMIT ?
+        """, (limit,)).fetchall()
 
     result = []
     for row in rows:

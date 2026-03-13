@@ -31,7 +31,7 @@ from memory.memory_store import (
 )
 from memory.memory_config import CHUNK_TYPES
 from core.datetime_utils import now_utc, now_berlin, safe_parse_dt
-from core.database import get_fast_track_events, get_fast_track_stats, get_consolidator_events, get_consolidator_stats, get_soul_proposals, update_soul_proposal_status, get_connection as get_db_connection
+from core.database import get_fast_track_events, get_fast_track_stats, get_consolidator_events, get_consolidator_stats, get_soul_proposals, update_soul_proposal_status, get_connection as get_db_connection, get_mirror_turns, get_mirror_stats, get_chunk_genealogy
 from core.heartbeat_log import get_recent_runs
 from config import DASHBOARD_TOKEN, FLASK_SECRET_KEY, USER_CONTEXTS
 
@@ -548,6 +548,71 @@ def save_tools_config(tools):
         json.dump(tools, f, indent=2)
 
 
+
+
+# =============================================================================
+# MIRROR
+# =============================================================================
+
+@app.route("/mirror")
+@require_auth
+def mirror_page():
+    return render_template("mirror.html")
+
+
+@app.route("/api/mirror/turns")
+@require_auth
+def api_mirror_turns():
+    limit = min(int(request.args.get("limit", 50)), 500)
+    user_id = request.args.get("user_id", None)
+    turns = get_mirror_turns(limit=limit, user_id=user_id)
+    return jsonify({"turns": turns, "count": len(turns)})
+
+
+@app.route("/api/mirror/stats")
+@require_auth
+def api_mirror_stats():
+    days = min(int(request.args.get("days", 7)), 90)
+    stats = get_mirror_stats(days=days)
+    return jsonify(stats)
+
+
+@app.route("/genealogy")
+@require_auth
+def genealogy_page():
+    return render_template("genealogy.html")
+
+@app.route("/api/genealogy/chunks")
+@require_auth
+def api_genealogy_chunks():
+    chunks = get_chunk_genealogy()
+    return jsonify(chunks)
+
+@app.route("/calendar")
+@require_auth
+def calendar_page():
+    return render_template("calendar.html")
+
+
+@app.route("/api/calendar/events")
+@require_auth
+def api_calendar_events():
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+    from core.calendar.calendar_router import list_events
+    date_str = request.args.get("date", "")
+    if not date_str:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        date_str = datetime.now(ZoneInfo("Europe/Berlin")).date().isoformat()
+    try:
+        events = list_events(date_str)
+        return jsonify({"events": events, "date": date_str})
+    except Exception as e:
+        logger.error(f"Calendar API Fehler: {e}")
+        return jsonify({"events": [], "error": str(e)})
+
+
 @app.route("/tools")
 @require_auth
 def tools_page():
@@ -575,6 +640,47 @@ def api_tools_patch(tool_id):
         return jsonify({"error": "Tool nicht gefunden"}), 404
     save_tools_config(tools)
     return jsonify({"ok": True})
+
+
+@app.route("/api/tools/calendar/sub/<cal_id>", methods=["PATCH"])
+@require_auth
+def api_calendar_sub_patch(cal_id):
+    """Aktiviert/deaktiviert einen Unterkalender."""
+    data = request.get_json()
+    tools = load_tools_config()
+    for t in tools:
+        if t.get("id") == "calendar":
+            for cal in t.get("sub_calendars", []):
+                if cal["id"] == cal_id:
+                    cal["enabled"] = bool(data.get("enabled", cal["enabled"]))
+                    save_tools_config(tools)
+                    return jsonify({"ok": True})
+    return jsonify({"error": "Kalender nicht gefunden"}), 404
+
+
+@app.route("/api/tools/calendar/sub/<cal_id>/perm", methods=["PATCH"])
+@require_auth
+def api_calendar_sub_perm(cal_id):
+    """Ändert ein Zugriffsrecht eines Unterkalenders."""
+    data = request.get_json()
+    perm_key = data.get("perm")
+    perm_val = bool(data.get("value", False))
+    if perm_key not in ("read", "write", "delete"):
+        return jsonify({"error": "Ungültiges Recht"}), 400
+    if perm_key == "read":
+        return jsonify({"error": "Lesen kann nicht deaktiviert werden"}), 400
+    tools = load_tools_config()
+    for t in tools:
+        if t.get("id") == "calendar":
+            for cal in t.get("sub_calendars", []):
+                if cal["id"] == cal_id:
+                    if "permissions" not in cal:
+                        cal["permissions"] = {"read": True, "write": True, "delete": True}
+                    cal["permissions"][perm_key] = perm_val
+                    save_tools_config(tools)
+                    return jsonify({"ok": True})
+    return jsonify({"error": "Kalender nicht gefunden"}), 404
+
 
 
 # =============================================================================
@@ -629,6 +735,18 @@ def api_tokens():
 # =============================================================================
 # API: Chunks
 # =============================================================================
+
+@app.route("/api/chunks/trust")
+@require_auth
+def api_chunks_trust():
+    """Trust-Scores aller Chunks basierend auf MIRROR Turn-History."""
+    from core.database import get_chunk_trust_scores
+    try:
+        scores = get_chunk_trust_scores()
+        return jsonify({"trust_scores": scores})
+    except Exception as e:
+        return jsonify({"trust_scores": {}, "error": str(e)})
+
 
 @app.route("/api/chunks")
 @require_auth

@@ -61,13 +61,14 @@
                     <th style="width:46px" title="Retrievals">↑</th>
                     <th style="width:55px">Conf.</th>
                     <th style="width:55px">Weight</th>
+                    <th style="width:55px" title="Trust Budget — basiert auf MIRROR Turn-History">Trust</th>
                     <th style="width:65px">Alter</th>
                     <th style="width:60px">Source</th>
                     <th style="width:80px">Epistemic</th>
                 </tr>
             </thead>
             <tbody id="chunk-table">
-                <tr><td colspan="11" class="loading">Lade Chunks...</td></tr>
+                <tr><td colspan="12" class="loading">Lade Chunks...</td></tr>
             </tbody>
         </table>
     </div>
@@ -129,22 +130,27 @@ async function loadChunks() {
         }
     } catch (e) {
         document.getElementById('chunk-table').innerHTML =
-            '<tr><td colspan="11" class="loading">Fehler: ' + e.message + '</td></tr>';
+            '<tr><td colspan="12" class="loading">Fehler: ' + e.message + '</td></tr>';
     }
 }
 
 function renderTable(chunks) {
     if (!chunks.length) {
         document.getElementById('chunk-table').innerHTML =
-            '<tr><td colspan="11" class="loading">Keine Chunks gefunden</td></tr>';
+            '<tr><td colspan="12" class="loading">Keine Chunks gefunden</td></tr>';
         return;
     }
 
+    // Trust-Scores aus globalem Cache (wird separat geladen)
     const rows = chunks.map(function(c) {
         const isSelected = c.id === selectedChunkId;
         const isChecked = selectedIds.has(c.id);
         const confBar = '<span class="score-bar"><span class="score-bar-fill" style="width:' + (c.confidence * 100) + '%"></span></span>';
         const weightBar = '<span class="score-bar"><span class="score-bar-fill" style="width:' + ((c.weight / 2) * 100) + '%"></span></span>';
+        const trustVal = window._trustScores ? window._trustScores[c.id] : null;
+        const trustDisplay = trustVal !== null && trustVal !== undefined
+            ? '<span style="font-size:11px;color:' + (trustVal >= 0.8 ? '#4ade80' : trustVal >= 0.6 ? '#fbbf24' : '#f87171') + ';font-weight:600">' + Math.round(trustVal * 100) + '%</span>'
+            : '<span style="color:#555;font-size:10px">–</span>';
         const tags = c.tags_list.map(function(t) { return '<span class="tag">' + t + '</span>'; }).join('');
 
         // Vitalität berechnen
@@ -174,6 +180,7 @@ function renderTable(chunks) {
             '<td class="mono" style="cursor:pointer;text-align:center" onclick="showDetail(\'' + c.id + '\')">' + retCount + '</td>' +
             '<td class="mono">' + c.confidence + ' ' + confBar + '</td>' +
             '<td class="mono">' + c.weight + ' ' + weightBar + '</td>' +
+            '<td style="text-align:center">' + trustDisplay + '</td>' +
             '<td class="mono">' + c.age + '</td>' +
             '<td>' + c.source + '</td>' +
             '<td>' + c.epistemic_status + '</td>' +
@@ -248,6 +255,18 @@ async function bulkArchive() {
     alert(data.archived + ' archiviert' + (data.errors.length ? ', ' + data.errors.length + ' Fehler' : '') + '.');
     closeDetail();
     loadChunks();
+
+    // Trust-Scores laden (MIRROR-basiert)
+    window._trustScores = {};
+    fetch('/api/chunks/trust')
+        .then(r => r.json())
+        .then(data => {
+            if (data && data.trust_scores) {
+                window._trustScores = data.trust_scores;
+                renderChunks();
+            }
+        })
+        .catch(function() {});
 }
 
 async function showDetail(chunkId) {

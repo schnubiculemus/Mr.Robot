@@ -252,8 +252,22 @@ def chat(user_id, message, chat_history, context_name=None, doc_context=None):
     (wird in app.py vor dem Thread-Start via save_message gespeichert).
     Daher KEIN zusätzlicher append von message — sonst sieht Kimi sie doppelt.
     message wird nur für build_system_prompt (Memory-Retrieval) verwendet.
+
+    Returns:
+        str — Kimi-Antwort
+        dict — turn_meta mit chunks + global_rules für MIRROR-Logging
     """
     from api_utils import api_call_with_retry
+
+    # Chunks und Global Rules separat holen für MIRROR
+    retrieved_chunks = []
+    active_global_rules = []
+    try:
+        if message and not doc_context:
+            retrieved_chunks = score_and_select(message)
+        active_global_rules = _load_global_rules()
+    except Exception as e:
+        logger.warning(f"MIRROR chunk-fetch fehlgeschlagen: {e}")
 
     system_prompt = build_system_prompt(context_name, user_id, user_message=message, doc_context=doc_context)
     messages = [{"role": "system", "content": system_prompt}]
@@ -270,7 +284,7 @@ def chat(user_id, message, chat_history, context_name=None, doc_context=None):
     )
 
     if not result:
-        return "Sorry, Kimi ist gerade nicht erreichbar. Versuch's gleich nochmal!"
+        return "Sorry, Kimi ist gerade nicht erreichbar. Versuch's gleich nochmal!", {}
 
     # Token-Tracking
     try:
@@ -281,4 +295,9 @@ def chat(user_id, message, chat_history, context_name=None, doc_context=None):
     except Exception:
         pass
 
-    return result.get("message", {}).get("content", "Hmm, da kam keine Antwort zurueck.")
+    response_text = result.get("message", {}).get("content", "Hmm, da kam keine Antwort zurueck.")
+    turn_meta = {
+        "chunks": retrieved_chunks,
+        "global_rules": active_global_rules,
+    }
+    return response_text, turn_meta
