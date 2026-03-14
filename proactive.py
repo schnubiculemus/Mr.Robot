@@ -231,9 +231,51 @@ def _check_stale_working_states():
 def _check_gedanken_impuls():
     """
     Prüft ob aktuelle self_reflection oder diary Chunks ein Thema haben
-    das Kimi beschäftigt und das er von sich aus ansprechen könnte.
-    Nur wenn mind. 2 Reflexionen vorhanden sind.
+    das SchnuBot beschäftigt und das er von sich aus ansprechen könnte.
+
+    Priorisiert proactive_candidate Chunks aus der autonomen Reflexion —
+    diese wurden bereits als "Tommy-relevant" klassifiziert.
     """
+    from memory.memory_store import get_active_collection
+
+    # Zuerst: proactive_candidate Chunks aus autonomer Reflexion
+    try:
+        col = get_active_collection()
+        result = col.get(
+            where={"$and": [{"source": "robot"}, {"status": "active"}]},
+            include=["documents", "metadatas"],
+        )
+        proactive_chunks = []
+        if result["ids"]:
+            for i, chunk_id in enumerate(result["ids"]):
+                meta = result["metadatas"][i]
+                tags = [t.strip() for t in str(meta.get("tags", "")).split(",") if t.strip()]
+                if "proactive_candidate" in tags:
+                    proactive_chunks.append({
+                        "id": chunk_id,
+                        "text": result["documents"][i],
+                        "created_at": meta.get("created_at", ""),
+                    })
+
+        if proactive_chunks:
+            # Neuesten nehmen
+            proactive_chunks.sort(key=lambda c: c.get("created_at", ""), reverse=True)
+            best = proactive_chunks[0]
+            logger.info(f"Proaktiv: proactive_candidate gefunden: {best['id'][:8]}")
+            # Nach Verwendung Tag entfernen damit er nicht dauernd getriggert wird
+            try:
+                existing_meta = col.get(ids=[best["id"]], include=["metadatas"])["metadatas"][0]
+                old_tags = existing_meta.get("tags", "")
+                new_tags = ",".join(t for t in old_tags.split(",") if t.strip() != "proactive_candidate")
+                col.update(ids=[best["id"]], metadatas=[{**existing_meta, "tags": new_tags}])
+            except Exception:
+                pass
+            return f"Ich habe gerade nachgedacht und möchte dir etwas mitteilen:\n{best['text']}"
+
+    except Exception as e:
+        logger.warning(f"Proaktiv: proactive_candidate check fehlgeschlagen: {e}")
+
+    # Fallback: normale Reflexionen
     results = query_active("Gedanke Frage offen beschäftigt unklar", n_results=5)
     reflexionen = [r for r in results if r.get("chunk_type") in ("self_reflection", "diary")]
 

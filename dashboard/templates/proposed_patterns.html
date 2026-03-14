@@ -1,0 +1,258 @@
+{% extends "base.html" %}
+{% block title %}Pattern-Hypothesen{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Pattern Hypotheses</h1>
+    <p>Verhaltenshypothesen die {{ bot_name }} selbst aus seinen MIRROR-Daten destilliert hat. Du entscheidest: verwerfen, als working_state behalten oder zu einem echten Pattern promoten.</p>
+</div>
+
+<div class="stats-row" id="stats-row" style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px">
+    <div class="stat-box">
+        <div class="stat-label">Offen</div>
+        <div class="stat-value" id="count-open">–</div>
+    </div>
+    <div class="stat-box">
+        <div class="stat-label">Als working_state</div>
+        <div class="stat-value" id="count-working">–</div>
+    </div>
+    <div class="stat-box">
+        <div class="stat-label">Promoted</div>
+        <div class="stat-value" id="count-promoted">–</div>
+    </div>
+    <div class="stat-box">
+        <div class="stat-label">Verworfen</div>
+        <div class="stat-value" id="count-dismissed">–</div>
+    </div>
+</div>
+
+<div class="card" style="margin-bottom:16px">
+    <div class="card-header">
+        <div>
+            <div class="card-title">Offene Hypothesen</div>
+            <div class="card-subtitle">{{ bot_name }}s Beobachtungen — wartet auf deine Entscheidung</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+            <select id="filter-status" onchange="loadPatterns()"
+                style="background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;color:var(--text-1);font-family:var(--font)">
+                <option value="open">Offen</option>
+                <option value="">Alle</option>
+                <option value="working_state">working_state</option>
+                <option value="promoted">Promoted</option>
+                <option value="dismissed">Verworfen</option>
+            </select>
+        </div>
+    </div>
+    <div id="patterns-list" style="display:flex;flex-direction:column;gap:0">
+        <div class="loading">Lade Hypothesen...</div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<style>
+.stat-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+}
+.stat-label {
+    font-size: 11px; font-weight: 500; color: var(--text-4);
+    text-transform: uppercase; letter-spacing: .04em; margin-bottom: 4px;
+}
+.stat-value {
+    font-size: 26px; font-weight: 700;
+    font-family: var(--font-mono, monospace); color: var(--text-1);
+}
+
+.pattern-card {
+    padding: 16px 0;
+    border-bottom: 1px solid var(--border);
+}
+.pattern-card:last-child { border-bottom: none; }
+
+.pattern-header {
+    display: flex; align-items: flex-start; gap: 12px; margin-bottom: 8px;
+}
+.pattern-name {
+    font-size: 14px; font-weight: 600; color: var(--text-1); flex: 1;
+}
+.pattern-meta {
+    display: flex; gap: 8px; align-items: center; flex-shrink: 0;
+}
+.confidence-badge {
+    font-size: 11px; font-family: var(--font-mono, monospace);
+    padding: 2px 7px; border-radius: 4px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    color: var(--text-3);
+}
+.occurrences-badge {
+    font-size: 11px; color: var(--text-4);
+    padding: 2px 7px; background: var(--surface-2);
+    border-radius: 4px; white-space: nowrap;
+}
+.status-badge {
+    font-size: 11px; padding: 2px 8px; border-radius: 4px;
+    font-weight: 500; white-space: nowrap;
+}
+.status-open     { background: rgba(255,200,0,.12); color: #ffc800; border: 1px solid rgba(255,200,0,.3); }
+.status-working_state { background: rgba(0,229,255,.1); color: var(--accent, #00e5ff); border: 1px solid rgba(0,229,255,.2); }
+.status-promoted { background: rgba(100,255,100,.1); color: #64ff64; border: 1px solid rgba(100,255,100,.2); }
+.status-dismissed { background: var(--surface-2); color: var(--text-4); border: 1px solid var(--border); }
+
+.pattern-description {
+    font-size: 13px; color: var(--text-2); line-height: 1.55; margin-bottom: 8px;
+}
+.pattern-evidence {
+    font-size: 12px; color: var(--text-4); font-style: italic;
+    border-left: 2px solid var(--border); padding-left: 10px;
+    margin-bottom: 10px; line-height: 1.5;
+}
+.pattern-actions {
+    display: flex; gap: 8px; flex-wrap: wrap;
+}
+.action-btn {
+    font-size: 12px; padding: 5px 12px; border-radius: 5px;
+    cursor: pointer; font-family: var(--font);
+    border: 1px solid var(--border);
+    background: var(--surface-2); color: var(--text-2);
+    transition: all .15s;
+}
+.action-btn:hover { background: var(--surface-3); color: var(--text-1); }
+.action-btn.dismiss { color: var(--text-4); }
+.action-btn.dismiss:hover { border-color: #ff4444; color: #ff4444; background: rgba(255,68,68,.08); }
+.action-btn.keep    { color: var(--accent, #00e5ff); border-color: rgba(0,229,255,.3); }
+.action-btn.keep:hover { background: rgba(0,229,255,.08); }
+.action-btn.promote { color: #64ff64; border-color: rgba(100,255,100,.3); }
+.action-btn.promote:hover { background: rgba(100,255,100,.08); }
+
+.pattern-date {
+    font-size: 11px; color: var(--text-4);
+    font-family: var(--font-mono, monospace); margin-bottom: 6px;
+}
+.empty-state {
+    padding: 40px; text-align: center; color: var(--text-4); font-size: 13px;
+}
+.action-done {
+    font-size: 12px; color: var(--text-4); font-style: italic; padding: 4px 0;
+}
+</style>
+
+<script>
+let allPatterns = [];
+
+async function loadStats() {
+    try {
+        const res = await fetch('/api/proposed-patterns');
+        const data = await res.json();
+        allPatterns = data.patterns || [];
+        const counts = {open:0, working_state:0, promoted:0, dismissed:0};
+        allPatterns.forEach(p => { counts[p.status] = (counts[p.status]||0) + 1; });
+        document.getElementById('count-open').textContent = counts.open;
+        document.getElementById('count-working').textContent = counts.working_state;
+        document.getElementById('count-promoted').textContent = counts.promoted;
+        document.getElementById('count-dismissed').textContent = counts.dismissed;
+    } catch(e) {}
+}
+
+async function loadPatterns() {
+    const status = document.getElementById('filter-status').value;
+    const list = document.getElementById('patterns-list');
+    list.innerHTML = '<div class="loading">Lade...</div>';
+    try {
+        const url = status ? `/api/proposed-patterns?status=${status}` : '/api/proposed-patterns';
+        const res = await fetch(url);
+        const data = await res.json();
+        render(data.patterns || []);
+    } catch(e) {
+        list.innerHTML = '<div class="empty-state">Fehler beim Laden.</div>';
+    }
+}
+
+function formatTs(ts) {
+    if (!ts) return '–';
+    return ts.replace('T', ' ').slice(0, 16);
+}
+
+function confidenceColor(c) {
+    if (c >= 0.7) return '#64ff64';
+    if (c >= 0.5) return '#ffc800';
+    return 'var(--text-4)';
+}
+
+function render(patterns) {
+    const list = document.getElementById('patterns-list');
+    if (!patterns.length) {
+        list.innerHTML = '<div class="empty-state">Keine Hypothesen in dieser Kategorie.</div>';
+        return;
+    }
+    list.innerHTML = patterns.map(p => {
+        const isOpen = p.status === 'open';
+        const statusLabel = {
+            open: 'offen', working_state: 'working_state',
+            promoted: 'promoted', dismissed: 'verworfen'
+        }[p.status] || p.status;
+
+        const actionsHtml = isOpen ? `
+            <div class="pattern-actions">
+                <button class="action-btn dismiss" onclick="doAction(${p.id}, 'dismiss')">✕ Verwerfen</button>
+                <button class="action-btn keep"    onclick="doAction(${p.id}, 'keep')">◎ Als working_state</button>
+                <button class="action-btn promote" onclick="doAction(${p.id}, 'promote')">▲ Zu echtem Pattern</button>
+            </div>` : `<div class="action-done">${statusLabel}${p.status_changed_at ? ' · ' + formatTs(p.status_changed_at) : ''}</div>`;
+
+        return `
+        <div class="pattern-card" id="pcard-${p.id}">
+            <div class="pattern-date">${formatTs(p.created_at)}</div>
+            <div class="pattern-header">
+                <div class="pattern-name">${escHtml(p.name)}</div>
+                <div class="pattern-meta">
+                    <span class="occurrences-badge">${p.occurrences}× beobachtet</span>
+                    <span class="confidence-badge" style="color:${confidenceColor(p.confidence)}">${Math.round(p.confidence*100)}%</span>
+                    <span class="status-badge status-${p.status}">${statusLabel}</span>
+                </div>
+            </div>
+            <div class="pattern-description">${escHtml(p.description)}</div>
+            <div class="pattern-evidence">Evidenz: ${escHtml(p.evidence)}</div>
+            ${actionsHtml}
+        </div>`;
+    }).join('');
+}
+
+async function doAction(id, action) {
+    const card = document.getElementById('pcard-' + id);
+    const btns = card ? card.querySelectorAll('.action-btn') : [];
+    btns.forEach(b => b.disabled = true);
+
+    try {
+        const res = await fetch(`/api/proposed-patterns/${id}/action`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({action}),
+        });
+        const data = await res.json();
+        if (data.ok) {
+            // Card aus Liste entfernen mit kurzer Animation
+            if (card) {
+                card.style.transition = 'opacity .3s';
+                card.style.opacity = '0';
+                setTimeout(() => { card.remove(); loadStats(); }, 300);
+            }
+        } else {
+            alert('Fehler: ' + (data.error || 'Unbekannt'));
+            btns.forEach(b => b.disabled = false);
+        }
+    } catch(e) {
+        alert('Netzwerkfehler');
+        btns.forEach(b => b.disabled = false);
+    }
+}
+
+function escHtml(s) {
+    return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+loadStats();
+loadPatterns();
+</script>
+{% endblock %}

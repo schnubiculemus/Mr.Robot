@@ -37,6 +37,7 @@ def create_chunk(
     weight=None,
     supersedes=None,
     expires_at=None,
+    replies_to=None,
 ):
     """
     Erzeugt einen neuen Memory-Chunk als Dict.
@@ -75,6 +76,8 @@ def create_chunk(
         chunk["supersedes"] = supersedes
     if expires_at:
         chunk["expires_at"] = expires_at
+    if replies_to:
+        chunk["replies_to"] = replies_to
 
     return chunk
 
@@ -242,7 +245,7 @@ def chunk_to_metadata(chunk):
     Extrahiert die Metadaten fuer ChromaDB.
     ChromaDB speichert: text als document, alles andere als metadata.
     """
-    return {
+    meta = {
         "chunk_type": chunk["chunk_type"],
         "source": chunk["source"],
         "status": chunk["status"],
@@ -252,6 +255,11 @@ def chunk_to_metadata(chunk):
         "created_at": chunk["created_at"],
         "tags": ",".join(chunk["tags"]),  # ChromaDB: kein List-Support in metadata
     }
+    if chunk.get("replies_to"):
+        meta["replies_to"] = chunk["replies_to"]
+    if chunk.get("supersedes"):
+        meta["supersedes"] = chunk["supersedes"]
+    return meta
 
 
 def metadata_to_tags(tags_str):

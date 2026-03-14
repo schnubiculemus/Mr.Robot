@@ -53,6 +53,11 @@ app = Flask(
 )
 app.secret_key = FLASK_SECRET_KEY
 
+@app.context_processor
+def inject_globals():
+    from config import BOT_NAME
+    return {"bot_name": BOT_NAME}
+
 COOKIE_NAME = "dashboard_session"
 COOKIE_DAYS = 30
 
@@ -508,6 +513,7 @@ def api_stats():
             "disk_used_gb": round(p.disk_usage('/').used / 1024**3, 1),
             "disk_total_gb": round(p.disk_usage('/').total / 1024**3, 1),
             "disk_percent": p.disk_usage('/').percent,
+            "uptime": (lambda: (lambda s: f"{s//86400}d {(s%86400)//3600}h {(s%3600)//60}min")(int(__import__('time').time() - p.boot_time())))(),
         })(),
     })
 
@@ -602,6 +608,201 @@ def api_search_log():
     return jsonify({"entries": entries})
 
 
+@app.route("/proposed-patterns")
+@require_auth
+def proposed_patterns_page():
+    return render_template("proposed_patterns.html")
+
+
+@app.route("/api/proposed-patterns")
+@require_auth
+def api_proposed_patterns():
+    from core.database import get_proposed_patterns
+    status = request.args.get("status", None)
+    entries = get_proposed_patterns(status=status, limit=100)
+    return jsonify({"patterns": entries, "count": len(entries)})
+
+
+@app.route("/api/proposed-patterns/<int:pattern_id>/action", methods=["POST"])
+@require_auth
+def api_proposed_pattern_action(pattern_id):
+    """
+    Aktionen auf ein proposed_pattern:
+    - dismiss: verwerfen
+    - keep: als working_state behalten
+    - promote: zu echtem Pattern promoten (working_state + Tag promoted-pattern)
+    """
+    from core.database import update_proposed_pattern_status, get_proposed_patterns
+
+    data = request.get_json() or {}
+    action = data.get("action")
+
+    if action not in ("dismiss", "keep", "promote"):
+        return jsonify({"error": "Ungültige Aktion"}), 400
+
+    patterns = get_proposed_patterns(limit=200)
+    pattern = next((p for p in patterns if p["id"] == pattern_id), None)
+    if not pattern:
+        return jsonify({"error": "Pattern nicht gefunden"}), 404
+
+    chunk_id = pattern["chunk_id"]
+
+    try:
+        if action == "dismiss":
+            update_proposed_pattern_status(pattern_id, "dismissed")
+            try:
+                from memory.memory_store import get_active_collection
+                col = get_active_collection()
+                col.update(ids=[chunk_id], metadatas=[{"status": "archived"}])
+            except Exception:
+                pass
+            return jsonify({"ok": True, "action": "dismissed"})
+
+        elif action == "keep":
+            from memory.memory_store import get_active_collection
+            col = get_active_collection()
+            result = col.get(ids=[chunk_id], include=["metadatas"])
+            existing_meta = result["metadatas"][0] if result["metadatas"] else {}
+            col.update(ids=[chunk_id], metadatas=[{**existing_meta, "chunk_type": "working_state"}])
+            update_proposed_pattern_status(pattern_id, "working_state", promoted_to=chunk_id)
+            return jsonify({"ok": True, "action": "kept_as_working_state", "chunk_id": chunk_id})
+
+        elif action == "promote":
+            from memory.memory_store import get_active_collection
+            col = get_active_collection()
+            result = col.get(ids=[chunk_id], include=["metadatas"])
+            existing_meta = result["metadatas"][0] if result["metadatas"] else {}
+            existing_tags = existing_meta.get("tags", "")
+            # Tags können als Liste oder String aus ChromaDB kommen
+            if isinstance(existing_tags, list):
+                existing_tags = ",".join(existing_tags)
+            new_tags = existing_tags + ",promoted-pattern" if existing_tags else "promoted-pattern"
+            col.update(ids=[chunk_id], metadatas=[{
+                **existing_meta,
+                "chunk_type": "working_state",
+                "tags": new_tags,
+                "confidence": "0.7",
+            }])
+            update_proposed_pattern_status(pattern_id, "promoted", promoted_to=chunk_id)
+            return jsonify({"ok": True, "action": "promoted", "chunk_id": chunk_id})
+
+    except Exception as e:
+        logger.error(f"proposed_pattern action fehlgeschlagen: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/system-map")
+@require_auth
+def system_map_page():
+    return render_template("system_map.html")
+
+
+@app.route("/mind")
+@require_auth
+def mind_page():
+    return render_template("mind.html")
+
+
+@app.route("/api/mind")
+@require_auth
+def api_mind():
+    from core.state import load_state
+    from memory.memory_store import get_active_collection
+
+    owner_id = "221152228159675@lid"
+    state = load_state()
+
+    levels = {
+        "moltbook":             {"last_run": state.get(f"{owner_id}_last_moltbook"),             "label": "Moltbook",          "icon": "search"},
+        "introspection":        {"last_run": state.get(f"{owner_id}_last_introspection"),        "label": "Introspection",     "icon": "mirror"},
+        "inner_dialogue":       {"last_run": state.get(f"{owner_id}_last_inner_dialogue"),       "label": "Innerer Dialog",    "icon": "chat"},
+        "autonomous_reflection":{"last_run": state.get(f"{owner_id}_last_autonomous_reflection"),"label": "Autonome Reflexion","icon": "brain"},
+    }
+
+    timeline_chunks = []
+    open_questions = []
+    proactive_candidates = []
+
+    try:
+        col = get_active_collection()
+        result = col.get(
+            where={"$and": [{"source": "robot"}, {"status": "active"}]},
+            include=["documents", "metadatas"],
+        )
+
+        if result["ids"]:
+            for i, chunk_id in enumerate(result["ids"]):
+                meta = result["metadatas"][i]
+                text = result["documents"][i]
+                tags_raw = meta.get("tags", "")
+                tags = [t.strip() for t in str(tags_raw).split(",") if t.strip()] if tags_raw else []
+                chunk_type = meta.get("chunk_type", "")
+
+                # Tags können Liste oder kommaseparierter String sein
+                if isinstance(tags_raw, list):
+                    tags = tags_raw
+                else:
+                    tags = [t.strip() for t in str(tags_raw).split(",") if t.strip()]
+
+                tags_set = set(tags)
+
+                if "moltbook" in tags_set or "exploration" in tags_set:
+                    origin, icon = "moltbook", "search"
+                elif "introspection" in tags_set:
+                    origin, icon = "introspection", "mirror"
+                elif "inner-dialogue" in tags_set:
+                    origin, icon = "inner_dialogue", "chat"
+                elif "autonomous-reflection" in tags_set:
+                    origin, icon = "autonomous_reflection", "brain"
+                elif chunk_type == "diary" or "diary" in tags_set:
+                    origin, icon = "diary", "diary"
+                elif "autonom" in tags_set or "reflexion" in tags_set:
+                    origin, icon = "introspection", "mirror"
+                else:
+                    origin, icon = "other", "dot"
+
+                chunk_data = {
+                    "id": chunk_id,
+                    "id_short": chunk_id[:8],
+                    "text": text[:200],
+                    "full_text": text,
+                    "chunk_type": chunk_type,
+                    "created_at": meta.get("created_at", ""),
+                    "tags": tags,
+                    "replies_to": meta.get("replies_to", ""),
+                    "origin": origin,
+                    "icon": icon,
+                    "confidence": float(meta.get("confidence", 0.5)),
+                }
+
+                timeline_chunks.append(chunk_data)
+                if "open_question" in tags:
+                    open_questions.append(chunk_data)
+                if "proactive_candidate" in tags:
+                    proactive_candidates.append(chunk_data)
+
+                if origin in levels:
+                    existing = levels[origin].get("last_chunk")
+                    if not existing or meta.get("created_at", "") > existing.get("created_at", ""):
+                        levels[origin]["last_chunk"] = {
+                            "id": chunk_id[:8],
+                            "text": text[:120],
+                            "created_at": meta.get("created_at", ""),
+                        }
+
+        timeline_chunks.sort(key=lambda c: c.get("created_at", ""), reverse=True)
+
+    except Exception as e:
+        logger.error(f"api_mind: {e}")
+
+    return jsonify({
+        "levels": levels,
+        "timeline": timeline_chunks[:60],
+        "open_questions": open_questions,
+        "proactive_candidates": proactive_candidates,
+    })
+
+
 @app.route("/moltbook-log")
 @require_auth
 def moltbook_log_page():
@@ -615,6 +816,40 @@ def api_moltbook_log():
     entries = get_moltbook_log(limit=100)
     return jsonify({"entries": entries})
 
+
+@app.route("/api/moltbook-posts")
+@require_auth
+def api_moltbook_posts():
+    from core.database import get_moltbook_posts
+    posts = get_moltbook_posts(limit=50)
+    return jsonify({"posts": posts, "count": len(posts)})
+
+
+
+@app.route("/api/translate", methods=["POST"])
+@require_auth
+def api_translate():
+    from core.ollama_client import _call_ollama
+    data = request.get_json()
+    text = data.get("text", "").strip()
+    if not text:
+        return jsonify({"error": "no text"}), 400
+    result = _call_ollama([
+        {"role": "system", "content": "Du bist ein Uebersetzer. Uebersetze ins Deutsche. Antworte NUR mit der Uebersetzung."},
+        {"role": "user", "content": text},
+    ])
+    if not result:
+        return jsonify({"error": "failed"}), 500
+    return jsonify({"translation": result.get("message", {}).get("content", "").strip()})
+
+
+@app.route("/api/moltbook-inbox")
+@require_auth
+def api_moltbook_inbox():
+    from core.database import get_moltbook_inbox
+    unread_only = request.args.get("unread", "0") == "1"
+    entries = get_moltbook_inbox(limit=100, unread_only=unread_only)
+    return jsonify({"entries": entries, "count": len(entries)})
 
 @app.route("/calendar")
 @require_auth

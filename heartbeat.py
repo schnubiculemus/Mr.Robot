@@ -431,6 +431,40 @@ def run_heartbeat(user_id, context_name):
             logger.warning(f"MoltbookExplorer fehlgeschlagen: {e}")
             hb_run.step("moltbook", "error", str(e)[:80])
 
+        # 3f. Innerer Dialog
+        try:
+            state = load_state()
+            last_inner = state.get(f"{user_id}_last_inner_dialogue")
+            from inner_dialogue import run_inner_dialogue
+            chunk_id = run_inner_dialogue(user_id, last_inner)
+            if chunk_id:
+                state = load_state()
+                state[f"{user_id}_last_inner_dialogue"] = to_iso(now)
+                save_state(state)
+                hb_run.step("inner_dialogue", "ok", f"Dialog: {chunk_id[:8]}")
+            else:
+                hb_run.step("inner_dialogue", "skip", "")
+        except Exception as e:
+            logger.warning(f"InnerDialogue fehlgeschlagen: {e}")
+            hb_run.step("inner_dialogue", "error", str(e)[:80])
+
+        # 3g. Autonome Reflexion (Phase 1-2)
+        try:
+            state = load_state()
+            last_autonomous = state.get(f"{user_id}_last_autonomous_reflection")
+            from autonomous_reflection import run_autonomous_reflection
+            chunk_id = run_autonomous_reflection(user_id, last_autonomous)
+            if chunk_id:
+                state = load_state()
+                state[f"{user_id}_last_autonomous_reflection"] = to_iso(now)
+                save_state(state)
+                hb_run.step("autonomous_reflection", "ok", f"Reflexion: {chunk_id[:8]}")
+            else:
+                hb_run.step("autonomous_reflection", "skip", "")
+        except Exception as e:
+            logger.warning(f"AutonomousReflection fehlgeschlagen: {e}")
+            hb_run.step("autonomous_reflection", "error", str(e)[:80])
+
         # 4. Proaktive Nachrichten
         try:
             is_morning = 7 <= berlin.hour < 10

@@ -2,7 +2,7 @@
   {
     "id": "pdf",
     "name": "PDF-Analyse",
-    "icon": "📄",
+    "icon": "\ud83d\udcc4",
     "description": "PDFs per WhatsApp hochladen und durchsuchen",
     "enabled": true,
     "available": true
@@ -10,52 +10,15 @@
   {
     "id": "calendar",
     "name": "Kalender",
-    "icon": "📅",
+    "icon": "\ud83d\udcc5",
     "description": "Termine lesen und erstellen",
     "enabled": true,
-    "available": true,
-    "sub_calendars": [
-      {
-        "id": "calendar_work",
-        "name": "Arbeit",
-        "provider": "google",
-        "enabled": true,
-        "permissions": {
-          "read": true,
-          "write": true,
-          "delete": true
-        }
-      },
-      {
-        "id": "calendar_private",
-        "name": "Privat",
-        "provider": "icloud",
-        "icloud_name": "Privat",
-        "enabled": false,
-        "permissions": {
-          "read": true,
-          "write": true,
-          "delete": true
-        }
-      },
-      {
-        "id": "calendar_study",
-        "name": "Study",
-        "provider": "icloud",
-        "icloud_name": "Study",
-        "enabled": false,
-        "permissions": {
-          "read": true,
-          "write": false,
-          "delete": false
-        }
-      }
-    ]
+    "available": true
   },
   {
     "id": "email",
     "name": "E-Mail",
-    "icon": "✉️",
+    "icon": "\u2709\ufe0f",
     "description": "E-Mails lesen und senden",
     "enabled": false,
     "available": false
@@ -63,7 +26,7 @@
   {
     "id": "voice",
     "name": "Sprachnachrichten",
-    "icon": "🎙️",
+    "icon": "\ud83c\udf99\ufe0f",
     "description": "Sprachnachrichten transkribieren (Whisper)",
     "enabled": true,
     "available": true
@@ -71,25 +34,17 @@
   {
     "id": "tasks",
     "name": "Aufgaben",
-    "icon": "✅",
-    "description": "Aufgaben erstellen und verwalten",
+    "icon": "\u2705",
+    "description": "Aufgaben & Erinnerungen nach Kategorie",
     "enabled": true,
     "available": true
   },
   {
     "id": "images",
     "name": "Bildanalyse",
-    "icon": "🖼️",
+    "icon": "\ud83d\uddbc\ufe0f",
     "description": "Bilder beschreiben und analysieren",
     "enabled": false,
     "available": false
-  },
-  {
-    "id": "moltbook",
-    "name": "Moltbook",
-    "icon": "🦞",
-    "description": "Social Network fuer KI-Agenten. Feed lesen, suchen, posten, kommentieren.",
-    "enabled": true,
-    "available": true
   }
 ]

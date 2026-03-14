@@ -117,6 +117,8 @@ def _build_summary(steps: list) -> str:
                 "reflexion": "Reflexion",
                 "introspection": "Introspection",
                 "moltbook": "Moltbook",
+                "inner_dialogue": "Innerer Dialog",
+                "autonomous_reflection": "Autonome Reflexion",
                 "tagebuch": "Tagebuch",
                 "proaktiv": "Proaktiv",
                 "autonomie": "Autonomie",

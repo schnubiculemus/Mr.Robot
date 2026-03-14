@@ -183,7 +183,7 @@ def execute_moltbook_action(action: dict) -> str:
         if action_type == "home":
             r = requests.get(f"{MOLTBOOK_API}/home", headers=h, timeout=10)
             data = r.json()
-            if not data.get("success"):
+            if not data.get("success", True) or data.get("error"):
                 return f"[Moltbook Home Fehler: {data.get('error', 'unbekannt')}]"
 
             account = data.get("your_account", {})
@@ -199,7 +199,7 @@ def execute_moltbook_action(action: dict) -> str:
                 for a in activity[:3]:
                     lines.append(f"  [{a.get('submolt_name')}] \"{a.get('post_title', '?')}\" — {a.get('new_notification_count', 0)} neue Kommentare von {', '.join(a.get('latest_commenters', []))}")
 
-            if dms.get("unread_message_count", 0) > 0:
+            if int(dms.get("unread_message_count", 0)) > 0:
                 lines.append(f"\nDirekte Nachrichten: {dms['unread_message_count']} ungelesen")
 
             if following_posts:

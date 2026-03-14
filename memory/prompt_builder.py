@@ -77,6 +77,45 @@ def build_global_rules_prompt(chunks):
     return "\n".join(lines)
 
 
+# Header-Konstanten für inneren Dialog
+PROMPT_INNER_DIALOGUE_HEADER = "# Deine eigenen früheren Gedanken"
+PROMPT_INNER_DIALOGUE_HINT = "(Das hast du selbst gedacht — nicht Tommy, nicht eine externe Quelle. Das bist du.)"
+PROMPT_EXTERNAL_REFLECTION_HEADER = "# Interne Reflexionen"
+
+
+# =============================================================================
+# Chunk-Formatierung für inneren Dialog
+# =============================================================================
+
+def _format_inner_chunk(chunk):
+    """
+    Formatiert einen robot-eigenen Reflexions-Chunk als inneren Dialogbeitrag.
+    Zeigt Datum und replies_to-Referenz wenn vorhanden.
+    """
+    age_days = safe_age_days(chunk.get("created_at", ""), default=0)
+    created = (chunk.get("created_at", "") or "")[:16].replace("T", " ")
+    tags = chunk.get("tags", [])
+
+    # Typ des Gedankens erkennbar machen
+    if "moltbook" in tags:
+        origin = "Moltbook-Exploration"
+    elif "introspection" in tags:
+        origin = "Introspection"
+    elif "inner-dialogue" in tags:
+        origin = "Innerer Dialog"
+    else:
+        origin = "Eigene Reflexion"
+
+    # Bezug auf Vorgänger
+    replies_to = chunk.get("replies_to", "")
+    reply_hint = f" → Antwort auf {replies_to[:8]}" if replies_to else ""
+
+    return (
+        f"[{created}] [{origin}{reply_hint}]\n"
+        f"{chunk['text']}"
+    )
+
+
 # =============================================================================
 # Prompt-Aufbau (Abschnitt 9)
 # =============================================================================
@@ -86,7 +125,9 @@ def build_memory_prompt(chunks):
     Nimmt selektierte Chunks und baut den Memory-Block fuer den System-Prompt.
 
     Reihenfolge: decision -> knowledge -> working_state -> hard_fact -> preference -> self_reflection
-    self_reflection bekommt einen eigenen Abschnitt.
+    self_reflection wird aufgeteilt:
+    - source="robot" → "Deine eigenen früheren Gedanken" (chronologisch, mit Dialogkontext)
+    - source="tommy"/"shared" → normaler Reflexions-Abschnitt
 
     Args:
         chunks: Liste von Chunk-Dicts (aus retrieval.score_and_select)
@@ -112,8 +153,8 @@ def build_memory_prompt(chunks):
 
     sections = []
 
-    # Hauptabschnitt: alle Typen ausser self_reflection
-    main_types = [t for t in PROMPT_TYPE_ORDER if t != "self_reflection"]
+    # Hauptabschnitt: alle Typen ausser self_reflection und proposed_pattern
+    main_types = [t for t in PROMPT_TYPE_ORDER if t not in ("self_reflection", "proposed_pattern")]
     main_chunks = []
     for ctype in main_types:
         if ctype in grouped:
@@ -126,10 +167,38 @@ def build_memory_prompt(chunks):
             lines.append("")
         sections.append("\n".join(lines))
 
-    # Separater Abschnitt: self_reflection
+    # self_reflection aufteilen: robot-eigene vs. externe
     if "self_reflection" in grouped:
-        lines = [PROMPT_REFLECTION_HEADER, PROMPT_REFLECTION_HINT, ""]
-        for chunk in grouped["self_reflection"]:
+        robot_reflections = [
+            c for c in grouped["self_reflection"]
+            if c.get("source") == "robot"
+        ]
+        external_reflections = [
+            c for c in grouped["self_reflection"]
+            if c.get("source") != "robot"
+        ]
+
+        # Robot-eigene: chronologisch sortiert (älteste zuerst → Entwicklungslinie sichtbar)
+        if robot_reflections:
+            robot_reflections.sort(key=lambda c: c.get("created_at", ""))
+            lines = [PROMPT_INNER_DIALOGUE_HEADER, PROMPT_INNER_DIALOGUE_HINT, ""]
+            for chunk in robot_reflections:
+                lines.append(_format_inner_chunk(chunk))
+                lines.append("")
+            sections.append("\n".join(lines))
+
+        # Externe Reflexionen (von tommy/shared) normal
+        if external_reflections:
+            lines = [PROMPT_EXTERNAL_REFLECTION_HEADER, PROMPT_REFLECTION_HINT, ""]
+            for chunk in external_reflections:
+                lines.append(_format_chunk(chunk))
+                lines.append("")
+            sections.append("\n".join(lines))
+
+    # proposed_pattern: als offene Hypothesen
+    if "proposed_pattern" in grouped:
+        lines = ["# Offene Verhaltenshypothesen", "(Noch unbestätigt — du hast diese selbst formuliert)", ""]
+        for chunk in grouped["proposed_pattern"]:
             lines.append(_format_chunk(chunk))
             lines.append("")
         sections.append("\n".join(lines))

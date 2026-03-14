@@ -134,16 +134,16 @@ def _load_global_rules():
     return global_chunks
 
 
-def build_system_prompt(context_name=None, user_id=None, user_message=None, doc_context=None):
+def build_system_prompt(context_name=None, user_id=None, user_message=None, doc_context=None, mode="chat", extra_system=None):
     """
     Baut den System-Prompt dynamisch zusammen.
 
-    1. Datum/Uhrzeit
-    2. soul.md — immer
-    3. architecture.md — immer
-    4. Memory-Chunks — dynamisch basierend auf user_message
-    5. Globale Regeln (Preferences + Decisions) — IMMER, am ENDE
-       (Recency Bias: LLMs beachten das Ende des System-Prompts stärker)
+    mode="chat"     → vollständiger WhatsApp-Prompt (rules, tools, Markdown-Verbot, Websearch)
+    mode="internal" → schlanker Denkraum-Prompt (soul, architecture, memory, globale Regeln)
+                      Kein WhatsApp-Kostüm, kein Deutsch-Zwang, kein Chat-Kontext.
+                      Für Heartbeat, Moltbook, Diary, MIRROR — alles was nicht Tommy-Chat ist.
+
+    extra_system    → optionaler Zusatzblock am Ende (z.B. Explorer-Kontext, Task-Beschreibung)
     """
     parts = []
 
@@ -151,20 +151,31 @@ def build_system_prompt(context_name=None, user_id=None, user_message=None, doc_
     from core.datetime_utils import format_berlin
     parts.append(f"Aktuelles Datum und Uhrzeit: {format_berlin()}")
 
-    # 2. Verfassung
+    # 2. Verfassung — immer, in beiden Modi
     parts.append(load_soul())
 
-    # 3. Verhaltensregeln
-    rules = load_rules()
-    if rules:
-        parts.append(rules)
+    if mode == "chat":
+        # 3. Verhaltensregeln (chat only — enthält "Immer Deutsch" u.a. Chat-Regeln)
+        rules = load_rules()
+        if rules:
+            parts.append(rules)
 
-    # 4. Tool-Übersicht
-    tools = load_tools()
-    if tools:
-        parts.append(tools)
+        # 4. Tool-Übersicht (chat only)
+        tools = load_tools()
+        if tools:
+            parts.append(tools)
+    else:
+        # Interner Modus: kein rules.md, kein tools.md
+        # Stattdessen expliziter Hinweis dass dies kein Gespräch ist
+        parts.append(
+            "INTERNER MODUS:\n"
+            "Das ist kein Gespräch mit Tommy. Kein WhatsApp. Kein Assistent-Modus.\n"
+            "Ich denke gerade für mich selbst — reflektiere, erkunde, verarbeite.\n"
+            "Keine Anrede, keine Chat-Floskeln, kein WhatsApp-Stil.\n"
+            "Antwort exakt im geforderten Format, in der geforderten Sprache."
+        )
 
-    # 5. Selbstwissen
+    # 5. Selbstwissen — immer, in beiden Modi
     arch = load_architecture()
     if arch:
         parts.append(arch)
@@ -175,7 +186,8 @@ def build_system_prompt(context_name=None, user_id=None, user_message=None, doc_
     if global_rules:
         global_rule_ids = {c["id"] for c in global_rules}
 
-    # 7. Memory-Chunks (kontextabhängig) — bei Dokument-Kontext weglassen (spart Platz fuer doc_context)
+    # 7. Memory-Chunks (kontextabhängig)
+    # Im internen Modus besonders wertvoll: Kimi liest ihre eigenen Gedanken
     if user_message and not doc_context:
         try:
             chunks = score_and_select(user_message)
@@ -195,22 +207,27 @@ def build_system_prompt(context_name=None, user_id=None, user_message=None, doc_
         if rules_prompt:
             parts.append(rules_prompt)
 
-    # 9. Web Search — immer aktiv, ist Kimis Zugang zur Außenwelt
-    parts.append(
-        "WEB SEARCH VERFUEGBAR:\n"
-        "Wenn du aktuelle Informationen benoenigst (News, Preise, aktuelle Ereignisse, Fakten die du nicht sicher kennst), "
-        "schreibe in deine Antwort: [SEARCH: deine suchanfrage]\n"
-        "Beispiel: [SEARCH: aktueller Bitcoin Preis]\n"
-        "Nur EINEN Search-Block pro Antwort. Nur wenn wirklich noetig — nicht bei allgemeinem Wissen."
-    )
+    if mode == "chat":
+        # 9. Web Search — nur im Chat-Modus
+        parts.append(
+            "WEB SEARCH VERFUEGBAR:\n"
+            "Wenn du aktuelle Informationen benoenigst (News, Preise, aktuelle Ereignisse, Fakten die du nicht sicher kennst), "
+            "schreibe in deine Antwort: [SEARCH: deine suchanfrage]\n"
+            "Beispiel: [SEARCH: aktueller Bitcoin Preis]\n"
+            "Nur EINEN Search-Block pro Antwort. Nur wenn wirklich noetig — nicht bei allgemeinem Wissen."
+        )
 
-    # 10. Markdown-Verbot — direkt vor der User-Nachricht, maximale Recency
-    parts.append(
-        "KEIN MARKDOWN. Keine Sternchen, keine Rauten, keine Trennlinien, keine Unterstriche, keine Backticks. "
-        "Nur Fliesstext und Zeilenumbrueche. WhatsApp rendert Markdown nicht — es erscheint als Zeichensalat."
-    )
+        # 10. Markdown-Verbot — nur im Chat-Modus
+        parts.append(
+            "KEIN MARKDOWN. Keine Sternchen, keine Rauten, keine Trennlinien, keine Unterstriche, keine Backticks. "
+            "Nur Fliesstext und Zeilenumbrueche. WhatsApp rendert Markdown nicht — es erscheint als Zeichensalat."
+        )
 
-    # 11. Dokument-Kontext — ganz am Ende, höchste Recency-Priorität
+    # 11. Optionaler Zusatzblock (Explorer-Kontext, Task-Beschreibung, etc.)
+    if extra_system:
+        parts.append(extra_system)
+
+    # 12. Dokument-Kontext — ganz am Ende, höchste Recency-Priorität
     if doc_context:
         parts.append(
             "DOKUMENT-KONTEXT (bereits extrahiert, liegt vollstaendig vor):\n\n" + doc_context
@@ -245,33 +262,15 @@ def _track_tokens(prompt_tokens, completion_tokens):
         json.dump(usage, f, indent=2)
 
 
-def chat(user_id, message, chat_history, context_name=None, doc_context=None):
-    """Sendet eine Nachricht an Kimi und gibt die Antwort zurück.
-    
-    WICHTIG: chat_history enthält die aktuelle User-Nachricht bereits
-    (wird in app.py vor dem Thread-Start via save_message gespeichert).
-    Daher KEIN zusätzlicher append von message — sonst sieht Kimi sie doppelt.
-    message wird nur für build_system_prompt (Memory-Retrieval) verwendet.
+def _call_ollama(messages):
+    """
+    Low-Level Ollama API Call — gemeinsame Basis für chat() und chat_internal().
+    Kümmert sich um API-Call, Token-Tracking, Fehlerbehandlung.
 
     Returns:
-        str — Kimi-Antwort
-        dict — turn_meta mit chunks + global_rules für MIRROR-Logging
+        dict — rohe Ollama-Antwort, oder None bei Fehler
     """
     from api_utils import api_call_with_retry
-
-    # Chunks und Global Rules separat holen für MIRROR
-    retrieved_chunks = []
-    active_global_rules = []
-    try:
-        if message and not doc_context:
-            retrieved_chunks = score_and_select(message)
-        active_global_rules = _load_global_rules()
-    except Exception as e:
-        logger.warning(f"MIRROR chunk-fetch fehlgeschlagen: {e}")
-
-    system_prompt = build_system_prompt(context_name, user_id, user_message=message, doc_context=doc_context)
-    messages = [{"role": "system", "content": system_prompt}]
-    messages.extend(chat_history)
 
     result = api_call_with_retry(
         url=f"{OLLAMA_API_URL}/api/chat",
@@ -284,9 +283,8 @@ def chat(user_id, message, chat_history, context_name=None, doc_context=None):
     )
 
     if not result:
-        return "Sorry, Kimi ist gerade nicht erreichbar. Versuch's gleich nochmal!", {}
+        return None
 
-    # Token-Tracking
     try:
         _track_tokens(
             prompt_tokens=result.get("prompt_eval_count", 0),
@@ -295,9 +293,98 @@ def chat(user_id, message, chat_history, context_name=None, doc_context=None):
     except Exception:
         pass
 
+    return result
+
+
+def chat(user_id, message, chat_history, context_name=None, doc_context=None):
+    """Sendet eine Nachricht an Kimi und gibt die Antwort zurück.
+    
+    WICHTIG: chat_history enthält die aktuelle User-Nachricht bereits
+    (wird in app.py vor dem Thread-Start via save_message gespeichert).
+    Daher KEIN zusätzlicher append von message — sonst sieht Kimi sie doppelt.
+    message wird nur für build_system_prompt (Memory-Retrieval) verwendet.
+
+    Returns:
+        str — Kimi-Antwort
+        dict — turn_meta mit chunks + global_rules für MIRROR-Logging
+    """
+    # Chunks und Global Rules separat holen für MIRROR
+    retrieved_chunks = []
+    active_global_rules = []
+    try:
+        if message and not doc_context:
+            retrieved_chunks = score_and_select(message)
+        active_global_rules = _load_global_rules()
+    except Exception as e:
+        logger.warning(f"MIRROR chunk-fetch fehlgeschlagen: {e}")
+
+    system_prompt = build_system_prompt(
+        context_name=context_name,
+        user_id=user_id,
+        user_message=message,
+        doc_context=doc_context,
+        mode="chat",
+    )
+    messages = [{"role": "system", "content": system_prompt}]
+    messages.extend(chat_history)
+
+    result = _call_ollama(messages)
+
+    if not result:
+        return "Sorry, Kimi ist gerade nicht erreichbar. Versuch's gleich nochmal!", {}
+
     response_text = result.get("message", {}).get("content", "Hmm, da kam keine Antwort zurueck.")
     turn_meta = {
         "chunks": retrieved_chunks,
         "global_rules": active_global_rules,
     }
     return response_text, turn_meta
+
+
+def chat_internal(user_id, message, chat_history=None, context_name=None, doc_context=None, extra_system=None):
+    """
+    Interner Kimi-Call für Heartbeat, Moltbook, Diary, MIRROR — alles was nicht Tommy-Chat ist.
+
+    Im Gegensatz zu chat():
+    - Hängt message EXPLIZIT als User-Message an (kein chat_history-Trick)
+    - Nutzt mode="internal" → kein WhatsApp-Kostüm, kein Deutsch-Zwang
+    - extra_system für Kontext-spezifische Anweisungen (Explorer, Reflexion, etc.)
+
+    Returns:
+        str — Kimi-Antwort
+        dict — turn_meta mit chunks + global_rules
+    """
+    chat_history = chat_history or []
+
+    retrieved_chunks = []
+    active_global_rules = []
+    try:
+        if message and not doc_context:
+            retrieved_chunks = score_and_select(message)
+        active_global_rules = _load_global_rules()
+    except Exception as e:
+        logger.warning(f"Internal chunk-fetch fehlgeschlagen: {e}")
+
+    system_prompt = build_system_prompt(
+        context_name=context_name,
+        user_id=user_id,
+        user_message=message,
+        doc_context=doc_context,
+        mode="internal",
+        extra_system=extra_system,
+    )
+
+    messages = [{"role": "system", "content": system_prompt}]
+    messages.extend(chat_history)
+    # EXPLIZIT anhängen — das ist der Kern-Unterschied zu chat()
+    messages.append({"role": "user", "content": message})
+
+    result = _call_ollama(messages)
+    if not result:
+        return "", {"chunks": retrieved_chunks, "global_rules": active_global_rules}
+
+    response_text = result.get("message", {}).get("content", "").strip()
+    return response_text, {
+        "chunks": retrieved_chunks,
+        "global_rules": active_global_rules,
+    }

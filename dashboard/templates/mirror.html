@@ -3,266 +3,109 @@
 
 {% block content %}
 <style>
-    /* ── MIRROR-spezifische Styles ── */
-    .mirror-header {
-        display: flex;
-        align-items: flex-start;
-        justify-content: space-between;
-        margin-bottom: 24px;
-        gap: 16px;
-    }
-    .mirror-title { font-size: 22px; font-weight: 600; color: var(--text-1); }
-    .mirror-sub { font-size: 13px; color: var(--text-3); margin-top: 3px; }
+    .mirror-header { display:flex; align-items:flex-start; justify-content:space-between; margin-bottom:24px; gap:16px; }
+    .mirror-title  { font-size:22px; font-weight:600; color:var(--text-1); }
+    .mirror-sub    { font-size:13px; color:var(--text-3); margin-top:3px; }
+    .stats-row     { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:20px; }
+    .stat-box      { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:14px 16px; }
+    .stat-box-label{ font-size:11px; font-weight:500; color:var(--text-4); text-transform:uppercase; letter-spacing:.04em; margin-bottom:4px; }
+    .stat-box-value{ font-size:26px; font-weight:700; font-family:var(--font-mono); color:var(--text-1); }
+    .stat-box-sub  { font-size:11px; color:var(--text-4); margin-top:2px; }
+    .preflight-bar { display:flex; height:6px; border-radius:4px; overflow:hidden; gap:2px; margin-top:8px; }
+    .pf-seg        { height:100%; border-radius:2px; }
+    .pattern-grid  { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:10px; margin-bottom:20px; }
+    .pattern-card  { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:12px 14px; }
+    .pattern-card-name  { font-size:12px; font-weight:500; color:var(--text-2); margin-bottom:6px; }
+    .pattern-card-count { font-size:22px; font-weight:700; font-family:var(--font-mono); }
+    .pattern-card-bar   { height:3px; border-radius:2px; margin-top:8px; background:var(--border); overflow:hidden; }
+    .pattern-card-fill  { height:100%; border-radius:2px; }
+    .turn-list     { display:flex; flex-direction:column; gap:8px; }
+    .turn-card     { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; cursor:pointer; transition:border-color .15s; }
+    .turn-card:hover   { border-color:var(--text-4); }
+    .turn-card.expanded{ border-color:var(--accent); }
+    .turn-card-header  { display:flex; align-items:center; gap:12px; padding:12px 16px; }
+    .turn-pf-dot   { width:10px; height:10px; border-radius:50%; flex-shrink:0; }
+    .pf-green  { background:var(--accent); }
+    .pf-yellow { background:var(--amber); }
+    .pf-orange { background:#ea580c; }
+    .pf-red    { background:var(--red); }
+    .turn-ts   { font-size:11px; font-family:var(--font-mono); color:var(--text-4); white-space:nowrap; flex-shrink:0; }
+    .turn-msg  { font-size:13px; color:var(--text-2); flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .turn-flags{ display:flex; gap:4px; flex-shrink:0; }
+    .flag-chip { font-size:10px; font-weight:600; padding:2px 6px; border-radius:4px; background:var(--red-light); color:var(--red); white-space:nowrap; }
+    .turn-meta-row  { display:flex; gap:16px; padding:0 16px 10px 38px; }
+    .turn-meta-item { font-size:11px; color:var(--text-4); }
+    .turn-meta-item span { color:var(--text-2); font-weight:500; }
+    .turn-detail   { display:none; padding:0 16px 16px; border-top:1px solid var(--border-light); margin-top:4px; }
+    .turn-card.expanded .turn-detail { display:block; }
+    .detail-section { margin-top:14px; }
+    .detail-section-title { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.06em; color:var(--text-4); margin-bottom:8px; }
+    .chunk-row     { display:flex; align-items:center; gap:8px; padding:6px 0; border-bottom:1px solid var(--border-light); }
+    .chunk-row:last-child { border-bottom:none; }
+    .chunk-score   { font-size:11px; font-family:var(--font-mono); font-weight:600; color:var(--accent); width:38px; flex-shrink:0; }
+    .chunk-type-badge { font-size:10px; padding:2px 5px; border-radius:3px; background:var(--purple-dim); color:var(--purple); font-weight:500; flex-shrink:0; max-width:90px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .chunk-preview { font-size:12px; color:var(--text-3); flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .chunk-bar-wrap{ width:60px; flex-shrink:0; }
+    .chunk-bar     { height:4px; background:var(--border); border-radius:2px; overflow:hidden; }
+    .chunk-bar-fill{ height:100%; background:var(--accent); border-radius:2px; }
+    .rule-row      { display:flex; align-items:center; gap:8px; padding:4px 0; }
+    .rule-id       { font-size:11px; font-family:var(--font-mono); color:var(--text-2); flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .rule-weight   { font-size:11px; font-family:var(--font-mono); color:var(--blue); width:36px; text-align:right; flex-shrink:0; }
+    .issue-row     { display:flex; align-items:flex-start; gap:6px; font-size:12px; color:var(--text-2); padding:3px 0; }
+    .issue-dot     { width:6px; height:6px; border-radius:50%; flex-shrink:0; margin-top:4px; }
+    .profile-row   { display:flex; flex-wrap:wrap; gap:6px; }
+    .profile-pill  { font-size:11px; padding:3px 8px; border-radius:5px; background:var(--surface-2); border:1px solid var(--border); color:var(--text-2); }
+    .profile-pill.warn { background:var(--red-light); border-color:var(--red); color:var(--red); }
+    .pattern-flag-row { display:flex; align-items:center; gap:8px; padding:5px 0; border-bottom:1px solid var(--border-light); }
+    .pattern-flag-row:last-child { border-bottom:none; }
+    .pf-name       { font-size:12px; color:var(--text-2); flex:1; }
+    .pf-strength   { font-size:11px; font-family:var(--font-mono); color:var(--red); }
+    .pf-strength-bar{ width:60px; }
+    .pagination    { display:flex; gap:6px; align-items:center; justify-content:center; margin-top:16px; }
+    .page-btn      { padding:5px 10px; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--surface); color:var(--text-2); font-size:12px; cursor:pointer; }
+    .page-btn:hover{ background:var(--bg); }
+    .page-btn.active{ background:var(--accent); border-color:var(--accent); color:white; }
+    .page-info     { font-size:12px; color:var(--text-4); }
+    .empty-state   { text-align:center; padding:48px 24px; color:var(--text-4); }
 
-    /* ── Stats Row ── */
-    .stats-row {
-        display: grid;
-        grid-template-columns: repeat(4, 1fr);
-        gap: 12px;
-        margin-bottom: 20px;
-    }
-    .stat-box {
-        background: var(--surface);
-        border: 1px solid var(--border);
-        border-radius: var(--radius);
-        padding: 14px 16px;
-        box-shadow: var(--shadow-sm);
-    }
-    .stat-box-label { font-size: 11px; font-weight: 500; color: var(--text-4); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 4px; }
-    .stat-box-value { font-size: 26px; font-weight: 700; font-family: var(--font-mono); color: var(--text-1); }
-    .stat-box-sub { font-size: 11px; color: var(--text-4); margin-top: 2px; }
+    /* Pattern Hypotheses styles */
+    .hyp-stat-box  { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:14px 16px; }
+    .hyp-stat-label{ font-size:11px; font-weight:500; color:var(--text-4); text-transform:uppercase; letter-spacing:.04em; margin-bottom:4px; }
+    .hyp-stat-value{ font-size:26px; font-weight:700; font-family:var(--font-mono); color:var(--text-1); }
+    .pattern-hyp-card { padding:16px 0; border-bottom:1px solid var(--border); }
+    .pattern-hyp-card:last-child { border-bottom:none; }
+    .hyp-header    { display:flex; align-items:flex-start; gap:12px; margin-bottom:8px; }
+    .hyp-name      { font-size:14px; font-weight:600; color:var(--text-1); flex:1; }
+    .hyp-meta      { display:flex; gap:8px; align-items:center; flex-shrink:0; }
+    .conf-badge    { font-size:11px; font-family:var(--font-mono); padding:2px 7px; border-radius:4px; background:var(--surface-2); border:1px solid var(--border); }
+    .occ-badge     { font-size:11px; color:var(--text-4); padding:2px 7px; background:var(--surface-2); border-radius:4px; white-space:nowrap; }
+    .hyp-status-badge { font-size:11px; padding:2px 8px; border-radius:4px; font-weight:500; white-space:nowrap; }
+    .hyp-status-open         { background:rgba(255,200,0,.12); color:#ffc800; border:1px solid rgba(255,200,0,.3); }
+    .hyp-status-working_state{ background:rgba(0,229,255,.1); color:var(--accent,#00e5ff); border:1px solid rgba(0,229,255,.2); }
+    .hyp-status-promoted     { background:rgba(100,255,100,.1); color:#64ff64; border:1px solid rgba(100,255,100,.2); }
+    .hyp-status-dismissed    { background:var(--surface-2); color:var(--text-4); border:1px solid var(--border); }
+    .hyp-desc      { font-size:13px; color:var(--text-2); line-height:1.55; margin-bottom:8px; }
+    .hyp-evidence  { font-size:12px; color:var(--text-4); font-style:italic; border-left:2px solid var(--border); padding-left:10px; margin-bottom:10px; line-height:1.5; }
+    .hyp-actions   { display:flex; gap:8px; flex-wrap:wrap; }
+    .hyp-action-btn{ font-size:12px; padding:5px 12px; border-radius:5px; cursor:pointer; font-family:var(--font); border:1px solid var(--border); background:var(--surface-2); color:var(--text-2); transition:all .15s; }
+    .hyp-action-btn:hover { background:var(--surface-3); color:var(--text-1); }
+    .hyp-action-btn.dismiss:hover { border-color:#ff4444; color:#ff4444; background:rgba(255,68,68,.08); }
+    .hyp-action-btn.keep    { color:var(--accent,#00e5ff); border-color:rgba(0,229,255,.3); }
+    .hyp-action-btn.keep:hover { background:rgba(0,229,255,.08); }
+    .hyp-action-btn.promote { color:#64ff64; border-color:rgba(100,255,100,.3); }
+    .hyp-action-btn.promote:hover { background:rgba(100,255,100,.08); }
+    .hyp-date      { font-size:11px; color:var(--text-4); font-family:var(--font-mono); margin-bottom:6px; }
+    .hyp-action-done{ font-size:12px; color:var(--text-4); font-style:italic; padding:4px 0; }
 
-    /* ── Preflight Distribution ── */
-    .preflight-bar {
-        display: flex;
-        height: 6px;
-        border-radius: 4px;
-        overflow: hidden;
-        gap: 2px;
-        margin-top: 8px;
-    }
-    .pf-seg { height: 100%; border-radius: 2px; transition: width .4s ease; }
-
-    /* ── Pattern Cards ── */
-    .pattern-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-        gap: 10px;
-        margin-bottom: 20px;
-    }
-    .pattern-card {
-        background: var(--surface);
-        border: 1px solid var(--border);
-        border-radius: var(--radius);
-        padding: 12px 14px;
-        box-shadow: var(--shadow-sm);
-    }
-    .pattern-card-name { font-size: 12px; font-weight: 500; color: var(--text-2); margin-bottom: 6px; }
-    .pattern-card-count { font-size: 22px; font-weight: 700; font-family: var(--font-mono); }
-    .pattern-card-bar {
-        height: 3px;
-        border-radius: 2px;
-        margin-top: 8px;
-        background: var(--border);
-        overflow: hidden;
-    }
-    .pattern-card-fill { height: 100%; border-radius: 2px; transition: width .4s ease; }
-
-    /* ── Turn List ── */
-    .turn-list { display: flex; flex-direction: column; gap: 8px; }
-
-    .turn-card {
-        background: var(--surface);
-        border: 1px solid var(--border);
-        border-radius: var(--radius);
-        box-shadow: var(--shadow-sm);
-        overflow: hidden;
-        cursor: pointer;
-        transition: border-color .15s, box-shadow .15s;
-    }
-    .turn-card:hover { border-color: var(--text-4); box-shadow: var(--shadow); }
-    .turn-card.expanded { border-color: var(--accent); }
-
-    .turn-card-header {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        padding: 12px 16px;
-    }
-    .turn-pf-dot {
-        width: 10px; height: 10px;
-        border-radius: 50%;
-        flex-shrink: 0;
-    }
-    .pf-green  { background: var(--accent); }
-    .pf-yellow { background: var(--amber); }
-    .pf-orange { background: #ea580c; }
-    .pf-red    { background: var(--red); }
-
-    .turn-ts {
-        font-size: 11px;
-        font-family: var(--font-mono);
-        color: var(--text-4);
-        white-space: nowrap;
-        flex-shrink: 0;
-    }
-    .turn-msg {
-        font-size: 13px;
-        color: var(--text-2);
-        flex: 1;
-        min-width: 0;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-    }
-    .turn-flags { display: flex; gap: 4px; flex-shrink: 0; }
-    .flag-chip {
-        font-size: 10px;
-        font-weight: 600;
-        padding: 2px 6px;
-        border-radius: 4px;
-        background: var(--red-light);
-        color: var(--red);
-        white-space: nowrap;
-    }
-    .turn-meta-row {
-        display: flex;
-        gap: 16px;
-        padding: 0 16px 0 38px;
-        margin-bottom: 10px;
-    }
-    .turn-meta-item { font-size: 11px; color: var(--text-4); }
-    .turn-meta-item span { color: var(--text-2); font-weight: 500; }
-
-    /* ── Expand Panel ── */
-    .turn-detail {
-        display: none;
-        padding: 0 16px 16px 16px;
-        border-top: 1px solid var(--border-light);
-        margin-top: 4px;
-    }
-    .turn-card.expanded .turn-detail { display: block; }
-
-    .detail-section { margin-top: 14px; }
-    .detail-section-title {
-        font-size: 10px;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: .06em;
-        color: var(--text-4);
-        margin-bottom: 8px;
-    }
-
-    /* Chunks */
-    .chunk-row {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        padding: 6px 0;
-        border-bottom: 1px solid var(--border-light);
-    }
-    .chunk-row:last-child { border-bottom: none; }
-    .chunk-score {
-        font-size: 11px;
-        font-family: var(--font-mono);
-        font-weight: 600;
-        color: var(--accent);
-        width: 38px;
-        flex-shrink: 0;
-    }
-    .chunk-type-badge {
-        font-size: 10px;
-        padding: 2px 5px;
-        border-radius: 3px;
-        background: var(--purple-dim);
-        color: var(--purple);
-        font-weight: 500;
-        flex-shrink: 0;
-        max-width: 90px;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-    }
-    .chunk-preview { font-size: 12px; color: var(--text-3); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .chunk-bar-wrap { width: 60px; flex-shrink: 0; }
-    .chunk-bar { height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
-    .chunk-bar-fill { height: 100%; background: var(--accent); border-radius: 2px; }
-
-    /* Rules */
-    .rule-row {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        padding: 4px 0;
-    }
-    .rule-id { font-size: 11px; font-family: var(--font-mono); color: var(--text-2); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .rule-weight { font-size: 11px; font-family: var(--font-mono); color: var(--blue); width: 36px; text-align: right; flex-shrink: 0; }
-
-    /* Preflight Issues */
-    .issue-row {
-        display: flex;
-        align-items: flex-start;
-        gap: 6px;
-        font-size: 12px;
-        color: var(--text-2);
-        padding: 3px 0;
-    }
-    .issue-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; margin-top: 4px; }
-
-    /* Profile pills */
-    .profile-row { display: flex; flex-wrap: wrap; gap: 6px; }
-    .profile-pill {
-        font-size: 11px;
-        padding: 3px 8px;
-        border-radius: 5px;
-        background: var(--surface-2);
-        border: 1px solid var(--border);
-        color: var(--text-2);
-    }
-    .profile-pill.warn { background: var(--red-light); border-color: var(--red); color: var(--red); }
-
-    /* Pattern flags in detail */
-    .pattern-flag-row {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        padding: 5px 0;
-        border-bottom: 1px solid var(--border-light);
-    }
-    .pattern-flag-row:last-child { border-bottom: none; }
-    .pf-name { font-size: 12px; color: var(--text-2); flex: 1; }
-    .pf-strength { font-size: 11px; font-family: var(--font-mono); color: var(--red); }
-    .pf-strength-bar { width: 60px; }
-
-    /* Pagination */
-    .pagination { display: flex; gap: 6px; align-items: center; justify-content: center; margin-top: 16px; }
-    .page-btn {
-        padding: 5px 10px;
-        border: 1px solid var(--border);
-        border-radius: var(--radius-sm);
-        background: var(--surface);
-        color: var(--text-2);
-        font-size: 12px;
-        cursor: pointer;
-    }
-    .page-btn:hover { background: var(--bg); }
-    .page-btn.active { background: var(--accent); border-color: var(--accent); color: white; }
-    .page-info { font-size: 12px; color: var(--text-4); }
-
-    /* Empty state */
-    .empty-state {
-        text-align: center;
-        padding: 48px 24px;
-        color: var(--text-4);
-    }
-    .empty-state-icon { font-size: 32px; margin-bottom: 8px; }
-    .empty-state-text { font-size: 14px; }
+    .tab-btn { background:none; border:none; padding:8px 16px; font-size:13px; font-weight:500; color:var(--text-3); cursor:pointer; font-family:var(--font); border-bottom:2px solid transparent; margin-bottom:-1px; transition:color .15s; }
+    .tab-btn:hover { color:var(--text-1); }
+    .tab-btn.active { color:var(--accent,#00e5ff); border-bottom-color:var(--accent,#00e5ff); }
 </style>
 
 <div class="mirror-header">
     <div>
         <div class="mirror-title">MIRROR</div>
-        <div class="mirror-sub">Kimis Spiegel — Turn-Logging, Pattern-Erkennung, Preflight</div>
+        <div class="mirror-sub">Jede Gesprächsrunde wird automatisch analysiert — Preflight-Status, Pattern-Flags und welche Memory-Chunks aktiv waren.</div>
     </div>
     <div style="display:flex;gap:8px;align-items:center">
         <select id="days-select" onchange="loadStats()" style="padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text-2);font-size:12px;cursor:pointer">
@@ -274,338 +117,246 @@
     </div>
 </div>
 
-<!-- Stats Row -->
-<div class="stats-row" id="stats-row">
-    <div class="stat-box">
-        <div class="stat-box-label">Turns gesamt</div>
-        <div class="stat-box-value" id="stat-total">—</div>
-        <div class="stat-box-sub" id="stat-days"></div>
-    </div>
-    <div class="stat-box">
-        <div class="stat-box-label">Preflight grün</div>
-        <div class="stat-box-value" id="stat-green" style="color:var(--accent)">—</div>
-        <div class="preflight-bar" id="preflight-bar"></div>
-    </div>
-    <div class="stat-box">
-        <div class="stat-box-label">Pattern-Flags</div>
-        <div class="stat-box-value" id="stat-flags" style="color:var(--red)">—</div>
-        <div class="stat-box-sub">Gesamte Auslösungen</div>
-    </div>
-    <div class="stat-box">
-        <div class="stat-box-label">Häufigste Falle</div>
-        <div class="stat-box-value" id="stat-top-pattern" style="font-size:14px;padding-top:4px">—</div>
-        <div class="stat-box-sub" id="stat-top-count"></div>
-    </div>
+<!-- Tabs -->
+<div class="tab-bar" style="display:flex;gap:4px;margin-bottom:20px;border-bottom:1px solid var(--border);padding-bottom:0">
+    <button class="tab-btn active" onclick="switchMirrorTab('mirror', this)">MIRROR</button>
+    <button class="tab-btn" onclick="switchMirrorTab('hypotheses', this)">Pattern Hypotheses</button>
 </div>
 
-<!-- Pattern Overview -->
+<!-- ══ TAB: MIRROR ══ -->
+<div id="mtab-mirror">
+<div class="stats-row" id="stats-row">
+    <div class="stat-box"><div class="stat-box-label">Turns gesamt</div><div class="stat-box-value" id="stat-total">—</div><div class="stat-box-sub" id="stat-days"></div></div>
+    <div class="stat-box"><div class="stat-box-label">Preflight grün</div><div class="stat-box-value" id="stat-green" style="color:var(--accent)">—</div><div class="preflight-bar" id="preflight-bar"></div></div>
+    <div class="stat-box"><div class="stat-box-label">Pattern-Flags</div><div class="stat-box-value" id="stat-flags" style="color:var(--red)">—</div><div class="stat-box-sub">Gesamte Auslösungen</div></div>
+    <div class="stat-box"><div class="stat-box-label">Häufigste Falle</div><div class="stat-box-value" id="stat-top-pattern" style="font-size:14px;padding-top:4px">—</div><div class="stat-box-sub" id="stat-top-count"></div></div>
+</div>
 <div style="margin-bottom:20px">
     <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text-4);margin-bottom:10px">Pattern-Radar</div>
-    <div class="pattern-grid" id="pattern-grid">
-        <!-- filled by JS -->
-    </div>
+    <div class="pattern-grid" id="pattern-grid"></div>
 </div>
-
-<!-- Turn List -->
 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
     <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text-4)">Turn-Timeline</div>
     <div style="display:flex;gap:6px">
-        <button onclick="filterTurns('all')" id="filter-all" class="page-btn active">Alle</button>
+        <button onclick="filterTurns('all')"    id="filter-all"    class="page-btn active">Alle</button>
         <button onclick="filterTurns('issues')" id="filter-issues" class="page-btn">Mit Flags</button>
-        <button onclick="filterTurns('red')" id="filter-red" class="page-btn" style="color:var(--red)">Rot</button>
+        <button onclick="filterTurns('red')"    id="filter-red"    class="page-btn" style="color:var(--red)">Rot</button>
     </div>
 </div>
-
-<div class="turn-list" id="turn-list">
-    <div class="empty-state">
-        <div class="empty-state-icon">⟳</div>
-        <div class="empty-state-text">Lade Turns…</div>
-    </div>
-</div>
-
+<div class="turn-list" id="turn-list"><div class="empty-state">⟳ Lade Turns…</div></div>
 <div class="pagination" id="pagination"></div>
+</div><!-- end mtab-mirror -->
+
+<!-- ══ TAB: PATTERN HYPOTHESES ══ -->
+<div id="mtab-hypotheses" style="display:none">
+<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px">
+    <div class="hyp-stat-box"><div class="hyp-stat-label">Offen</div><div class="hyp-stat-value" id="h-count-open">–</div></div>
+    <div class="hyp-stat-box"><div class="hyp-stat-label">Als working_state</div><div class="hyp-stat-value" id="h-count-working">–</div></div>
+    <div class="hyp-stat-box"><div class="hyp-stat-label">Promoted</div><div class="hyp-stat-value" id="h-count-promoted">–</div></div>
+    <div class="hyp-stat-box"><div class="hyp-stat-label">Verworfen</div><div class="hyp-stat-value" id="h-count-dismissed">–</div></div>
+</div>
+<div class="card" style="margin-bottom:16px">
+    <div class="card-header">
+        <div>
+            <div class="card-title">Offene Hypothesen</div>
+            <div class="card-subtitle">{{ bot_name }}s Beobachtungen — wartet auf deine Entscheidung</div>
+        </div>
+        <select id="h-filter-status" onchange="loadHypotheses()"
+            style="background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;color:var(--text-1);font-family:var(--font)">
+            <option value="open">Offen</option>
+            <option value="">Alle</option>
+            <option value="working_state">working_state</option>
+            <option value="promoted">Promoted</option>
+            <option value="dismissed">Verworfen</option>
+        </select>
+    </div>
+    <div id="h-patterns-list"><div class="loading">Lade Hypothesen...</div></div>
+</div>
+</div><!-- end mtab-hypotheses -->
 
 <script>
-const PATTERN_LABELS = {
-    aufzaehlung:  'Aufzählungs-Falle',
-    projektmodus: 'Projektmodus',
-    regel_relapse:'Regel-Rückfall',
-    uebervorsicht:'Übervorsicht',
-    selbstkritik: 'Selbstkritik',
-};
-const PATTERN_COLORS = {
-    aufzaehlung:  '#d97706',
-    projektmodus: '#7c3aed',
-    regel_relapse:'#dc2626',
-    uebervorsicht:'#0891b2',
-    selbstkritik: '#ea580c',
-};
+// ══ Tab switching ══
+function switchMirrorTab(tab, btn) {
+    document.getElementById('mtab-mirror').style.display      = tab==='mirror'?'':'none';
+    document.getElementById('mtab-hypotheses').style.display  = tab==='hypotheses'?'':'none';
+    document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    if (tab==='hypotheses' && !window._hypLoaded) { loadHypotheses(); loadHypStats(); window._hypLoaded=true; }
+}
 
-let allTurns = [];
-let filteredTurns = [];
-let currentPage = 1;
-const PAGE_SIZE = 20;
-let currentFilter = 'all';
+// ══════════════════════════════
+// MIRROR TAB
+// ══════════════════════════════
+const PATTERN_LABELS = { aufzaehlung:'Aufzählungs-Falle', projektmodus:'Projektmodus', regel_relapse:'Regel-Rückfall', uebervorsicht:'Übervorsicht', selbstkritik:'Selbstkritik' };
+const PATTERN_COLORS = { aufzaehlung:'#d97706', projektmodus:'#7c3aed', regel_relapse:'#dc2626', uebervorsicht:'#0891b2', selbstkritik:'#ea580c' };
+let allTurns=[], filteredTurns=[], currentPage=1, currentFilter='all';
+const PAGE_SIZE=20;
 
-function getDays() { return parseInt(document.getElementById('days-select').value, 10); }
+function getDays() { return parseInt(document.getElementById('days-select').value,10); }
 
 async function loadStats() {
-    const days = getDays();
     try {
-        const res = await fetch(`/api/mirror/stats?days=${days}`);
-        const d = await res.json();
-        renderStats(d);
-    } catch(e) { console.error('stats error', e); }
+        const res=await fetch(`/api/mirror/stats?days=${getDays()}`);
+        renderStats(await res.json());
+    } catch(e) {}
 }
 
 async function loadTurns() {
     try {
-        const res = await fetch('/api/mirror/turns?limit=200');
-        const d = await res.json();
-        allTurns = d.turns || [];
+        const res=await fetch('/api/mirror/turns?limit=200');
+        allTurns=(await res.json()).turns||[];
         applyFilter();
-    } catch(e) {
-        document.getElementById('turn-list').innerHTML = '<div class="empty-state"><div class="empty-state-text">Fehler beim Laden</div></div>';
-    }
+    } catch(e) { document.getElementById('turn-list').innerHTML='<div class="empty-state">Fehler beim Laden</div>'; }
 }
 
 function applyFilter() {
-    currentPage = 1;
-    if (currentFilter === 'all') filteredTurns = allTurns;
-    else if (currentFilter === 'issues') filteredTurns = allTurns.filter(t => t.pattern_flags?.length > 0 || t.preflight?.issues?.length > 0);
-    else if (currentFilter === 'red') filteredTurns = allTurns.filter(t => t.preflight?.status === 'red');
-    renderTurns();
-    renderPagination();
+    currentPage=1;
+    if (currentFilter==='all')    filteredTurns=allTurns;
+    else if (currentFilter==='issues') filteredTurns=allTurns.filter(t=>t.pattern_flags?.length>0||t.preflight?.issues?.length>0);
+    else if (currentFilter==='red')    filteredTurns=allTurns.filter(t=>t.preflight?.status==='red');
+    renderTurns(); renderPagination();
 }
 
 function filterTurns(f) {
-    currentFilter = f;
-    ['all','issues','red'].forEach(id => {
-        const btn = document.getElementById('filter-' + id);
-        btn.classList.toggle('active', id === f);
-    });
+    currentFilter=f;
+    ['all','issues','red'].forEach(id=>document.getElementById('filter-'+id).classList.toggle('active',id===f));
     applyFilter();
 }
 
 function renderStats(d) {
-    const total = d.total_turns || 0;
-    document.getElementById('stat-total').textContent = total;
-    document.getElementById('stat-days').textContent = `Letzte ${d.days} Tage`;
-
-    const dist = d.preflight_distribution || {};
-    const green = dist.green || 0;
-    const pct = total > 0 ? Math.round(green / total * 100) : 0;
-    document.getElementById('stat-green').textContent = pct + '%';
-
-    // Preflight bar
-    const bar = document.getElementById('preflight-bar');
-    const colors = { green: '#16a34a', yellow: '#d97706', orange: '#ea580c', red: '#dc2626' };
-    bar.innerHTML = ['green','yellow','orange','red'].map(s => {
-        const cnt = dist[s] || 0;
-        const w = total > 0 ? (cnt / total * 100).toFixed(1) : 0;
-        return `<div class="pf-seg" style="width:${w}%;background:${colors[s]}" title="${s}: ${cnt}"></div>`;
-    }).join('');
-
-    // Pattern counts
-    const pc = d.pattern_counts || {};
-    const total_flags = Object.values(pc).reduce((a,b) => a+b, 0);
-    document.getElementById('stat-flags').textContent = total_flags;
-
-    // Top pattern
-    const sorted = Object.entries(pc).sort((a,b) => b[1]-a[1]);
-    if (sorted.length) {
-        const [topId, topCount] = sorted[0];
-        document.getElementById('stat-top-pattern').textContent = PATTERN_LABELS[topId] || topId;
-        document.getElementById('stat-top-count').textContent = `${topCount}× ausgelöst`;
-    } else {
-        document.getElementById('stat-top-pattern').textContent = 'Keine';
-        document.getElementById('stat-top-count').textContent = '';
-    }
-
-    // Pattern grid
-    const maxCount = sorted.length ? sorted[0][1] : 1;
-    const grid = document.getElementById('pattern-grid');
-    const patterns = ['aufzaehlung','projektmodus','regel_relapse','uebervorsicht','selbstkritik'];
-    grid.innerHTML = patterns.map(pid => {
-        const count = pc[pid] || 0;
-        const pct = maxCount > 0 ? (count / maxCount * 100).toFixed(1) : 0;
-        const color = PATTERN_COLORS[pid];
-        return `<div class="pattern-card">
-            <div class="pattern-card-name">${PATTERN_LABELS[pid]}</div>
-            <div class="pattern-card-count" style="color:${count>0?color:'var(--text-4)'}">${count}</div>
-            <div class="pattern-card-bar"><div class="pattern-card-fill" style="width:${pct}%;background:${color}"></div></div>
-        </div>`;
+    const total=d.total_turns||0;
+    document.getElementById('stat-total').textContent=total;
+    document.getElementById('stat-days').textContent=`Letzte ${d.days} Tage`;
+    const dist=d.preflight_distribution||{}, green=dist.green||0, pct=total>0?Math.round(green/total*100):0;
+    document.getElementById('stat-green').textContent=pct+'%';
+    const bar=document.getElementById('preflight-bar'), colors={green:'#16a34a',yellow:'#d97706',orange:'#ea580c',red:'#dc2626'};
+    bar.innerHTML=['green','yellow','orange','red'].map(s=>`<div class="pf-seg" style="width:${total>0?((dist[s]||0)/total*100).toFixed(1):0}%;background:${colors[s]}"></div>`).join('');
+    const pc=d.pattern_counts||{}, total_flags=Object.values(pc).reduce((a,b)=>a+b,0);
+    document.getElementById('stat-flags').textContent=total_flags;
+    const sorted=Object.entries(pc).sort((a,b)=>b[1]-a[1]);
+    if (sorted.length) { document.getElementById('stat-top-pattern').textContent=PATTERN_LABELS[sorted[0][0]]||sorted[0][0]; document.getElementById('stat-top-count').textContent=sorted[0][1]+'× ausgelöst'; }
+    const maxCount=sorted.length?sorted[0][1]:1;
+    document.getElementById('pattern-grid').innerHTML=['aufzaehlung','projektmodus','regel_relapse','uebervorsicht','selbstkritik'].map(pid=>{
+        const count=pc[pid]||0, pct=maxCount>0?(count/maxCount*100).toFixed(1):0, color=PATTERN_COLORS[pid];
+        return `<div class="pattern-card"><div class="pattern-card-name">${PATTERN_LABELS[pid]}</div><div class="pattern-card-count" style="color:${count>0?color:'var(--text-4)'}">${count}</div><div class="pattern-card-bar"><div class="pattern-card-fill" style="width:${pct}%;background:${color}"></div></div></div>`;
     }).join('');
 }
 
 function renderTurns() {
-    const start = (currentPage - 1) * PAGE_SIZE;
-    const page = filteredTurns.slice(start, start + PAGE_SIZE);
-    const list = document.getElementById('turn-list');
-
-    if (!page.length) {
-        list.innerHTML = '<div class="empty-state"><div class="empty-state-icon">◎</div><div class="empty-state-text">Keine Turns gefunden</div></div>';
-        return;
-    }
-
-    list.innerHTML = page.map((t, i) => renderTurnCard(t, start + i)).join('');
+    const start=(currentPage-1)*PAGE_SIZE, page=filteredTurns.slice(start,start+PAGE_SIZE), list=document.getElementById('turn-list');
+    if (!page.length) { list.innerHTML='<div class="empty-state"><div>◎</div>Keine Turns gefunden</div>'; return; }
+    list.innerHTML=page.map((t,i)=>renderTurnCard(t,start+i)).join('');
 }
 
-function renderTurnCard(t, idx) {
-    const pf = t.preflight || {};
-    const status = pf.status || 'green';
-    const flags = t.pattern_flags || [];
-    const profile = t.response_profile || {};
-    const chunks = t.active_chunks || [];
-    const rules = t.rule_stack || [];
-
-    const ts = t.timestamp ? new Date(t.timestamp).toLocaleString('de-DE', {
-        day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'
-    }) : '?';
-
-    const flagChips = flags.map(f =>
-        `<span class="flag-chip" title="${f.name} (${f.strength})">${PATTERN_LABELS[f.type] || f.type}</span>`
-    ).join('');
-
-    const issues = pf.issues || [];
-    const issueColor = { green:'var(--accent)', yellow:'var(--amber)', orange:'#ea580c', red:'var(--red)' }[status] || 'var(--accent)';
-
-    // Chunks section
-    const chunksHtml = chunks.length ? chunks.slice(0,6).map(c => `
-        <div class="chunk-row">
-            <div class="chunk-score">${c.score?.toFixed(3) || '?'}</div>
-            <div class="chunk-type-badge">${c.type || '?'}</div>
-            <div class="chunk-preview" title="${c.preview || ''}">${c.preview || '—'}</div>
-            <div class="chunk-bar-wrap">
-                <div class="chunk-bar"><div class="chunk-bar-fill" style="width:${Math.min((c.score||0)*100,100).toFixed(0)}%"></div></div>
-            </div>
-        </div>
-    `).join('') : '<div style="font-size:12px;color:var(--text-4);padding:4px 0">Keine Chunks retrieved</div>';
-
-    // Rules section
-    const rulesHtml = rules.length ? rules.slice(0,5).map(r => `
-        <div class="rule-row">
-            <div class="rule-id">${r.id || '?'}</div>
-            <div style="font-size:10px;color:var(--text-4)">${r.type||''}</div>
-            <div class="rule-weight">${r.weight?.toFixed(3) || '?'}</div>
-        </div>
-    `).join('') : '<div style="font-size:12px;color:var(--text-4);padding:4px 0">—</div>';
-
-    // Issues
-    const issuesHtml = issues.length ? issues.map(iss => `
-        <div class="issue-row">
-            <div class="issue-dot" style="background:${issueColor}"></div>
-            <div>${iss}</div>
-        </div>
-    `).join('') : '<div style="font-size:12px;color:var(--accent)">Kein Issue</div>';
-
-    // Pattern flags detail
-    const patternHtml = flags.length ? flags.map(f => `
-        <div class="pattern-flag-row">
-            <div class="pf-name">${f.name || f.type}</div>
-            <div class="pf-strength">${(f.strength * 100).toFixed(0)}%</div>
-            <div class="pf-strength-bar">
-                <div class="chunk-bar"><div class="chunk-bar-fill" style="width:${(f.strength*100).toFixed(0)}%;background:${PATTERN_COLORS[f.type]||'var(--red)'}"></div></div>
-            </div>
-        </div>
-    `).join('') : '<div style="font-size:12px;color:var(--accent);padding:4px 0">Keine Pattern ausgelöst ✓</div>';
-
-    // Profile pills
-    const mdWarn = profile.has_markdown;
-    const lenWarn = (profile.length_words || 0) > 250;
-    const listWarn = (profile.list_density || 0) > 0.4;
-    const pills = [
-        `<span class="profile-pill ${lenWarn?'warn':''}">${profile.length_words || 0} Wörter</span>`,
-        `<span class="profile-pill ${listWarn?'warn':''}">Listen ${((profile.list_density||0)*100).toFixed(0)}%</span>`,
-        `<span class="profile-pill">Direktheit ${((profile.directness_score||0)*100).toFixed(0)}%</span>`,
-        mdWarn ? `<span class="profile-pill warn">⚠ Markdown</span>` : '',
-        ...(profile.action_blocks||[]).map(a => `<span class="profile-pill" style="color:var(--blue)">${a}</span>`),
-    ].filter(Boolean).join('');
-
-    return `
-    <div class="turn-card" id="turn-${idx}" onclick="toggleTurn(${idx})">
-        <div class="turn-card-header">
-            <div class="turn-pf-dot pf-${status}" title="Preflight: ${status}"></div>
-            <div class="turn-ts">${ts}</div>
-            <div class="turn-msg">${escHtml(t.user_message_preview || '—')}</div>
-            <div class="turn-flags">${flagChips}</div>
-        </div>
-        <div class="turn-meta-row">
-            <div class="turn-meta-item">Chunks: <span>${chunks.length}</span></div>
-            <div class="turn-meta-item">Regeln: <span>${rules.length}</span></div>
-            <div class="turn-meta-item">Wörter: <span>${profile.length_words || 0}</span></div>
-            <div class="turn-meta-item">Preflight: <span style="color:${issueColor}">${status}</span></div>
-        </div>
+function renderTurnCard(t,idx) {
+    const pf=t.preflight||{}, status=pf.status||'green', flags=t.pattern_flags||[], profile=t.response_profile||{}, chunks=t.active_chunks||[], rules=t.rule_stack||[];
+    const ts=t.timestamp?new Date(t.timestamp).toLocaleString('de-DE',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'?';
+    const flagChips=flags.map(f=>`<span class="flag-chip">${PATTERN_LABELS[f.type]||f.type}</span>`).join('');
+    const issueColor={green:'var(--accent)',yellow:'var(--amber)',orange:'#ea580c',red:'var(--red)'}[status]||'var(--accent)';
+    const chunksHtml=chunks.length?chunks.slice(0,6).map(c=>`<div class="chunk-row"><div class="chunk-score">${c.score?.toFixed(3)||'?'}</div><div class="chunk-type-badge">${c.type||'?'}</div><div class="chunk-preview">${c.preview||'—'}</div><div class="chunk-bar-wrap"><div class="chunk-bar"><div class="chunk-bar-fill" style="width:${Math.min((c.score||0)*100,100).toFixed(0)}%"></div></div></div></div>`).join(''):'<div style="font-size:12px;color:var(--text-4)">Keine Chunks retrieved</div>';
+    const rulesHtml=rules.length?rules.slice(0,5).map(r=>`<div class="rule-row"><div class="rule-id">${r.id||'?'}</div><div style="font-size:10px;color:var(--text-4)">${r.type||''}</div><div class="rule-weight">${r.weight?.toFixed(3)||'?'}</div></div>`).join(''):'<div style="font-size:12px;color:var(--text-4)">—</div>';
+    const issues=pf.issues||[];
+    const issuesHtml=issues.length?issues.map(iss=>`<div class="issue-row"><div class="issue-dot" style="background:${issueColor}"></div><div>${iss}</div></div>`).join(''):'<div style="font-size:12px;color:var(--accent)">Kein Issue</div>';
+    const patternHtml=flags.length?flags.map(f=>`<div class="pattern-flag-row"><div class="pf-name">${f.name||f.type}</div><div class="pf-strength">${(f.strength*100).toFixed(0)}%</div><div class="pf-strength-bar"><div class="chunk-bar"><div class="chunk-bar-fill" style="width:${(f.strength*100).toFixed(0)}%;background:${PATTERN_COLORS[f.type]||'var(--red)'}"></div></div></div></div>`).join(''):'<div style="font-size:12px;color:var(--accent);padding:4px 0">Keine Pattern ausgelöst ✓</div>';
+    const mdWarn=profile.has_markdown, lenWarn=(profile.length_words||0)>250, listWarn=(profile.list_density||0)>0.4;
+    const pills=[`<span class="profile-pill ${lenWarn?'warn':''}">${profile.length_words||0} Wörter</span>`,`<span class="profile-pill ${listWarn?'warn':''}">Listen ${((profile.list_density||0)*100).toFixed(0)}%</span>`,`<span class="profile-pill">Direktheit ${((profile.directness_score||0)*100).toFixed(0)}%</span>`,mdWarn?`<span class="profile-pill warn">⚠ Markdown</span>`:'', ...(profile.action_blocks||[]).map(a=>`<span class="profile-pill" style="color:var(--blue)">${a}</span>`)].filter(Boolean).join('');
+    return `<div class="turn-card" id="turn-${idx}" onclick="toggleTurn(${idx})">
+        <div class="turn-card-header"><div class="turn-pf-dot pf-${status}"></div><div class="turn-ts">${ts}</div><div class="turn-msg">${escHtml(t.user_message_preview||'—')}</div><div class="turn-flags">${flagChips}</div></div>
+        <div class="turn-meta-row"><div class="turn-meta-item">Chunks: <span>${chunks.length}</span></div><div class="turn-meta-item">Regeln: <span>${rules.length}</span></div><div class="turn-meta-item">Wörter: <span>${profile.length_words||0}</span></div><div class="turn-meta-item">Preflight: <span style="color:${issueColor}">${status}</span></div></div>
         <div class="turn-detail">
-            <!-- Profile -->
-            <div class="detail-section">
-                <div class="detail-section-title">Response-Profil</div>
-                <div class="profile-row">${pills}</div>
-            </div>
-
-            <!-- Preflight -->
-            <div class="detail-section">
-                <div class="detail-section-title">Preflight-Check</div>
-                ${issuesHtml}
-            </div>
-
-            <!-- Pattern -->
-            <div class="detail-section">
-                <div class="detail-section-title">Pattern-Flags</div>
-                ${patternHtml}
-            </div>
-
-            <!-- Chunks -->
-            <div class="detail-section">
-                <div class="detail-section-title">Aktive Chunks (${chunks.length})</div>
-                ${chunksHtml}
-            </div>
-
-            <!-- Rules -->
-            <div class="detail-section">
-                <div class="detail-section-title">Global-Rule-Stack (${rules.length})</div>
-                ${rulesHtml}
-            </div>
+            <div class="detail-section"><div class="detail-section-title">Response-Profil</div><div class="profile-row">${pills}</div></div>
+            <div class="detail-section"><div class="detail-section-title">Preflight-Check</div>${issuesHtml}</div>
+            <div class="detail-section"><div class="detail-section-title">Pattern-Flags</div>${patternHtml}</div>
+            <div class="detail-section"><div class="detail-section-title">Aktive Chunks (${chunks.length})</div>${chunksHtml}</div>
+            <div class="detail-section"><div class="detail-section-title">Global-Rule-Stack (${rules.length})</div>${rulesHtml}</div>
         </div>
     </div>`;
 }
 
 function renderPagination() {
-    const total = filteredTurns.length;
-    const pages = Math.ceil(total / PAGE_SIZE);
-    const pag = document.getElementById('pagination');
-    if (pages <= 1) { pag.innerHTML = ''; return; }
-
-    let html = '';
-    if (currentPage > 1) html += `<button class="page-btn" onclick="goPage(${currentPage-1})">‹</button>`;
-    for (let p = Math.max(1,currentPage-2); p <= Math.min(pages,currentPage+2); p++) {
-        html += `<button class="page-btn ${p===currentPage?'active':''}" onclick="goPage(${p})">${p}</button>`;
-    }
-    if (currentPage < pages) html += `<button class="page-btn" onclick="goPage(${currentPage+1})">›</button>`;
-    html += `<span class="page-info">${total} Turns</span>`;
-    pag.innerHTML = html;
+    const total=filteredTurns.length, pages=Math.ceil(total/PAGE_SIZE), pag=document.getElementById('pagination');
+    if (pages<=1) { pag.innerHTML=''; return; }
+    let html='';
+    if (currentPage>1) html+=`<button class="page-btn" onclick="goPage(${currentPage-1})">‹</button>`;
+    for (let p=Math.max(1,currentPage-2);p<=Math.min(pages,currentPage+2);p++) html+=`<button class="page-btn ${p===currentPage?'active':''}" onclick="goPage(${p})">${p}</button>`;
+    if (currentPage<pages) html+=`<button class="page-btn" onclick="goPage(${currentPage+1})">›</button>`;
+    html+=`<span class="page-info">${total} Turns</span>`;
+    pag.innerHTML=html;
 }
 
-function goPage(p) {
-    currentPage = p;
-    renderTurns();
-    renderPagination();
-    window.scrollTo(0,0);
+function goPage(p) { currentPage=p; renderTurns(); renderPagination(); window.scrollTo(0,0); }
+function toggleTurn(idx) { document.getElementById('turn-'+idx).classList.toggle('expanded'); }
+
+// ══════════════════════════════
+// PATTERN HYPOTHESES TAB
+// ══════════════════════════════
+async function loadHypStats() {
+    try {
+        const res=await fetch('/api/proposed-patterns');
+        const data=await res.json();
+        const counts={open:0,working_state:0,promoted:0,dismissed:0};
+        (data.patterns||[]).forEach(p=>{counts[p.status]=(counts[p.status]||0)+1;});
+        document.getElementById('h-count-open').textContent=counts.open;
+        document.getElementById('h-count-working').textContent=counts.working_state;
+        document.getElementById('h-count-promoted').textContent=counts.promoted;
+        document.getElementById('h-count-dismissed').textContent=counts.dismissed;
+    } catch(e) {}
 }
 
-function toggleTurn(idx) {
-    const card = document.getElementById('turn-' + idx);
-    card.classList.toggle('expanded');
+async function loadHypotheses() {
+    const status=document.getElementById('h-filter-status').value;
+    const list=document.getElementById('h-patterns-list');
+    list.innerHTML='<div class="loading">Lade...</div>';
+    try {
+        const url=status?`/api/proposed-patterns?status=${status}`:'/api/proposed-patterns';
+        const data=await (await fetch(url)).json();
+        renderHypotheses(data.patterns||[]);
+    } catch(e) { list.innerHTML='<div style="padding:24px;text-align:center;color:var(--text-4)">Fehler beim Laden.</div>'; }
 }
 
-function escHtml(s) {
-    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+function renderHypotheses(patterns) {
+    const list=document.getElementById('h-patterns-list');
+    if (!patterns.length) { list.innerHTML='<div style="padding:24px;text-align:center;color:var(--text-4)">Keine Hypothesen in dieser Kategorie.</div>'; return; }
+    list.innerHTML=patterns.map(p=>{
+        const isOpen=p.status==='open';
+        const statusLabel={open:'offen',working_state:'working_state',promoted:'promoted',dismissed:'verworfen'}[p.status]||p.status;
+        const confColor=p.confidence>=0.7?'#64ff64':p.confidence>=0.5?'#ffc800':'var(--text-4)';
+        const actionsHtml=isOpen?`<div class="hyp-actions">
+            <button class="hyp-action-btn dismiss" onclick="doHypAction(${p.id},'dismiss')">✕ Verwerfen</button>
+            <button class="hyp-action-btn keep"    onclick="doHypAction(${p.id},'keep')">◎ Als working_state</button>
+            <button class="hyp-action-btn promote" onclick="doHypAction(${p.id},'promote')">▲ Zu echtem Pattern</button>
+        </div>`:`<div class="hyp-action-done">${statusLabel}${p.status_changed_at?' · '+p.status_changed_at.replace('T',' ').slice(0,16):''}</div>`;
+        return `<div class="pattern-hyp-card" id="hcard-${p.id}">
+            <div class="hyp-date">${(p.created_at||'').replace('T',' ').slice(0,16)}</div>
+            <div class="hyp-header">
+                <div class="hyp-name">${escHtml(p.name)}</div>
+                <div class="hyp-meta">
+                    <span class="occ-badge">${p.occurrences}× beobachtet</span>
+                    <span class="conf-badge" style="color:${confColor}">${Math.round(p.confidence*100)}%</span>
+                    <span class="hyp-status-badge hyp-status-${p.status}">${statusLabel}</span>
+                </div>
+            </div>
+            <div class="hyp-desc">${escHtml(p.description)}</div>
+            <div class="hyp-evidence">Evidenz: ${escHtml(p.evidence)}</div>
+            ${actionsHtml}
+        </div>`;
+    }).join('');
 }
 
-async function loadAll() {
-    await Promise.all([loadStats(), loadTurns()]);
+async function doHypAction(id, action) {
+    const card=document.getElementById('hcard-'+id);
+    card?.querySelectorAll('.hyp-action-btn').forEach(b=>b.disabled=true);
+    try {
+        const res=await fetch(`/api/proposed-patterns/${id}/action`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action})});
+        const data=await res.json();
+        if (data.ok) { if(card){card.style.transition='opacity .3s';card.style.opacity='0';setTimeout(()=>{card.remove();loadHypStats();},300);} }
+        else { alert('Fehler: '+(data.error||'?')); card?.querySelectorAll('.hyp-action-btn').forEach(b=>b.disabled=false); }
+    } catch(e) { alert('Netzwerkfehler'); card?.querySelectorAll('.hyp-action-btn').forEach(b=>b.disabled=false); }
 }
 
+function escHtml(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+async function loadAll() { await Promise.all([loadStats(), loadTurns()]); }
 loadAll();
 </script>
 {% endblock %}

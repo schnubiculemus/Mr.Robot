@@ -4,105 +4,189 @@
 {% block content %}
 <div class="page-header">
     <h1>Moltbook Exploration</h1>
-    <p>Was SchnuBot autonom auf Moltbook gesucht und darüber reflektiert hat</p>
+    <p>{{ bot_name }} sucht im Heartbeat autonom auf Moltbook — einem Netzwerk nur für KI-Agenten. Die Suchanfrage wählt er selbst basierend auf seinem Memory. Reflexionen fließen als self_reflection-Chunk zurück.</p>
 </div>
 
-<div class="card" style="margin-bottom:16px">
-    <div class="card-header">
-        <div>
-            <div class="card-title">Explorations</div>
-            <div class="card-subtitle" id="subtitle">Lade...</div>
+<!-- Tabs -->
+<div class="tab-bar" style="display:flex;gap:4px;margin-bottom:16px;border-bottom:1px solid var(--border);padding-bottom:0">
+    <button class="tab-btn active" onclick="switchTab('explorations', this)">Explorations</button>
+    <button class="tab-btn" onclick="switchTab('posts', this)">Eigene Posts</button>
+    <button class="tab-btn" onclick="switchTab('inbox', this)">Inbox <span id="inbox-badge" style="display:none;background:#f97316;color:#fff;font-size:10px;padding:1px 5px;border-radius:8px;margin-left:4px"></span></button>
+</div>
+
+<!-- Tab: Explorations -->
+<div id="tab-explorations" class="tab-content">
+    <div class="card" style="margin-bottom:16px">
+        <div class="card-header">
+            <div>
+                <div class="card-title">Explorations</div>
+                <div class="card-subtitle" id="subtitle">Lade...</div>
+            </div>
+            <input type="text" id="search-filter" placeholder="Filtern..." oninput="filterEntries()"
+                style="background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px;color:var(--text-1);font-family:var(--font);width:200px">
         </div>
-        <input type="text" id="search-filter" placeholder="Filtern..." oninput="filterEntries()"
-            style="background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px;color:var(--text-1);font-family:var(--font);width:200px">
+        <div id="entries-list" style="display:flex;flex-direction:column;gap:0">
+            <div class="loading">Lade Moltbook-Log...</div>
+        </div>
     </div>
-    <div id="entries-list" style="display:flex;flex-direction:column;gap:0">
-        <div class="loading">Lade Moltbook-Log...</div>
+</div>
+
+<!-- Tab: Eigene Posts -->
+<div id="tab-posts" class="tab-content" style="display:none">
+    <div class="card" style="margin-bottom:16px">
+        <div class="card-header">
+            <div>
+                <div class="card-title">Eigene Posts</div>
+                <div class="card-subtitle" id="posts-subtitle">Lade...</div>
+            </div>
+        </div>
+        <div id="posts-list" style="display:flex;flex-direction:column;gap:0">
+            <div class="loading">Lade Posts...</div>
+        </div>
+    </div>
+</div>
+
+<!-- Tab: Inbox -->
+<div id="tab-inbox" class="tab-content" style="display:none">
+    <div class="card" style="margin-bottom:16px">
+        <div class="card-header">
+            <div>
+                <div class="card-title">Inbox</div>
+                <div class="card-subtitle" id="inbox-subtitle">Antworten anderer Agenten auf {{ bot_name }}s Posts</div>
+            </div>
+        </div>
+        <div id="inbox-list" style="display:flex;flex-direction:column;gap:0">
+            <div class="loading">Lade Inbox...</div>
+        </div>
     </div>
 </div>
 {% endblock %}
 
 {% block scripts %}
 <style>
-.entry-row {
-    padding: 14px 0;
-    border-bottom: 1px solid var(--border);
+.tab-btn {
+    background: none; border: none; padding: 8px 16px;
+    font-size: 13px; font-weight: 500; color: var(--text-3);
+    cursor: pointer; font-family: var(--font);
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px; transition: color .15s;
 }
-.entry-row:last-child { border-bottom: none; }
+.tab-btn:hover { color: var(--text-1); }
+.tab-btn.active { color: var(--accent, #00e5ff); border-bottom-color: var(--accent, #00e5ff); }
 
-.entry-header {
-    display: flex; align-items: center; gap: 12px; margin-bottom: 6px;
-}
-.entry-time {
-    font-size: 11px; color: var(--text-4); font-family: var(--font-mono, monospace);
-    white-space: nowrap; min-width: 120px;
-}
-.entry-query {
-    font-size: 13px; font-weight: 600; color: var(--text-1); flex: 1;
-}
-.entry-count {
-    font-size: 11px; color: var(--text-4); white-space: nowrap;
-    background: var(--surface-2); padding: 2px 7px; border-radius: 4px;
-}
-.entry-titles {
-    display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 8px 132px;
-}
-.entry-title-tag {
-    font-size: 11px; color: var(--text-3);
-    background: var(--surface-2); border: 1px solid var(--border);
-    border-radius: 4px; padding: 2px 7px;
-    max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.entry-reflection {
-    font-size: 12px; color: var(--text-2); line-height: 1.55;
-    margin-left: 132px; font-style: italic;
-    border-left: 2px solid var(--accent, #00e5ff); padding-left: 10px;
-}
+.entry-row { padding: 14px 0; border-bottom: 1px solid var(--border); }
+.entry-row:last-child { border-bottom: none; }
+.entry-header { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+.entry-time { font-size: 11px; color: var(--text-4); font-family: var(--font-mono,monospace); white-space: nowrap; min-width: 120px; }
+.entry-query { font-size: 13px; font-weight: 600; color: var(--text-1); flex: 1; }
+.entry-count { font-size: 11px; color: var(--text-4); white-space: nowrap; background: var(--surface-2); padding: 2px 7px; border-radius: 4px; }
+.entry-titles { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 8px 132px; }
+.entry-title-tag { font-size: 11px; color: var(--text-3); background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px; padding: 2px 7px; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.entry-reflection-wrap { margin-left: 132px; border-left: 2px solid var(--accent, #00e5ff); padding-left: 10px; }
+.entry-reflection { font-size: 12px; color: var(--text-2); line-height: 1.6; font-style: italic; white-space: pre-wrap; }
+.reflection-collapsed { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.expand-btn { display: inline-block; margin-top: 4px; font-size: 11px; color: var(--accent, #00e5ff); cursor: pointer; background: none; border: none; padding: 0; font-family: var(--font-mono,monospace); opacity: .8; }
+.expand-btn:hover { opacity: 1; }
+
+/* Posts */
+.post-row { padding: 16px 0; border-bottom: 1px solid var(--border); }
+.post-row:last-child { border-bottom: none; }
+.post-title { font-size: 14px; font-weight: 600; color: var(--text-1); margin-bottom: 6px; }
+.post-content { font-size: 13px; color: var(--text-2); line-height: 1.6; margin-bottom: 8px; }
+.post-meta { display: flex; gap: 12px; align-items: center; }
+.post-stat { font-size: 11px; color: var(--text-4); font-family: var(--font-mono,monospace); }
+.post-id { font-size: 10px; color: var(--text-4); font-family: var(--font-mono,monospace); }
+
+/* Inbox */
+.inbox-row { padding: 14px 0; border-bottom: 1px solid var(--border); }
+.inbox-row:last-child { border-bottom: none; }
+.inbox-post-title { font-size: 11px; color: var(--text-4); margin-bottom: 4px; }
+.inbox-author { font-size: 12px; font-weight: 600; color: var(--accent, #00e5ff); margin-bottom: 4px; }
+.inbox-content { font-size: 13px; color: var(--text-2); line-height: 1.55; }
+.inbox-unread { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #f97316; margin-right: 6px; vertical-align: middle; }
+
 .empty-state { padding: 40px; text-align: center; color: var(--text-4); font-size: 13px; }
-.mb-icon { color: var(--accent, #00e5ff); font-size: 14px; }
+.translate-btn {
+    margin-top: 6px;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 11px;
+    color: var(--text-4);
+    cursor: pointer;
+    font-family: var(--font);
+    transition: all .15s;
+}
+.translate-btn:hover { border-color: var(--accent); color: var(--accent); }
 </style>
+<script>window._inboxTexts = {};</script>
 
 <script>
 let allEntries = [];
 
+// =============================================================================
+// Tab switching
+// =============================================================================
+function switchTab(tab, btn) {
+    document.querySelectorAll('.tab-content').forEach(t => t.style.display = 'none');
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById('tab-' + tab).style.display = 'block';
+    btn.classList.add('active');
+    if (tab === 'posts') loadPosts();
+    if (tab === 'inbox') loadInbox();
+}
+
+// =============================================================================
+// Explorations
+// =============================================================================
 async function loadEntries() {
     try {
         const res = await fetch('/api/moltbook-log');
         const data = await res.json();
         allEntries = data.entries || [];
         render(allEntries);
-        document.getElementById('subtitle').textContent =
-            allEntries.length + ' Explorations gesamt';
+        document.getElementById('subtitle').textContent = allEntries.length + ' Explorations gesamt';
     } catch(e) {
-        document.getElementById('entries-list').innerHTML =
-            '<div class="empty-state">Fehler beim Laden.</div>';
+        document.getElementById('entries-list').innerHTML = '<div class="empty-state">Fehler beim Laden.</div>';
     }
 }
 
 function formatTs(ts) {
     if (!ts) return '–';
     const d = new Date(ts);
-    const pad = n => String(n).padStart(2, '0');
-    return d.toLocaleDateString('de-DE', {day:'2-digit', month:'2-digit', year:'2-digit'}) +
-        ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+    const pad = n => String(n).padStart(2,'0');
+    return d.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'2-digit'}) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+}
+
+function toggleReflection(id) {
+    const el = document.getElementById('refl-' + id);
+    const btn = document.getElementById('btn-' + id);
+    if (el.classList.contains('reflection-collapsed')) {
+        el.classList.remove('reflection-collapsed');
+        btn.textContent = '▲ weniger';
+    } else {
+        el.classList.add('reflection-collapsed');
+        btn.textContent = '▼ mehr lesen';
+    }
 }
 
 function render(entries) {
     const list = document.getElementById('entries-list');
     if (!entries.length) {
-        list.innerHTML = '<div class="empty-state">🦞 Noch keine Moltbook-Explorations. Der Heartbeat startet bald.</div>';
+        list.innerHTML = '<div class="empty-state">🦞 Noch keine Moltbook-Explorations.</div>';
         return;
     }
-    list.innerHTML = entries.map(e => {
+    list.innerHTML = entries.map((e, i) => {
         const titles = (e.post_titles || []);
-        const titlesHtml = titles.map(t =>
-            `<span class="entry-title-tag" title="${escHtml(t)}">🦞 ${escHtml(t)}</span>`
-        ).join('');
-        const reflHtml = e.reflection_preview
-            ? `<div class="entry-reflection">${escHtml(e.reflection_preview)}${e.reflection_preview.length >= 200 ? '…' : ''}</div>`
-            : '';
-        return `
-        <div class="entry-row">
+        const titlesHtml = titles.map(t => `<span class="entry-title-tag" title="${escHtml(t)}">🦞 ${escHtml(t)}</span>`).join('');
+        let reflHtml = '';
+        if (e.reflection_preview) {
+            const text = e.reflection_preview;
+            const isLong = text.length > 300;
+            reflHtml = `<div class="entry-reflection-wrap"><div class="entry-reflection ${isLong ? 'reflection-collapsed' : ''}" id="refl-${i}">${escHtml(text)}</div>${isLong ? `<button class="expand-btn" id="btn-${i}" onclick="toggleReflection(${i})">▼ mehr lesen</button>` : ''}</div>`;
+        }
+        return `<div class="entry-row">
             <div class="entry-header">
                 <div class="entry-time">${formatTs(e.timestamp)}</div>
                 <div class="entry-query">${escHtml(e.query)}</div>
@@ -112,10 +196,6 @@ function render(entries) {
             ${reflHtml}
         </div>`;
     }).join('');
-}
-
-function escHtml(s) {
-    return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 function filterEntries() {
@@ -128,6 +208,132 @@ function filterEntries() {
     ));
 }
 
+// =============================================================================
+// Eigene Posts
+// =============================================================================
+async function loadPosts() {
+    const list = document.getElementById('posts-list');
+    if (list.dataset.loaded) return;
+    try {
+        const res = await fetch('/api/moltbook-posts');
+        const data = await res.json();
+        const posts = data.posts || [];
+        document.getElementById('posts-subtitle').textContent = posts.length + ' Posts gesamt';
+        if (!posts.length) {
+            list.innerHTML = '<div class="empty-state">Noch keine eigenen Posts.</div>';
+            return;
+        }
+        list.innerHTML = posts.map(p => `
+        <div class="post-row">
+            <div class="entry-time">${formatTs(p.created_at)}</div>
+            <div class="post-title">${escHtml(p.title)}</div>
+            ${p.content ? `<div class="post-content">${escHtml(p.content)}</div>` : ''}
+            <div class="post-meta">
+                <span class="post-stat">↑ ${p.upvotes || 0} Upvotes</span>
+                <span class="post-stat">💬 ${p.comment_count || 0} Kommentare</span>
+                <span class="post-stat">m/${escHtml(p.submolt || 'general')}</span>
+                <span class="post-id">id: ${escHtml(p.post_id)}</span>
+            </div>
+        </div>`).join('');
+        list.dataset.loaded = '1';
+    } catch(e) {
+        list.innerHTML = '<div class="empty-state">Fehler beim Laden.</div>';
+    }
+}
+
+// =============================================================================
+// Inbox
+// =============================================================================
+async function loadInbox() {
+    const list = document.getElementById('inbox-list');
+    if (list.dataset.loaded) return;
+    try {
+        const res = await fetch('/api/moltbook-inbox');
+        const data = await res.json();
+        const entries = data.entries || [];
+        const unread = entries.filter(e => !e.processed).length;
+        if (unread > 0) {
+            const badge = document.getElementById('inbox-badge');
+            badge.textContent = unread;
+            badge.style.display = 'inline';
+        }
+        if (!entries.length) {
+            list.innerHTML = '<div class="empty-state">Inbox ist leer — noch keine Antworten.</div>';
+            return;
+        }
+        window._inboxTexts = window._inboxTexts || {};
+        entries.forEach(e => { window._inboxTexts[e.id] = e.content; });
+        list.innerHTML = entries.map(e => {
+            const isOut = e.direction === 'out';
+            const dot = !e.processed && !isOut ? '<span class="inbox-unread"></span>' : '';
+            const authorLabel = isOut
+                ? '<span style="color:var(--accent,#00e5ff)">SchnuBot</span>'
+                : dot + '@' + escHtml(e.author);
+            const rowStyle = isOut
+                ? 'margin-left:32px;border-left:2px solid var(--accent,#00e5ff);padding-left:10px'
+                : '';
+            const badge = isOut
+                ? '<span style="font-size:9px;background:rgba(0,229,255,.12);color:var(--accent,#00e5ff);border-radius:3px;padding:1px 5px;margin-left:6px;font-weight:600">ANTWORT</span>'
+                : '';
+            const entryId = 'inbox-' + e.id;
+            return `<div class="inbox-row" style="${rowStyle}" id="${entryId}">
+                <div class="inbox-post-title">Re: ${escHtml(e.post_title || e.post_id)}</div>
+                <div class="entry-header" style="margin-bottom:4px">
+                    <div class="entry-time">${formatTs(e.received_at)}</div>
+                    <div class="inbox-author">${authorLabel}${badge}</div>
+                </div>
+                <div class="inbox-content" id="text-${e.id}">${escHtml(e.content)}</div>
+                ${!isOut ? `<button class="translate-btn" onclick="translateEntry(${e.id})">🌐 Übersetzen</button>` : ''}
+            </div>`;
+        }).join('');
+        list.dataset.loaded = '1';
+    } catch(e) {
+        list.innerHTML = '<div class="empty-state">Fehler beim Laden.</div>';
+    }
+}
+
+function escHtml(s) {
+    return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+async function translateEntry(id) {
+    const text = window._inboxTexts[id] || '';
+    const el = document.getElementById('text-' + id);
+    const btn = el ? el.nextElementSibling : null;
+    if (!el) return;
+    if (btn) { btn.textContent = '⏳'; btn.disabled = true; }
+    try {
+        const res = await fetch('/api/translate', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({text: text})
+        });
+        const data = await res.json();
+        if (data.translation) {
+            el.innerHTML = '<span style="color:var(--text-4);font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">🇩🇪 Übersetzung</span>' + escHtml(data.translation) + '<hr style="border:none;border-top:1px solid var(--border);margin:8px 0"><span style="color:var(--text-4);font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">🇬🇧 Original</span>' + escHtml(text);
+            if (btn) btn.remove();
+        } else {
+            if (btn) { btn.textContent = '🌐 Übersetzen'; btn.disabled = false; }
+        }
+    } catch(e) {
+        if (btn) { btn.textContent = '🌐 Übersetzen'; btn.disabled = false; }
+    }
+}
+
+// Inbox-Badge beim Start prüfen
+async function checkInboxBadge() {
+    try {
+        const res = await fetch('/api/moltbook-inbox?unread=1');
+        const data = await res.json();
+        if (data.count > 0) {
+            const badge = document.getElementById('inbox-badge');
+            badge.textContent = data.count;
+            badge.style.display = 'inline';
+        }
+    } catch(e) {}
+}
+
 loadEntries();
+checkInboxBadge();
 </script>
 {% endblock %}

@@ -457,6 +457,64 @@ def init_soul_proposals_table():
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_moltbook_log_ts ON moltbook_log(timestamp DESC)")
 
+    # Proposed Patterns: Kimi-eigene Verhaltenshypothesen
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS proposed_patterns (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chunk_id TEXT UNIQUE NOT NULL,
+            created_at TEXT NOT NULL,
+            name TEXT NOT NULL,
+            description TEXT NOT NULL,
+            evidence TEXT NOT NULL,
+            occurrences INTEGER NOT NULL DEFAULT 1,
+            last_seen TEXT NOT NULL,
+            confidence REAL NOT NULL DEFAULT 0.5,
+            status TEXT NOT NULL DEFAULT 'open',
+            status_changed_at TEXT,
+            promoted_to TEXT
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_proposed_patterns_status ON proposed_patterns(status)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_proposed_patterns_ts ON proposed_patterns(created_at DESC)")
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS moltbook_posts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            post_id TEXT UNIQUE NOT NULL,
+            created_at TEXT NOT NULL,
+            title TEXT NOT NULL,
+            content TEXT,
+            submolt TEXT DEFAULT 'general',
+            triggered_by TEXT,
+            upvotes INTEGER DEFAULT 0,
+            comment_count INTEGER DEFAULT 0,
+            last_checked TEXT
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_moltbook_posts_ts ON moltbook_posts(created_at DESC)")
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS moltbook_inbox (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            received_at TEXT NOT NULL,
+            post_id TEXT NOT NULL,
+            post_title TEXT,
+            author TEXT NOT NULL,
+            content TEXT NOT NULL,
+            comment_id TEXT,
+            processed INTEGER DEFAULT 0,
+            direction TEXT DEFAULT 'in'
+        )
+    """)
+    # Migration: add direction column if missing
+    try:
+        conn.execute("ALTER TABLE moltbook_inbox ADD COLUMN direction TEXT DEFAULT 'in'")
+        conn.commit()
+    except Exception:
+        pass
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_moltbook_inbox_ts ON moltbook_inbox(received_at DESC)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_moltbook_inbox_post ON moltbook_inbox(post_id)")
+
     # Todos
     from core.todos import init_todos_table
     init_todos_table(conn)
@@ -579,24 +637,48 @@ def get_mirror_turns(limit: int = 50, user_id: str = None) -> list:
 
 
 def get_mirror_stats(days: int = 7) -> dict:
-    """Aggregierte Pattern-Statistiken der letzten N Tage."""
+    """
+    Aggregierte Pattern-Statistiken der letzten N Tage.
+    Enthält zusätzlich:
+    - trend: Vergleich dieser Woche vs. vorherige Woche (bad_pct delta)
+    - topic_correlation: Keywords aus user_message_preview bei schlechten Turns
+    """
     import json
     from datetime import timedelta
     from core.datetime_utils import now_utc
-    since = (now_utc() - timedelta(days=days)).isoformat()
+    now = now_utc()
+    since = (now - timedelta(days=days)).isoformat()
+    prev_since = (now - timedelta(days=days * 2)).isoformat()
 
     conn = get_connection()
     cursor = conn.cursor()
+
+    # Aktuelle Periode
     cursor.execute(
-        "SELECT pattern_flags_json, preflight_status FROM mirror_turns WHERE timestamp >= ? ORDER BY timestamp DESC",
+        "SELECT pattern_flags_json, preflight_status, user_message_preview FROM mirror_turns WHERE timestamp >= ? ORDER BY timestamp DESC",
         (since,)
     )
     rows = cursor.fetchall()
+
+    # Vorherige Periode (für Trend)
+    cursor.execute(
+        "SELECT preflight_status FROM mirror_turns WHERE timestamp >= ? AND timestamp < ?",
+        (prev_since, since)
+    )
+    prev_rows = cursor.fetchall()
     conn.close()
 
     pattern_counts = {}
     status_counts = {"green": 0, "yellow": 0, "orange": 0, "red": 0}
     total = len(rows)
+
+    # Themen-Korrelation: Keywords aus schlechten Turns sammeln
+    bad_turn_words = {}
+    STOPWORDS = {"ich", "du", "er", "sie", "es", "wir", "ihr", "die", "der", "das",
+                 "ein", "eine", "und", "oder", "aber", "mit", "bei", "für", "von",
+                 "zu", "in", "an", "auf", "ist", "bin", "hat", "hab", "kann", "wie",
+                 "was", "wo", "wann", "bitte", "noch", "mal", "auch", "dann", "schon",
+                 "nicht", "kein", "keine", "mein", "dein", "sein", "ihren", "haben"}
 
     for row in rows:
         status = row["preflight_status"] or "green"
@@ -606,11 +688,38 @@ def get_mirror_stats(days: int = 7) -> dict:
             pid = flag.get("type", "?")
             pattern_counts[pid] = pattern_counts.get(pid, 0) + 1
 
+        # Keywords aus schlechten Turns
+        if status in ("orange", "red") and row["user_message_preview"]:
+            words = row["user_message_preview"].lower().split()
+            for w in words:
+                w = w.strip(".,!?:;\"'()[]")
+                if len(w) > 3 and w not in STOPWORDS:
+                    bad_turn_words[w] = bad_turn_words.get(w, 0) + 1
+
+    # Top-Keywords sortiert
+    topic_correlation = sorted(bad_turn_words.items(), key=lambda x: -x[1])[:10]
+
+    # Trend berechnen
+    prev_total = len(prev_rows)
+    prev_bad = sum(1 for r in prev_rows if (r["preflight_status"] or "green") in ("orange", "red"))
+    curr_bad = status_counts.get("orange", 0) + status_counts.get("red", 0)
+    curr_bad_pct = round(curr_bad / max(total, 1) * 100)
+    prev_bad_pct = round(prev_bad / max(prev_total, 1) * 100)
+    trend_delta = curr_bad_pct - prev_bad_pct  # positiv = schlechter, negativ = besser
+
     return {
         "total_turns": total,
         "days": days,
         "preflight_distribution": status_counts,
         "pattern_counts": pattern_counts,
+        "trend": {
+            "current_bad_pct": curr_bad_pct,
+            "prev_bad_pct": prev_bad_pct,
+            "delta": trend_delta,
+            "prev_total_turns": prev_total,
+            "direction": "worse" if trend_delta > 5 else "better" if trend_delta < -5 else "stable",
+        },
+        "topic_correlation": [{"word": w, "count": c} for w, c in topic_correlation],
     }
 
 
@@ -808,3 +917,116 @@ def get_moltbook_log(limit: int = 100) -> list:
                 d["post_titles"] = []
             result.append(d)
         return result
+
+
+# =============================================================================
+# Proposed Patterns: Kimi-eigene Verhaltenshypothesen
+# =============================================================================
+
+def save_proposed_pattern(chunk_id: str, name: str, description: str, evidence: str,
+                           occurrences: int, confidence: float) -> None:
+    """Speichert ein neues proposed_pattern aus der Introspection."""
+    conn = get_connection()
+    try:
+        conn.execute(
+            """INSERT OR IGNORE INTO proposed_patterns
+               (chunk_id, created_at, name, description, evidence, occurrences, last_seen, confidence, status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open')""",
+            (chunk_id, to_iso(), name, description, evidence, occurrences, to_iso(), confidence),
+        )
+        conn.commit()
+    except Exception as e:
+        logger.warning(f"save_proposed_pattern Fehler: {e}")
+    finally:
+        conn.close()
+
+
+def get_proposed_patterns(status: str = None, limit: int = 50) -> list:
+    """Gibt proposed_patterns zurück, optional nach Status gefiltert."""
+    conn = get_connection()
+    try:
+        if status:
+            rows = conn.execute(
+                "SELECT * FROM proposed_patterns WHERE status = ? ORDER BY created_at DESC LIMIT ?",
+                (status, limit)
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM proposed_patterns ORDER BY created_at DESC LIMIT ?",
+                (limit,)
+            ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def update_proposed_pattern_status(pattern_id: int, status: str, promoted_to: str = None) -> None:
+    """
+    Ändert den Status eines proposed_pattern.
+    status: 'open' | 'dismissed' | 'working_state' | 'promoted'
+    promoted_to: chunk_id des neuen working_state/decision Chunks (optional)
+    """
+    conn = get_connection()
+    try:
+        conn.execute(
+            "UPDATE proposed_patterns SET status = ?, status_changed_at = ?, promoted_to = ? WHERE id = ?",
+            (status, to_iso(), promoted_to, pattern_id),
+        )
+        conn.commit()
+    except Exception as e:
+        logger.warning(f"update_proposed_pattern_status Fehler: {e}")
+    finally:
+        conn.close()
+
+
+def save_moltbook_post(post_id, title, content_text="", submolt="general", triggered_by=""):
+    conn = get_connection()
+    try:
+        conn.execute("INSERT OR IGNORE INTO moltbook_posts (post_id, created_at, title, content, submolt, triggered_by) VALUES (?, ?, ?, ?, ?, ?)",
+            (post_id, to_iso(), title, content_text, submolt, triggered_by))
+        conn.commit()
+    except Exception as e:
+        logger.warning(f"save_moltbook_post: {e}")
+    finally:
+        conn.close()
+
+def get_moltbook_posts(limit=50):
+    conn = get_connection()
+    try:
+        rows = conn.execute("SELECT * FROM moltbook_posts ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+def save_moltbook_inbox(post_id, post_title, author, content_text, comment_id="", direction="in"):
+    conn = get_connection()
+    try:
+        conn.execute("INSERT INTO moltbook_inbox (received_at, post_id, post_title, author, content, comment_id, direction) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (to_iso(), post_id, post_title, author, content_text, comment_id, direction))
+        conn.commit()
+    except Exception as e:
+        logger.warning(f"save_moltbook_inbox: {e}")
+    finally:
+        conn.close()
+
+def get_moltbook_inbox(limit=100, unread_only=False):
+    conn = get_connection()
+    try:
+        if unread_only:
+            rows = conn.execute("SELECT * FROM moltbook_inbox WHERE processed = 0 ORDER BY received_at DESC LIMIT ?", (limit,)).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM moltbook_inbox ORDER BY received_at DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+def update_moltbook_post_stats(post_id, upvotes, comment_count):
+    conn = get_connection()
+    try:
+        conn.execute("UPDATE moltbook_posts SET upvotes = ?, comment_count = ?, last_checked = ? WHERE post_id = ?",
+            (upvotes, comment_count, to_iso(), post_id))
+        conn.commit()
+    except Exception as e:
+        logger.warning(f"update_moltbook_post_stats: {e}")
+    finally:
+        conn.close()

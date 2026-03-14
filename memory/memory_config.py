@@ -37,6 +37,7 @@ CHUNK_TYPES = [
     "self_reflection",
     "knowledge",
     "diary",
+    "proposed_pattern",  # Kimi-eigene Verhaltenshypothesen — Zwischenstufe vor echtem Pattern
 ]
 
 # =============================================================================
@@ -57,18 +58,16 @@ EPISTEMIC_STATUS = {
 
 # =============================================================================
 # Confidence-Schwellen - Mindestsicherheit pro Typ (Abschnitt 6.3)
-# Bewusst niedrig gehalten: lieber zu viel speichern und per Decay/Dedup
-# filtern als wichtige Infos zu verlieren. Das Retrieval-Scoring sorgt dafür
-# dass nur relevante Chunks im Prompt landen.
 # =============================================================================
 CONFIDENCE_THRESHOLDS = {
-    "decision":        0.70,
-    "hard_fact":       0.60,
-    "knowledge":       0.60,
-    "preference":      0.55,
-    "working_state":   0.50,
-    "self_reflection": 0.40,
-    "diary":           0.40,
+    "decision":          0.70,
+    "hard_fact":         0.60,
+    "knowledge":         0.60,
+    "preference":        0.55,
+    "working_state":     0.50,
+    "self_reflection":   0.40,
+    "diary":             0.40,
+    "proposed_pattern":  0.40,  # Bewusst niedrig: Hypothesen dürfen unsicher sein
 }
 
 CONFIDENCE_GLOBAL_MIN = 0.35
@@ -93,24 +92,26 @@ GLOBAL_MAX_CHUNKS = 30
 MIN_CHUNKS_IF_AVAILABLE = 3
 
 TYPE_CAPS = {
-    "knowledge":       25,
-    "hard_fact":       14,
-    "decision":         8,
-    "working_state":    8,
-    "preference":       7,
-    "self_reflection":  4,
+    "knowledge":          25,
+    "hard_fact":          14,
+    "decision":            8,
+    "working_state":       8,
+    "preference":          7,
+    "self_reflection":     8,
+    "proposed_pattern":    5,  # Selten retrieved — nur wenn thematisch relevant
 }
 
 # =============================================================================
 # Statische Typ-Faktoren (Abschnitt 8.4)
 # =============================================================================
 TYPE_FACTORS = {
-    "decision":        1.00,
-    "knowledge":       0.95,
-    "hard_fact":       0.90,
-    "preference":      0.80,
-    "working_state":   0.70,
-    "self_reflection": 0.60,
+    "decision":           1.00,
+    "knowledge":          0.95,
+    "hard_fact":          0.90,
+    "preference":         0.80,
+    "working_state":      0.70,
+    "self_reflection":    0.60,
+    "proposed_pattern":   0.55,  # Niedriger als self_reflection: Hypothese, nicht Erkenntnis
 }
 
 # =============================================================================
@@ -123,22 +124,24 @@ RECENCY_MINIMUM = 0.10
 # Type Decay - typspezifische Alterung (Abschnitt 8.5)
 # =============================================================================
 TYPE_DECAY = {
-    "working_state":   {"horizon_days": 21,  "minimum": 0.10},
-    "self_reflection": {"horizon_days": 60,  "minimum": 0.20},
-    "preference":      {"horizon_days": 180, "minimum": 0.40},
+    "working_state":    {"horizon_days": 21,  "minimum": 0.10},
+    "self_reflection":  {"horizon_days": 60,  "minimum": 0.20},
+    "preference":       {"horizon_days": 180, "minimum": 0.40},
+    "proposed_pattern": {"horizon_days": 30,  "minimum": 0.10},  # Verfällt schnell wenn nicht bestätigt
 }
 
 # =============================================================================
 # Weight-Modell (Abschnitt 10)
 # =============================================================================
 WEIGHT_BASELINES = {
-    "decision":        1.30,
-    "knowledge":       1.20,
-    "hard_fact":       1.15,
-    "preference":      1.00,
-    "working_state":   0.90,
-    "self_reflection": 0.85,
-    "diary":           0.90,
+    "decision":          1.30,
+    "knowledge":         1.20,
+    "hard_fact":         1.15,
+    "preference":        1.00,
+    "working_state":     0.90,
+    "self_reflection":   0.85,
+    "diary":             0.90,
+    "proposed_pattern":  0.75,  # Niedrig: muss sich durch Bestätigung verdienen
 }
 
 WEIGHT_ADJUSTMENTS = {
@@ -166,7 +169,7 @@ MERGE_MAX_CANDIDATES = 5
 # Konsolidierer - Buffer und Limits (Abschnitt 13)
 # =============================================================================
 BUFFER_MAX_TURNS_PER_BLOCK = 20
-CONSOLIDATION_MAX_ACTIONS_PER_BLOCK = 15  # Erhöht von 10: lieber mehr speichern
+CONSOLIDATION_MAX_ACTIONS_PER_BLOCK = 15
 
 # Lazy Consolidation (Abschnitt 13.3)
 LAZY_CONSOLIDATION_THRESHOLD = 50
@@ -174,7 +177,7 @@ LAZY_MIN_WORD_COUNT = 20
 LAZY_FALLBACK_HOURS = 48
 
 # Fast-Track (Abschnitt 13.3.1)
-FAST_TRACK_MAX_PER_CHAT = 8  # Erhöht von 3: mehr Sofortspeicherung erlauben
+FAST_TRACK_MAX_PER_CHAT = 8
 FAST_TRACK_CONFIDENCE_PENALTY = 0.05
 
 # Confidence-Sofortkorrektur (Abschnitt 13.3.2)
@@ -195,6 +198,7 @@ PROMPT_TYPE_ORDER = [
     "hard_fact",
     "preference",
     "self_reflection",
+    "proposed_pattern",
 ]
 
 # =============================================================================

@@ -1,0 +1,452 @@
+{% extends "base.html" %}
+{% block title %}Mind{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Mind</h1>
+    <p>{{ bot_name }}s inneres Leben — wie die vier Ebenen zusammenwirken und was gerade wo passiert</p>
+</div>
+
+<!-- Gesamtzustand -->
+<div class="state-hero" id="state-hero">
+    <div class="state-indicator" id="state-indicator">
+        <div class="state-dot" id="state-dot"></div>
+        <div class="state-info">
+            <div class="state-label" id="state-label">Lade...</div>
+            <div class="state-text" id="state-text"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Ebenen-Status -->
+<div class="levels-grid" id="levels-grid">
+    <div class="level-card loading-card">Lade...</div>
+</div>
+
+<!-- Zeitstrahl + Sidebar -->
+<div class="mind-layout">
+    <div class="mind-main">
+        <div class="card">
+            <div class="card-header">
+                <div>
+                    <div class="card-title">Gedankenlinie</div>
+                    <div class="card-subtitle">Alle eigenen Reflexionen chronologisch — Verbindungen zeigen replies_to-Ketten</div>
+                </div>
+                <div style="display:flex;gap:8px;align-items:center">
+                    <select id="filter-origin" onchange="filterTimeline()"
+                        style="background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:12px;color:var(--text-1);font-family:var(--font)">
+                        <option value="">Alle</option>
+                        <option value="moltbook">Moltbook</option>
+                        <option value="introspection">Introspection</option>
+                        <option value="inner_dialogue">Innerer Dialog</option>
+                        <option value="autonomous_reflection">Autonome Reflexion</option>
+                        <option value="diary">Diary</option>
+                    </select>
+                </div>
+            </div>
+            <div id="timeline-list" style="display:flex;flex-direction:column;gap:0">
+                <div class="loading">Lade Gedankenlinie...</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="mind-sidebar">
+        <!-- Offene Fragen -->
+        <div class="card" style="margin-bottom:16px">
+            <div class="card-header">
+                <div class="card-title">Offene Fragen</div>
+            </div>
+            <div id="open-questions-list">
+                <div class="loading">Lade...</div>
+            </div>
+        </div>
+
+        <!-- Proactive Candidates -->
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Für Tommy</div>
+                <div class="card-subtitle">Möchte er dir mitteilen</div>
+            </div>
+            <div id="proactive-list">
+                <div class="loading">Lade...</div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<style>
+/* Gesamtzustand Hero */
+.state-hero {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 20px;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+}
+.state-indicator {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+}
+.state-dot {
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    box-shadow: 0 0 8px currentColor;
+    transition: background .4s, box-shadow .4s;
+}
+.state-dot.green  { background: #34d399; box-shadow: 0 0 10px #34d39988; }
+.state-dot.blue   { background: #60a5fa; box-shadow: 0 0 10px #60a5fa88; }
+.state-dot.yellow { background: #fbbf24; box-shadow: 0 0 10px #fbbf2488; }
+.state-dot.orange { background: #f97316; box-shadow: 0 0 10px #f9731688; }
+.state-dot.gray   { background: var(--text-4); box-shadow: none; }
+
+.state-label {
+    font-size: 15px; font-weight: 600; color: var(--text-1);
+}
+.state-text {
+    font-size: 12px; color: var(--text-3); margin-top: 2px; line-height: 1.5;
+}
+
+/* Ebenen-Grid */
+.levels-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 20px;
+}
+.level-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    position: relative;
+    overflow: hidden;
+}
+.level-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+}
+.level-card.origin-moltbook::before         { background: #00e5ff; }
+.level-card.origin-introspection::before    { background: #a78bfa; }
+.level-card.origin-inner_dialogue::before   { background: #34d399; }
+.level-card.origin-autonomous_reflection::before { background: #fbbf24; }
+
+.level-icon { font-size: 18px; margin-bottom: 6px; }
+.level-label { font-size: 11px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 4px; }
+.level-time  { font-size: 11px; color: var(--text-4); font-family: var(--font-mono, monospace); margin-bottom: 8px; }
+.level-last  { font-size: 12px; color: var(--text-2); line-height: 1.5; font-style: italic; }
+.level-never { font-size: 12px; color: var(--text-4); }
+
+/* Layout */
+.mind-layout {
+    display: grid;
+    grid-template-columns: 1fr 300px;
+    gap: 16px;
+    align-items: start;
+}
+.mind-main {}
+.mind-sidebar {}
+
+/* Timeline */
+.timeline-entry {
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    gap: 12px;
+}
+.timeline-entry:last-child { border-bottom: none; }
+
+.timeline-indicator {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    flex-shrink: 0;
+    width: 28px;
+}
+.timeline-dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    margin-top: 4px;
+}
+.timeline-line {
+    width: 1px;
+    flex: 1;
+    margin-top: 4px;
+    min-height: 20px;
+}
+.dot-moltbook,          .line-moltbook          { background: #00e5ff; }
+.dot-introspection,     .line-introspection      { background: #a78bfa; }
+.dot-inner_dialogue,    .line-inner_dialogue     { background: #34d399; }
+.dot-autonomous_reflection, .line-autonomous_reflection { background: #fbbf24; }
+.dot-diary,             .line-diary              { background: var(--text-4); }
+.dot-other,             .line-other              { background: var(--border); }
+
+.timeline-content { flex: 1; min-width: 0; }
+.timeline-meta {
+    display: flex; gap: 8px; align-items: center; margin-bottom: 4px; flex-wrap: wrap;
+}
+.timeline-time { font-size: 11px; color: var(--text-4); font-family: var(--font-mono, monospace); }
+.timeline-origin-badge {
+    font-size: 10px; padding: 1px 6px; border-radius: 3px;
+    font-weight: 500; text-transform: uppercase; letter-spacing: .04em;
+}
+.badge-moltbook          { background: rgba(0,229,255,.12); color: #00e5ff; }
+.badge-introspection     { background: rgba(167,139,250,.12); color: #a78bfa; }
+.badge-inner_dialogue    { background: rgba(52,211,153,.12); color: #34d399; }
+.badge-autonomous_reflection { background: rgba(251,191,36,.12); color: #fbbf24; }
+.badge-diary             { background: var(--surface-2); color: var(--text-4); }
+.badge-other             { background: var(--surface-2); color: var(--text-4); }
+.badge-reflexion         { background: rgba(251,191,36,.12); color: #fbbf24; }
+
+.timeline-replies {
+    font-size: 10px; color: var(--text-4);
+    font-family: var(--font-mono, monospace);
+}
+.timeline-text {
+    font-size: 13px; color: var(--text-2); line-height: 1.55;
+    cursor: pointer;
+}
+.timeline-text.collapsed {
+    display: -webkit-box; -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical; overflow: hidden;
+}
+.timeline-type {
+    font-size: 10px; color: var(--text-4);
+    background: var(--surface-2); padding: 1px 5px;
+    border-radius: 3px; font-family: var(--font-mono, monospace);
+}
+
+/* Sidebar items */
+.sidebar-item {
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+}
+.sidebar-item:last-child { border-bottom: none; }
+.sidebar-item-time { font-size: 10px; color: var(--text-4); font-family: var(--font-mono,monospace); margin-bottom: 3px; }
+.sidebar-item-text { color: var(--text-2); line-height: 1.5; }
+.empty-sidebar { padding: 16px; text-align: center; color: var(--text-4); font-size: 12px; }
+
+.loading-card { color: var(--text-4); font-size: 13px; padding: 20px; }
+</style>
+
+<script>
+let allTimeline = [];
+
+const ORIGIN_LABELS = {
+    moltbook: 'Moltbook',
+    introspection: 'Introspection',
+    inner_dialogue: 'Dialog',
+    autonomous_reflection: 'Autonome Reflexion',
+    diary: 'Diary',
+    other: 'Other',
+};
+
+async function loadMind() {
+    try {
+        const res = await fetch('/api/mind');
+        const data = await res.json();
+        renderLevels(data.levels);
+        allTimeline = data.timeline || [];
+        renderTimeline(allTimeline);
+        renderOpenQuestions(data.open_questions || []);
+        renderProactive(data.proactive_candidates || []);
+        renderState(data.levels, data.open_questions || [], data.proactive_candidates || [], allTimeline);
+    } catch(e) {
+        document.getElementById('levels-grid').innerHTML = '<div style="color:var(--text-4);font-size:13px">Fehler beim Laden.</div>';
+    }
+}
+
+function computeState(levels, openQuestions, proactiveCandidates, timeline) {
+    const now = Date.now();
+
+    // Alter der letzten Aktivität pro Ebene (in Stunden)
+    const ages = Object.values(levels).map(l => {
+        if (!l.last_run) return Infinity;
+        return (now - new Date(l.last_run).getTime()) / 3600000;
+    });
+    const minAge = Math.min(...ages);
+    const maxAge = Math.max(...ages.filter(a => a !== Infinity));
+
+    // Letzter robot-Chunk Text
+    const lastChunk = timeline[0];
+    const lastText = lastChunk ? lastChunk.text.slice(0, 100) : null;
+
+    // Zustand berechnen
+    if (proactiveCandidates.length > 0) {
+        return {
+            dot: "orange",
+            label: "Hat etwas zu sagen",
+            text: `${proactiveCandidates.length} Gedanke${proactiveCandidates.length > 1 ? 'n' : ''} wartet auf Weiterleitung — ${lastText ? '„' + lastText + '..."' : ''}`,
+        };
+    }
+    if (openQuestions.length > 0) {
+        return {
+            dot: "yellow",
+            label: "Nachdenkend",
+            text: `${openQuestions.length} offene Frage${openQuestions.length > 1 ? 'n' : ''} — ${lastText ? '„' + lastText + '..."' : ''}`,
+        };
+    }
+    if (minAge < 1) {
+        return {
+            dot: "blue",
+            label: "Verarbeitend",
+            text: `Gerade aktiv — ${lastText ? '„' + lastText + '..."' : 'keine Details'}`,
+        };
+    }
+    if (maxAge !== undefined && maxAge < 6) {
+        return {
+            dot: "green",
+            label: "Aktiv",
+            text: `Letzte Aktivität vor ${Math.round(minAge * 60)}min — alles läuft`,
+        };
+    }
+    if (maxAge !== undefined && maxAge < 12) {
+        return {
+            dot: "blue",
+            label: "Ruhig",
+            text: `Letzte Aktivität vor ${Math.round(minAge)}h — wartet auf nächsten Heartbeat`,
+        };
+    }
+    return {
+        dot: "gray",
+        label: "Ruhend",
+        text: maxAge ? `Keine Aktivität seit ${Math.round(minAge)}h` : "Noch keine Aktivität registriert",
+    };
+}
+
+function renderState(levels, openQuestions, proactiveCandidates, timeline) {
+    const state = computeState(levels, openQuestions, proactiveCandidates, timeline);
+    document.getElementById('state-dot').className = `state-dot ${state.dot}`;
+    document.getElementById('state-label').textContent = state.label;
+    document.getElementById('state-text').textContent = state.text;
+}
+
+function formatTs(ts) {
+    if (!ts) return '–';
+    const d = new Date(ts);
+    const pad = n => String(n).padStart(2,'0');
+    return d.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'2-digit'})
+        + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+}
+
+function timeSince(ts) {
+    if (!ts) return 'nie';
+    const diff = (Date.now() - new Date(ts).getTime()) / 1000;
+    if (diff < 120) return 'gerade eben';
+    if (diff < 3600) return `vor ${Math.round(diff/60)}min`;
+    if (diff < 86400) return `vor ${Math.round(diff/3600)}h`;
+    return `vor ${Math.round(diff/86400)}d`;
+}
+
+function renderLevels(levels) {
+    const grid = document.getElementById('levels-grid');
+    const icons = {
+        moltbook: '🔍', introspection: '🪞',
+        inner_dialogue: '💬', autonomous_reflection: '🧠'
+    };
+    grid.innerHTML = Object.entries(levels).map(([key, level]) => {
+        const last = level.last_chunk;
+        const lastRunAgo = level.last_run ? timeSince(level.last_run) : 'nie';
+        return `
+        <div class="level-card origin-${key}">
+            <div class="level-icon">${icons[key] || '•'}</div>
+            <div class="level-label">${level.label}</div>
+            <div class="level-time">Letzter Lauf: ${lastRunAgo}</div>
+            ${last
+                ? `<div class="level-last">${escHtml(last.text)}</div>`
+                : `<div class="level-never">Noch kein Output</div>`
+            }
+        </div>`;
+    }).join('');
+}
+
+function renderTimeline(entries) {
+    const list = document.getElementById('timeline-list');
+    if (!entries.length) {
+        list.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-4);font-size:13px">Keine Einträge.</div>';
+        return;
+    }
+
+    list.innerHTML = entries.map((e, idx) => {
+        const isLast = idx === entries.length - 1;
+        const badgeClass = `badge-${e.origin}`;
+        const dotClass = `dot-${e.origin}`;
+        const lineClass = `line-${e.origin}`;
+        const originLabel = ORIGIN_LABELS[e.origin] || e.origin;
+        const repliesHint = e.replies_to
+            ? `<span class="timeline-replies">↩ ${e.replies_to.slice(0,8)}</span>`
+            : '';
+
+        return `
+        <div class="timeline-entry">
+            <div class="timeline-indicator">
+                <div class="timeline-dot ${dotClass}"></div>
+                ${!isLast ? `<div class="timeline-line ${lineClass}"></div>` : ''}
+            </div>
+            <div class="timeline-content">
+                <div class="timeline-meta">
+                    <span class="timeline-time">${formatTs(e.created_at)}</span>
+                    <span class="timeline-origin-badge ${badgeClass}">${originLabel}</span>
+                    <span class="timeline-type">${e.chunk_type}</span>
+                    ${repliesHint}
+                </div>
+                <div class="timeline-text collapsed" onclick="toggleText(this)">${escHtml(e.full_text || e.text)}</div>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+function filterTimeline() {
+    const origin = document.getElementById('filter-origin').value;
+    if (!origin) { renderTimeline(allTimeline); return; }
+    renderTimeline(allTimeline.filter(e => e.origin === origin));
+}
+
+function toggleText(el) {
+    el.classList.toggle('collapsed');
+}
+
+function renderOpenQuestions(items) {
+    const list = document.getElementById('open-questions-list');
+    if (!items.length) {
+        list.innerHTML = '<div class="empty-sidebar">Keine offenen Fragen</div>';
+        return;
+    }
+    list.innerHTML = items.map(e => `
+    <div class="sidebar-item">
+        <div class="sidebar-item-time">${formatTs(e.created_at)}</div>
+        <div class="sidebar-item-text">${escHtml(e.text)}</div>
+    </div>`).join('');
+}
+
+function renderProactive(items) {
+    const list = document.getElementById('proactive-list');
+    if (!items.length) {
+        list.innerHTML = '<div class="empty-sidebar">Nichts in der Warteschlange</div>';
+        return;
+    }
+    list.innerHTML = items.map(e => `
+    <div class="sidebar-item">
+        <div class="sidebar-item-time">${formatTs(e.created_at)}</div>
+        <div class="sidebar-item-text">${escHtml(e.text)}</div>
+    </div>`).join('');
+}
+
+function escHtml(s) {
+    return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+loadMind();
+// Auto-refresh alle 60s
+setInterval(loadMind, 60000);
+</script>
+{% endblock %}

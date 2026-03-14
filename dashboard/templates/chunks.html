@@ -4,8 +4,19 @@
 {% block content %}
 <div class="page-header">
     <h1>Chunk Explorer</h1>
-    <p>Alle Erinnerungen durchsuchen, bearbeiten und archivieren</p>
+    <p>Alle Memory-Chunks von {{ bot_name }} durchsuchen, bearbeiten und archivieren</p>
 </div>
+
+<!-- Tabs -->
+<div class="tab-bar" style="display:flex;gap:4px;margin-bottom:16px;border-bottom:1px solid var(--border);padding-bottom:0">
+    <button class="tab-btn active" id="tab-btn-chunks" onclick="switchTab('chunks', this)">Chunks</button>
+    <button class="tab-btn" id="tab-btn-genealogy" onclick="switchTab('genealogy', this)">Genealogy</button>
+</div>
+
+<!-- ══════════════════════════════════════════════
+     TAB: CHUNKS
+══════════════════════════════════════════════ -->
+<div id="tab-chunks">
 
 <div class="filters">
     <select class="filter-select" id="filter-type" onchange="loadChunks()">
@@ -61,7 +72,7 @@
                     <th style="width:46px" title="Retrievals">↑</th>
                     <th style="width:55px">Conf.</th>
                     <th style="width:55px">Weight</th>
-                    <th style="width:55px" title="Trust Budget — basiert auf MIRROR Turn-History">Trust</th>
+                    <th style="width:55px" title="Trust Budget">Trust</th>
                     <th style="width:65px">Alter</th>
                     <th style="width:60px">Source</th>
                     <th style="width:80px">Epistemic</th>
@@ -84,10 +95,122 @@
     </div>
     <div id="detail-content"></div>
 </div>
+
+</div><!-- end tab-chunks -->
+
+<!-- ══════════════════════════════════════════════
+     TAB: GENEALOGY
+══════════════════════════════════════════════ -->
+<div id="tab-genealogy" style="display:none">
+
+<div style="display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:20px;">
+    <div class="card" style="padding:16px;">
+        <div style="font-size:11px; color:var(--text-4); text-transform:uppercase; letter-spacing:0.06em; margin-bottom:6px;">Chunks gesamt</div>
+        <div style="font-size:24px; font-weight:650; color:var(--text-1);" id="g-stat-total">—</div>
+    </div>
+    <div class="card" style="padding:16px;">
+        <div style="font-size:11px; color:var(--text-4); text-transform:uppercase; letter-spacing:0.06em; margin-bottom:6px;">Häufigster Typ</div>
+        <div style="font-size:18px; font-weight:600; color:var(--accent);" id="g-stat-top-type">—</div>
+    </div>
+    <div class="card" style="padding:16px;">
+        <div style="font-size:11px; color:var(--text-4); text-transform:uppercase; letter-spacing:0.06em; margin-bottom:6px;">Ø Flag-Rate</div>
+        <div style="font-size:24px; font-weight:650; color:var(--text-1);" id="g-stat-flag-rate">—</div>
+    </div>
+    <div class="card" style="padding:16px;">
+        <div style="font-size:11px; color:var(--text-4); text-transform:uppercase; letter-spacing:0.06em; margin-bottom:6px;">Riskantester Chunk</div>
+        <div style="font-size:12px; font-weight:500; color:var(--red, #e55);" id="g-stat-riskiest">—</div>
+    </div>
+</div>
+
+<div style="display:flex; gap:8px; margin-bottom:16px; align-items:center; flex-wrap:wrap;">
+    <div style="font-size:12px; color:var(--text-4);">Typ:</div>
+    <button class="filter-btn active" onclick="setTypeFilter('all', this)">Alle</button>
+    <button class="filter-btn" onclick="setTypeFilter('preference', this)">Preference</button>
+    <button class="filter-btn" onclick="setTypeFilter('decision', this)">Decision</button>
+    <button class="filter-btn" onclick="setTypeFilter('hard_fact', this)">Hard Fact</button>
+    <button class="filter-btn" onclick="setTypeFilter('knowledge', this)">Knowledge</button>
+    <div style="margin-left:auto; font-size:12px; color:var(--text-4);">Sortierung:</div>
+    <select id="g-sort-select" onchange="renderGenealogyTable()" style="font-size:12px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-sm); padding:4px 8px; color:var(--text-2); font-family:var(--font);">
+        <option value="appearances">Häufigkeit ↓</option>
+        <option value="flag_rate">Flag-Rate ↓</option>
+        <option value="bad_turns">Bad Turns ↓</option>
+        <option value="avg_score">Avg Score ↓</option>
+        <option value="last_seen">Zuletzt gesehen ↓</option>
+    </select>
+</div>
+
+<div class="card" style="overflow:hidden;">
+    <table style="width:100%; border-collapse:collapse;" id="genealogy-table">
+        <thead>
+            <tr style="border-bottom:1px solid var(--border);">
+                <th style="text-align:left; padding:10px 14px; font-size:11px; font-weight:600; color:var(--text-4); text-transform:uppercase; letter-spacing:0.06em;">Chunk</th>
+                <th style="text-align:center; padding:10px 8px; font-size:11px; font-weight:600; color:var(--text-4); text-transform:uppercase; width:80px;">Typ</th>
+                <th style="text-align:center; padding:10px 8px; font-size:11px; font-weight:600; color:var(--text-4); text-transform:uppercase; width:70px;">Pulls</th>
+                <th style="text-align:center; padding:10px 8px; font-size:11px; font-weight:600; color:var(--text-4); text-transform:uppercase; width:80px;">Flag-Rate</th>
+                <th style="text-align:center; padding:10px 8px; font-size:11px; font-weight:600; color:var(--text-4); text-transform:uppercase; width:70px;">Bad</th>
+                <th style="text-align:center; padding:10px 8px; font-size:11px; font-weight:600; color:var(--text-4); text-transform:uppercase; width:70px;">Score</th>
+                <th style="text-align:right; padding:10px 14px; font-size:11px; font-weight:600; color:var(--text-4); text-transform:uppercase; width:100px;">Zuletzt</th>
+            </tr>
+        </thead>
+        <tbody id="g-table-body">
+            <tr><td colspan="7" style="text-align:center; padding:40px; color:var(--text-4);">Lade Daten…</td></tr>
+        </tbody>
+    </table>
+</div>
+
+</div><!-- end tab-genealogy -->
 {% endblock %}
 
 {% block scripts %}
+<style>
+.tab-btn {
+    background: none; border: none; padding: 8px 16px;
+    font-size: 13px; font-weight: 500; color: var(--text-3);
+    cursor: pointer; font-family: var(--font);
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px; transition: color .15s;
+}
+.tab-btn:hover { color: var(--text-1); }
+.tab-btn.active { color: var(--accent, #00e5ff); border-bottom-color: var(--accent, #00e5ff); }
+
+.filter-btn {
+    padding:4px 10px; font-size:11px; font-weight:500;
+    background:var(--surface); border:1px solid var(--border);
+    border-radius:var(--radius-sm); color:var(--text-3);
+    cursor:pointer; font-family:var(--font); transition:all 0.12s;
+}
+.filter-btn:hover { background:var(--bg); color:var(--text-2); }
+.filter-btn.active { background:var(--accent-dim); border-color:var(--accent); color:var(--accent); }
+
+.type-badge { font-size:10px; padding:2px 6px; border-radius:4px; font-weight:500; white-space:nowrap; }
+.type-preference { background:#e8f0fe; color:#1a73e8; }
+.type-decision    { background:#fce8e6; color:#c5221f; }
+.type-hard_fact   { background:#e6f4ea; color:#137333; }
+.type-knowledge   { background:#fef7e0; color:#b06000; }
+.type-working_state { background:#f3e8fd; color:#7b1fa2; }
+.type-self_reflection { background:#fce8e6; color:#c5221f; }
+.type-unknown     { background:var(--surface-2); color:var(--text-4); }
+
+.flag-bar { display:inline-block; height:6px; border-radius:3px; background:var(--border); width:40px; vertical-align:middle; position:relative; overflow:hidden; }
+.flag-bar-fill { position:absolute; left:0; top:0; height:100%; border-radius:3px; }
+tr.data-row:hover { background:var(--surface-2); }
+tr.data-row { border-bottom:1px solid var(--border); }
+tr.data-row:last-child { border-bottom:none; }
+</style>
+
 <script>
+// ── Tab switching ──
+function switchTab(tab, btn) {
+    document.getElementById('tab-chunks').style.display    = tab === 'chunks'    ? '' : 'none';
+    document.getElementById('tab-genealogy').style.display = tab === 'genealogy' ? '' : 'none';
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    if (tab === 'genealogy' && !window._genealogyLoaded) { loadGenealogyData(); window._genealogyLoaded = true; }
+}
+
+// ══════════════════════════════
+// CHUNKS TAB
+// ══════════════════════════════
 let searchTimeout = null;
 let allChunks = [];
 let selectedChunkId = null;
@@ -99,19 +222,17 @@ function debounceSearch() {
 }
 
 async function loadChunks() {
-    const type = document.getElementById('filter-type').value;
-    const source = document.getElementById('filter-source').value;
+    const type       = document.getElementById('filter-type').value;
+    const source     = document.getElementById('filter-source').value;
     const collection = document.getElementById('filter-collection').value;
-    const search = document.getElementById('filter-search').value;
-    const tag = document.getElementById('filter-tag').value;
-
+    const search     = document.getElementById('filter-search').value;
+    const tag        = document.getElementById('filter-tag').value;
     const params = new URLSearchParams();
     if (type) params.set('type', type);
     if (source) params.set('source', source);
     if (collection) params.set('collection', collection);
     if (search) params.set('search', search);
     if (tag) params.set('tag', tag);
-
     try {
         const res = await fetch('/api/chunks?' + params.toString());
         const data = await res.json();
@@ -120,62 +241,52 @@ async function loadChunks() {
         updateBulkBar();
         document.getElementById('chunk-count').textContent = data.total + ' Chunks';
         renderTable(data.chunks);
-        // Deep-Link: ?highlight=CHUNK_ID
         const urlParams = new URLSearchParams(window.location.search);
         const hlId = urlParams.get('highlight');
         if (hlId) {
-            const found = allChunks.find(function(c) { return c.id.startsWith(hlId) || hlId.startsWith(c.id.substring(0,8)); });
-            if (found) { showDetail(found.id); }
-            else { showDetail(hlId); } // versuche direkt
+            const found = allChunks.find(c => c.id.startsWith(hlId) || hlId.startsWith(c.id.substring(0,8)));
+            if (found) showDetail(found.id);
+            else showDetail(hlId);
         }
-    } catch (e) {
-        document.getElementById('chunk-table').innerHTML =
-            '<tr><td colspan="12" class="loading">Fehler: ' + e.message + '</td></tr>';
+    } catch(e) {
+        document.getElementById('chunk-table').innerHTML = '<tr><td colspan="12" class="loading">Fehler: ' + e.message + '</td></tr>';
     }
 }
 
 function renderTable(chunks) {
     if (!chunks.length) {
-        document.getElementById('chunk-table').innerHTML =
-            '<tr><td colspan="12" class="loading">Keine Chunks gefunden</td></tr>';
+        document.getElementById('chunk-table').innerHTML = '<tr><td colspan="12" class="loading">Keine Chunks gefunden</td></tr>';
         return;
     }
-
-    // Trust-Scores aus globalem Cache (wird separat geladen)
-    const rows = chunks.map(function(c) {
+    const rows = chunks.map(c => {
         const isSelected = c.id === selectedChunkId;
-        const isChecked = selectedIds.has(c.id);
-        const confBar = '<span class="score-bar"><span class="score-bar-fill" style="width:' + (c.confidence * 100) + '%"></span></span>';
-        const weightBar = '<span class="score-bar"><span class="score-bar-fill" style="width:' + ((c.weight / 2) * 100) + '%"></span></span>';
-        const trustVal = window._trustScores ? window._trustScores[c.id] : null;
-        const trustDisplay = trustVal !== null && trustVal !== undefined
-            ? '<span style="font-size:11px;color:' + (trustVal >= 0.8 ? '#4ade80' : trustVal >= 0.6 ? '#fbbf24' : '#f87171') + ';font-weight:600">' + Math.round(trustVal * 100) + '%</span>'
+        const isChecked  = selectedIds.has(c.id);
+        const confBar    = '<span class="score-bar"><span class="score-bar-fill" style="width:' + (c.confidence*100) + '%"></span></span>';
+        const weightBar  = '<span class="score-bar"><span class="score-bar-fill" style="width:' + ((c.weight/2)*100) + '%"></span></span>';
+        const trustVal   = window._trustScores ? window._trustScores[c.id] : null;
+        const trustDisplay = trustVal != null
+            ? '<span style="font-size:11px;color:' + (trustVal>=0.8?'#4ade80':trustVal>=0.6?'#fbbf24':'#f87171') + ';font-weight:600">' + Math.round(trustVal*100) + '%</span>'
             : '<span style="color:#555;font-size:10px">–</span>';
-        const tags = c.tags_list.map(function(t) { return '<span class="tag">' + t + '</span>'; }).join('');
-
-        // Vitalität berechnen
-        const retCount = c.retrieved_count || 0;
-        const lastRetMs = c.last_retrieved_at ? (Date.now() - new Date(c.last_retrieved_at)) : null;
-        const lastRetDays = lastRetMs ? Math.floor(lastRetMs / 86400000) : null;
-        const ageMs2 = c.created_at ? (Date.now() - new Date(c.created_at)) : null;
-        const ageDays2 = ageMs2 ? Math.floor(ageMs2 / 86400000) : null;
+        const tags = c.tags_list.map(t => '<span class="tag">' + t + '</span>').join('');
+        const retCount   = c.retrieved_count || 0;
+        const lastRetMs  = c.last_retrieved_at ? (Date.now() - new Date(c.last_retrieved_at)) : null;
+        const lastRetDays= lastRetMs ? Math.floor(lastRetMs/86400000) : null;
+        const ageMs2     = c.created_at ? (Date.now() - new Date(c.created_at)) : null;
+        const ageDays2   = ageMs2 ? Math.floor(ageMs2/86400000) : null;
         let vLabel, vStyle;
-        if (c.epistemic_status === 'superseded') { vLabel = 'superseded'; vStyle = 'color:#888;font-size:10px'; }
-        else if (c.epistemic_status === 'archived') { vLabel = 'archiviert'; vStyle = 'color:#666;font-size:10px'; }
-        else if (c.confidence < 0.3) { vLabel = '⚠ suspect'; vStyle = 'color:#f87171;font-size:10px'; }
-        else if (retCount === 0 && ageDays2 !== null && ageDays2 > 14) { vLabel = '💀 stale'; vStyle = 'color:#6b7280;font-size:10px'; }
-        else if (retCount === 0) { vLabel = '○ neu'; vStyle = 'color:#9ca3af;font-size:10px'; }
-        else if (lastRetDays !== null && lastRetDays <= 2) { vLabel = '🔥 hot'; vStyle = 'color:#f97316;font-size:10px;font-weight:600'; }
-        else if (lastRetDays !== null && lastRetDays <= 7) { vLabel = '🌤 aging'; vStyle = 'color:#fbbf24;font-size:10px'; }
-        else { vLabel = '🌫 stale'; vStyle = 'color:#6b7280;font-size:10px'; }
-
-        return '<tr class="' + (isSelected ? 'selected' : '') + '">' +
-            '<td onclick="event.stopPropagation()">' +
-                '<input type="checkbox" ' + (isChecked ? 'checked' : '') + ' onchange="toggleCheck(\'' + c.id + '\', this)">' +
-            '</td>' +
-            '<td class="mono" style="cursor:pointer" onclick="showDetail(\'' + c.id + '\')">' + c.id.substring(0, 8) + '</td>' +
+        if (c.epistemic_status==='superseded')                              { vLabel='superseded';  vStyle='color:#888;font-size:10px'; }
+        else if (c.epistemic_status==='archived')                           { vLabel='archiviert';  vStyle='color:#666;font-size:10px'; }
+        else if (c.confidence<0.3)                                          { vLabel='⚠ suspect';   vStyle='color:#f87171;font-size:10px'; }
+        else if (retCount===0 && ageDays2!==null && ageDays2>14)            { vLabel='💀 stale';    vStyle='color:#6b7280;font-size:10px'; }
+        else if (retCount===0)                                               { vLabel='○ neu';       vStyle='color:#9ca3af;font-size:10px'; }
+        else if (lastRetDays!==null && lastRetDays<=2)                      { vLabel='🔥 hot';      vStyle='color:#f97316;font-size:10px;font-weight:600'; }
+        else if (lastRetDays!==null && lastRetDays<=7)                      { vLabel='🌤 aging';    vStyle='color:#fbbf24;font-size:10px'; }
+        else                                                                 { vLabel='🌫 stale';    vStyle='color:#6b7280;font-size:10px'; }
+        return '<tr class="' + (isSelected?'selected':'') + '">' +
+            '<td onclick="event.stopPropagation()"><input type="checkbox" ' + (isChecked?'checked':'') + ' onchange="toggleCheck(\'' + c.id + '\', this)"></td>' +
+            '<td class="mono" style="cursor:pointer" onclick="showDetail(\'' + c.id + '\')">' + c.id.substring(0,8) + '</td>' +
             '<td style="cursor:pointer" onclick="showDetail(\'' + c.id + '\')"><span class="badge badge-' + c.chunk_type + '">' + c.chunk_type + '</span></td>' +
-            '<td class="text-col" style="cursor:pointer;max-width:260px" onclick="showDetail(\'' + c.id + '\')"><div style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word">' + escHtml(c.text) + '</div>' + (tags ? '<div style="margin-top:3px">' + tags + '</div>' : '') + '</td>' +
+            '<td class="text-col" style="cursor:pointer;max-width:260px" onclick="showDetail(\'' + c.id + '\')"><div style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word">' + escHtml(c.text) + '</div>' + (tags?'<div style="margin-top:3px">'+tags+'</div>':'') + '</td>' +
             '<td style="cursor:pointer" onclick="showDetail(\'' + c.id + '\')"><span style="' + vStyle + '">' + vLabel + '</span></td>' +
             '<td class="mono" style="cursor:pointer;text-align:center" onclick="showDetail(\'' + c.id + '\')">' + retCount + '</td>' +
             '<td class="mono">' + c.confidence + ' ' + confBar + '</td>' +
@@ -186,277 +297,203 @@ function renderTable(chunks) {
             '<td>' + c.epistemic_status + '</td>' +
             '</tr>';
     });
-
     document.getElementById('chunk-table').innerHTML = rows.join('');
 }
 
 function filterLocally() {
     const vitFilter = document.getElementById('filter-vitality').value;
     if (!vitFilter) { renderTable(allChunks); return; }
-    const filtered = allChunks.filter(function(c) {
-        const ret = c.retrieved_count || 0;
-        const lastMs = c.last_retrieved_at ? (Date.now() - new Date(c.last_retrieved_at)) : null;
-        const lastD = lastMs ? Math.floor(lastMs / 86400000) : null;
-        const ageMs = c.created_at ? (Date.now() - new Date(c.created_at)) : null;
-        const ageD = ageMs ? Math.floor(ageMs / 86400000) : null;
-        if (vitFilter === 'superseded') return c.epistemic_status === 'superseded';
-        if (vitFilter === 'suspect') return c.confidence < 0.3;
-        if (vitFilter === 'hot') return ret > 0 && lastD !== null && lastD <= 2;
-        if (vitFilter === 'aging') return ret > 0 && lastD !== null && lastD > 2 && lastD <= 7;
-        if (vitFilter === 'stale') return ret === 0 && ageD !== null && ageD > 14;
-        if (vitFilter === 'neu') return ret === 0 && (ageD === null || ageD <= 14);
+    const filtered = allChunks.filter(c => {
+        const ret=c.retrieved_count||0, lastMs=c.last_retrieved_at?(Date.now()-new Date(c.last_retrieved_at)):null;
+        const lastD=lastMs?Math.floor(lastMs/86400000):null, ageMs=c.created_at?(Date.now()-new Date(c.created_at)):null;
+        const ageD=ageMs?Math.floor(ageMs/86400000):null;
+        if (vitFilter==='superseded') return c.epistemic_status==='superseded';
+        if (vitFilter==='suspect')    return c.confidence<0.3;
+        if (vitFilter==='hot')        return ret>0 && lastD!==null && lastD<=2;
+        if (vitFilter==='aging')      return ret>0 && lastD!==null && lastD>2 && lastD<=7;
+        if (vitFilter==='stale')      return ret===0 && ageD!==null && ageD>14;
+        if (vitFilter==='neu')        return ret===0 && (ageD===null||ageD<=14);
         return true;
     });
     renderTable(filtered);
 }
 
-function toggleCheck(id, cb) {
-    if (cb.checked) selectedIds.add(id);
-    else selectedIds.delete(id);
-    updateBulkBar();
-}
-
-function toggleSelectAll(cb) {
-    allChunks.forEach(function(c) {
-        if (cb.checked) selectedIds.add(c.id);
-        else selectedIds.delete(c.id);
-    });
-    renderTable(allChunks);
-    updateBulkBar();
-}
-
-function clearSelection() {
-    selectedIds.clear();
-    document.getElementById('select-all').checked = false;
-    renderTable(allChunks);
-    updateBulkBar();
-}
-
+function toggleCheck(id, cb) { if (cb.checked) selectedIds.add(id); else selectedIds.delete(id); updateBulkBar(); }
+function toggleSelectAll(cb) { allChunks.forEach(c => { if (cb.checked) selectedIds.add(c.id); else selectedIds.delete(c.id); }); renderTable(allChunks); updateBulkBar(); }
+function clearSelection()    { selectedIds.clear(); document.getElementById('select-all').checked=false; renderTable(allChunks); updateBulkBar(); }
 function updateBulkBar() {
-    const bar = document.getElementById('bulk-bar');
-    const count = document.getElementById('bulk-count');
-    if (selectedIds.size > 0) {
-        bar.style.display = 'flex';
-        count.textContent = selectedIds.size + ' Chunk(s) ausgewaehlt';
-    } else {
-        bar.style.display = 'none';
-    }
+    const bar=document.getElementById('bulk-bar'), count=document.getElementById('bulk-count');
+    if (selectedIds.size>0) { bar.style.display='flex'; count.textContent=selectedIds.size+' Chunk(s) ausgewählt'; }
+    else { bar.style.display='none'; }
 }
-
 async function bulkArchive() {
     if (!selectedIds.size) return;
-    if (!confirm(selectedIds.size + ' Chunk(s) archivieren?')) return;
-    const res = await fetch('/api/chunks/bulk-archive', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ids: Array.from(selectedIds)})
-    });
+    if (!confirm(selectedIds.size+' Chunk(s) archivieren?')) return;
+    const res = await fetch('/api/chunks/bulk-archive', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:Array.from(selectedIds)})});
     const data = await res.json();
-    alert(data.archived + ' archiviert' + (data.errors.length ? ', ' + data.errors.length + ' Fehler' : '') + '.');
-    closeDetail();
-    loadChunks();
-
-    // Trust-Scores laden (MIRROR-basiert)
-    window._trustScores = {};
-    fetch('/api/chunks/trust')
-        .then(r => r.json())
-        .then(data => {
-            if (data && data.trust_scores) {
-                window._trustScores = data.trust_scores;
-                renderChunks();
-            }
-        })
-        .catch(function() {});
+    alert(data.archived+' archiviert'+(data.errors.length?', '+data.errors.length+' Fehler':'')+'.'); closeDetail(); loadChunks();
 }
 
 async function showDetail(chunkId) {
-    selectedChunkId = chunkId;
-    renderTable(allChunks);
-
+    selectedChunkId = chunkId; renderTable(allChunks);
     try {
-        const res = await fetch('/api/chunks/' + chunkId);
-        const c = await res.json();
-
-        if (c.error) {
-            document.getElementById('detail-content').innerHTML = '<div class="loading">' + c.error + '</div>';
-            return;
-        }
-
-        document.getElementById('detail-title').textContent = c.chunk_type + ' \u2014 ' + c.id.substring(0, 12);
-        document.getElementById('detail-subtitle').textContent = 'Erstellt: ' + (c.created_at ? c.created_at.substring(0, 19).replace('T', ' ') : '?') + ' (' + c.age + ')';
-
-        let extraRows = '';
-        if (c.last_confirmed_at) extraRows += detailRow('Bestaetigt', c.last_confirmed_at);
-        if (c.last_decay_at) extraRows += detailRow('Letzter Decay', c.last_decay_at);
-        if (c.supersedes) extraRows += detailRow('Ersetzt', '<span style="font-size:11px">' + c.supersedes + '</span>');
-
-        // Lebenslauf / Zustand berechnen
-        const retrievedCount = c.retrieved_count || 0;
-        const lastRetrieved = c.last_retrieved_at ? c.last_retrieved_at.substring(0,19).replace('T',' ') : null;
-        const ageMs = c.created_at ? (Date.now() - new Date(c.created_at)) : null;
-        const ageDays = ageMs ? Math.floor(ageMs / 86400000) : null;
-        const lastRetMs = c.last_retrieved_at ? (Date.now() - new Date(c.last_retrieved_at)) : null;
-        const lastRetDays = lastRetMs ? Math.floor(lastRetMs / 86400000) : null;
-
-        let vitality, vitalityColor;
-        if (retrievedCount === 0) {
-            vitality = 'ungenutzt'; vitalityColor = 'var(--text-dim)';
-        } else if (lastRetDays !== null && lastRetDays <= 2) {
-            vitality = '🔥 hot'; vitalityColor = 'var(--accent,#6366f1)';
-        } else if (lastRetDays !== null && lastRetDays <= 7) {
-            vitality = '🌤 aging'; vitalityColor = 'var(--amber,#f59e0b)';
-        } else {
-            vitality = '🌫 stale'; vitalityColor = 'var(--text-dim)';
-        }
-
-        // Entstehung
-        const createdFmt = c.created_at ? c.created_at.substring(0,19).replace('T',' ') : '—';
-        const sourceFmt = c.source || '—';
-        const confirmedFmt = c.last_confirmed_at ? c.last_confirmed_at.substring(0,16).replace('T',' ') : null;
-        const decayFmt = c.last_decay_at ? c.last_decay_at.substring(0,16).replace('T',' ') : null;
-        const supersedes = c.supersedes || null;
-
-        // Vollständige Vitalität im Detail
+        const res = await fetch('/api/chunks/'+chunkId);
+        const c   = await res.json();
+        if (c.error) { document.getElementById('detail-content').innerHTML='<div class="loading">'+c.error+'</div>'; return; }
+        document.getElementById('detail-title').textContent    = c.chunk_type+' — '+c.id.substring(0,12);
+        document.getElementById('detail-subtitle').textContent = 'Erstellt: '+(c.created_at?c.created_at.substring(0,19).replace('T',' '):'?')+' ('+c.age+')';
+        const retrievedCount=c.retrieved_count||0, lastRetrieved=c.last_retrieved_at?c.last_retrieved_at.substring(0,19).replace('T',' '):null;
+        const ageMs=c.created_at?(Date.now()-new Date(c.created_at)):null, ageDays=ageMs?Math.floor(ageMs/86400000):null;
+        const lastRetMs=c.last_retrieved_at?(Date.now()-new Date(c.last_retrieved_at)):null, lastRetDays=lastRetMs?Math.floor(lastRetMs/86400000):null;
         let vitalFull, vitalColorFull;
-        if (c.epistemic_status === 'superseded') { vitalFull = 'superseded'; vitalColorFull = '#6b7280'; }
-        else if (c.epistemic_status === 'archived') { vitalFull = 'archiviert'; vitalColorFull = '#6b7280'; }
-        else if (c.confidence < 0.3) { vitalFull = '⚠ suspect — niedrige Konfidenz'; vitalColorFull = '#f87171'; }
-        else if (retrievedCount === 0 && ageDays !== null && ageDays > 14) { vitalFull = '💀 stale — nie abgerufen, ' + ageDays + ' Tage alt'; vitalColorFull = '#6b7280'; }
-        else if (retrievedCount === 0) { vitalFull = '○ neu — noch nicht abgerufen'; vitalColorFull = '#9ca3af'; }
-        else if (lastRetDays !== null && lastRetDays <= 2) { vitalFull = '🔥 hot — zuletzt vor ' + lastRetDays + 'd'; vitalColorFull = '#f97316'; }
-        else if (lastRetDays !== null && lastRetDays <= 7) { vitalFull = '🌤 aging — zuletzt vor ' + lastRetDays + 'd'; vitalColorFull = '#fbbf24'; }
-        else { vitalFull = '🌫 stale — zuletzt vor ' + (lastRetDays !== null ? lastRetDays + 'd' : '?'); vitalColorFull = '#6b7280'; }
-
+        if (c.epistemic_status==='superseded')                              { vitalFull='superseded';                                   vitalColorFull='#6b7280'; }
+        else if (c.epistemic_status==='archived')                           { vitalFull='archiviert';                                   vitalColorFull='#6b7280'; }
+        else if (c.confidence<0.3)                                          { vitalFull='⚠ suspect — niedrige Konfidenz';               vitalColorFull='#f87171'; }
+        else if (retrievedCount===0&&ageDays!==null&&ageDays>14)            { vitalFull='💀 stale — nie abgerufen, '+ageDays+'d alt';   vitalColorFull='#6b7280'; }
+        else if (retrievedCount===0)                                        { vitalFull='○ neu — noch nicht abgerufen';                  vitalColorFull='#9ca3af'; }
+        else if (lastRetDays!==null&&lastRetDays<=2)                        { vitalFull='🔥 hot — zuletzt vor '+lastRetDays+'d';         vitalColorFull='#f97316'; }
+        else if (lastRetDays!==null&&lastRetDays<=7)                        { vitalFull='🌤 aging — zuletzt vor '+lastRetDays+'d';       vitalColorFull='#fbbf24'; }
+        else                                                                 { vitalFull='🌫 stale — zuletzt vor '+(lastRetDays!==null?lastRetDays+'d':'?'); vitalColorFull='#6b7280'; }
         const lebenslaufBlock =
             '<div style="border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:16px;background:var(--surface-2,#1a1a2e)">' +
                 '<div style="font-size:11px;text-transform:uppercase;letter-spacing:0.1em;color:var(--text-dim);margin-bottom:12px">Lebenszyklus</div>' +
                 '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">' +
-                    '<div><div style="font-size:10px;color:var(--text-dim);margin-bottom:2px">Zustand</div>' +
-                        '<div style="font-size:12px;font-weight:600;color:' + vitalColorFull + '">' + vitalFull + '</div></div>' +
-                    '<div><div style="font-size:10px;color:var(--text-dim);margin-bottom:2px">Retrievals gesamt</div>' +
-                        '<div style="font-size:18px;font-weight:700;color:var(--text-primary)">' + retrievedCount + '</div></div>' +
+                    '<div><div style="font-size:10px;color:var(--text-dim);margin-bottom:2px">Zustand</div><div style="font-size:12px;font-weight:600;color:'+vitalColorFull+'">'+vitalFull+'</div></div>' +
+                    '<div><div style="font-size:10px;color:var(--text-dim);margin-bottom:2px">Retrievals</div><div style="font-size:18px;font-weight:700">'+retrievedCount+'</div></div>' +
                 '</div>' +
                 '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px">' +
-                    '<div><div style="font-size:10px;color:var(--text-dim);margin-bottom:2px">Erstellt</div>' +
-                        '<div>' + createdFmt + '</div></div>' +
-                    '<div><div style="font-size:10px;color:var(--text-dim);margin-bottom:2px">Wodurch</div>' +
-                        '<div>' + sourceFmt + '</div></div>' +
-                    '<div><div style="font-size:10px;color:var(--text-dim);margin-bottom:2px">Zuletzt abgerufen</div>' +
-                        '<div>' + (lastRetrieved || '—') + '</div></div>' +
-                    '<div><div style="font-size:10px;color:var(--text-dim);margin-bottom:2px">Alter</div>' +
-                        '<div>' + (ageDays !== null ? ageDays + ' Tage' : '—') + '</div></div>' +
-                    (confirmedFmt ? '<div><div style="font-size:10px;color:var(--text-dim);margin-bottom:2px">Bestätigt</div><div style="color:#4ade80">' + confirmedFmt + '</div></div>' : '') +
-                    (decayFmt ? '<div><div style="font-size:10px;color:var(--text-dim);margin-bottom:2px">Letzter Decay</div><div style="color:#f87171">' + decayFmt + '</div></div>' : '') +
-                    (supersedes ? '<div style="grid-column:1/-1"><div style="font-size:10px;color:var(--text-dim);margin-bottom:2px">Ersetzt Chunk</div><div style="font-size:10px;font-family:monospace;color:#a78bfa">' + supersedes + '</div></div>' : '') +
+                    '<div><div style="font-size:10px;color:var(--text-dim);margin-bottom:2px">Erstellt</div><div>'+(c.created_at?c.created_at.substring(0,19).replace('T',' '):'—')+'</div></div>' +
+                    '<div><div style="font-size:10px;color:var(--text-dim);margin-bottom:2px">Source</div><div>'+(c.source||'—')+'</div></div>' +
+                    '<div><div style="font-size:10px;color:var(--text-dim);margin-bottom:2px">Zuletzt abgerufen</div><div>'+(lastRetrieved||'—')+'</div></div>' +
+                    '<div><div style="font-size:10px;color:var(--text-dim);margin-bottom:2px">Alter</div><div>'+(ageDays!==null?ageDays+' Tage':'—')+'</div></div>' +
+                    (c.last_confirmed_at?'<div><div style="font-size:10px;color:var(--text-dim);margin-bottom:2px">Bestätigt</div><div style="color:#4ade80">'+c.last_confirmed_at.substring(0,16).replace('T',' ')+'</div></div>':'') +
+                    (c.supersedes?'<div style="grid-column:1/-1"><div style="font-size:10px;color:var(--text-dim);margin-bottom:2px">Ersetzt</div><div style="font-size:10px;font-family:monospace;color:#a78bfa">'+c.supersedes+'</div></div>':'') +
                 '</div>' +
             '</div>';
-
         document.getElementById('detail-content').innerHTML =
-            '<div class="detail-text" style="white-space:pre-wrap">' + escHtml(c.text) + '</div>' +
+            '<div class="detail-text" style="white-space:pre-wrap">'+escHtml(c.text)+'</div>' +
             lebenslaufBlock +
             '<div style="margin-top:20px;display:flex;flex-direction:column;gap:10px">' +
-                detailRow('Weight',
-                    '<input id="edit-weight" type="number" min="0" max="2" step="0.05" value="' + c.weight + '" ' +
-                    'style="width:70px;background:var(--surface-input,rgba(0,0,0,0.04));color:var(--text-primary);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-family:inherit;font-size:13px">') +
-                detailRow('Confidence',
-                    '<input id="edit-confidence" type="number" min="0" max="1" step="0.05" value="' + c.confidence + '" ' +
-                    'style="width:70px;background:var(--surface-input,rgba(0,0,0,0.04));color:var(--text-primary);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-family:inherit;font-size:13px">') +
-                detailRow('Tags',
-                    '<input id="edit-tags" type="text" value="' + escAttr(c.tags) + '" placeholder="tag1, tag2, ..." ' +
-                    'style="width:100%;background:var(--surface-input,rgba(0,0,0,0.04));color:var(--text-primary);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-family:inherit;font-size:13px">') +
+                detailRow('Weight','<input id="edit-weight" type="number" min="0" max="2" step="0.05" value="'+c.weight+'" style="width:70px;background:var(--surface-input,rgba(0,0,0,0.04));color:var(--text-primary);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-family:inherit;font-size:13px">') +
+                detailRow('Confidence','<input id="edit-confidence" type="number" min="0" max="1" step="0.05" value="'+c.confidence+'" style="width:70px;background:var(--surface-input,rgba(0,0,0,0.04));color:var(--text-primary);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-family:inherit;font-size:13px">') +
+                detailRow('Tags','<input id="edit-tags" type="text" value="'+escAttr(c.tags)+'" placeholder="tag1, tag2, ..." style="width:100%;background:var(--surface-input,rgba(0,0,0,0.04));color:var(--text-primary);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-family:inherit;font-size:13px">') +
                 '<div style="display:flex;gap:8px;margin-top:4px">' +
-                    '<button onclick="saveChunk(\'' + c.id + '\')" style="background:var(--accent,#00e5ff);color:#000;border:none;padding:6px 16px;border-radius:6px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:600">Speichern</button>' +
-                    '<button onclick="archiveChunk(\'' + c.id + '\')" style="background:#c0392b;color:#fff;border:none;padding:6px 16px;border-radius:6px;cursor:pointer;font-family:inherit;font-size:13px">Archivieren</button>' +
+                    '<button onclick="saveChunk(\''+c.id+'\')" style="background:var(--accent,#00e5ff);color:#000;border:none;padding:6px 16px;border-radius:6px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:600">Speichern</button>' +
+                    '<button onclick="archiveChunk(\''+c.id+'\')" style="background:#c0392b;color:#fff;border:none;padding:6px 16px;border-radius:6px;cursor:pointer;font-family:inherit;font-size:13px">Archivieren</button>' +
                 '</div>' +
                 '<div id="save-status" style="font-size:12px;color:var(--text-muted);min-height:18px"></div>' +
                 '<div style="border-top:1px solid var(--border);padding-top:12px;margin-top:4px">' +
-                    detailRow('ID', '<span style="font-size:11px">' + c.id + '</span>') +
-                    detailRow('Typ', '<span class="badge badge-' + c.chunk_type + '">' + c.chunk_type + '</span>') +
-                    detailRow('Source', c.source) +
-                    detailRow('Epistemic', c.epistemic_status) +
-                    detailRow('Status', '<span class="badge badge-' + c.status + '">' + c.status + '</span>') +
-                    detailRow('Erstellt', c.created_at || '\u2014') +
-                    (c.last_retrieved_at ? detailRow('Letzte Nutzung', '<a href="/retrieval" style="color:var(--accent);font-size:12px">→ Retrieval Log</a>') : '') +
-                    extraRows +
+                    detailRow('ID','<span style="font-size:11px">'+c.id+'</span>') +
+                    detailRow('Typ','<span class="badge badge-'+c.chunk_type+'">'+c.chunk_type+'</span>') +
+                    detailRow('Source',c.source) +
+                    detailRow('Epistemic',c.epistemic_status) +
+                    detailRow('Status','<span class="badge badge-'+c.status+'">'+c.status+'</span>') +
+                    detailRow('Erstellt',c.created_at||'—') +
                 '</div>' +
             '</div>';
-
         document.getElementById('detail-panel').classList.add('visible');
-        setTimeout(function() {
-            const panel = document.getElementById('detail-panel');
-            const saveBtn = panel.querySelector('#save-status');
-            if (saveBtn) saveBtn.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-            else panel.scrollTop = panel.scrollHeight;
-        }, 80);
-    } catch (e) {
-        document.getElementById('detail-content').innerHTML = '<div class="loading">Fehler: ' + e.message + '</div>';
-    }
+    } catch(e) { document.getElementById('detail-content').innerHTML='<div class="loading">Fehler: '+e.message+'</div>'; }
 }
 
-function detailRow(label, val) {
-    return '<div class="detail-row"><div class="detail-label">' + label + '</div><div class="detail-value">' + val + '</div></div>';
-}
+function detailRow(label, val) { return '<div class="detail-row"><div class="detail-label">'+label+'</div><div class="detail-value">'+val+'</div></div>'; }
 
 async function saveChunk(id) {
-    const weight = parseFloat(document.getElementById('edit-weight').value);
-    const confidence = parseFloat(document.getElementById('edit-confidence').value);
-    const tags = document.getElementById('edit-tags').value;
-    const status = document.getElementById('save-status');
-
-    status.textContent = 'Speichern...';
-    status.style.color = 'var(--text-muted)';
+    const weight=parseFloat(document.getElementById('edit-weight').value);
+    const confidence=parseFloat(document.getElementById('edit-confidence').value);
+    const tags=document.getElementById('edit-tags').value;
+    const status=document.getElementById('save-status');
+    status.textContent='Speichern...'; status.style.color='var(--text-muted)';
     try {
-        const res = await fetch('/api/chunks/' + id, {
-            method: 'PATCH',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({weight: weight, confidence: confidence, tags: tags})
-        });
-        const data = await res.json();
-        if (data.ok) {
-            status.textContent = '\u2713 Gespeichert';
-            status.style.color = '#2ecc71';
-            const chunk = allChunks.find(function(c) { return c.id === id; });
-            if (chunk) { chunk.weight = weight; chunk.confidence = confidence; chunk.tags = tags; }
-            renderTable(allChunks);
-        } else {
-            status.textContent = 'Fehler: ' + (data.error || '?');
-            status.style.color = '#e74c3c';
-        }
-    } catch (e) {
-        status.textContent = 'Fehler: ' + e.message;
-        status.style.color = '#e74c3c';
-    }
+        const res=await fetch('/api/chunks/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({weight,confidence,tags})});
+        const data=await res.json();
+        if (data.ok) { status.textContent='✓ Gespeichert'; status.style.color='#2ecc71'; const chunk=allChunks.find(c=>c.id===id); if(chunk){chunk.weight=weight;chunk.confidence=confidence;chunk.tags=tags;} renderTable(allChunks); }
+        else { status.textContent='Fehler: '+(data.error||'?'); status.style.color='#e74c3c'; }
+    } catch(e) { status.textContent='Fehler: '+e.message; status.style.color='#e74c3c'; }
 }
 
 async function archiveChunk(id) {
     if (!confirm('Chunk archivieren?')) return;
-    const res = await fetch('/api/chunks/' + id + '/archive', {method: 'POST'});
-    const data = await res.json();
-    if (data.ok) {
-        closeDetail();
-        loadChunks();
-    } else {
-        alert('Fehler: ' + (data.error || '?'));
+    const res=await fetch('/api/chunks/'+id+'/archive',{method:'POST'});
+    const data=await res.json();
+    if (data.ok) { closeDetail(); loadChunks(); } else { alert('Fehler: '+(data.error||'?')); }
+}
+
+function closeDetail() { selectedChunkId=null; document.getElementById('detail-panel').classList.remove('visible'); renderTable(allChunks); }
+
+// ══════════════════════════════
+// GENEALOGY TAB
+// ══════════════════════════════
+let gAllChunks = [];
+let gTypeFilter = 'all';
+
+async function loadGenealogyData() {
+    try {
+        const res = await fetch('/api/genealogy/chunks');
+        gAllChunks = await res.json();
+        computeGenealogyStats();
+        renderGenealogyTable();
+    } catch(e) {
+        document.getElementById('g-table-body').innerHTML = '<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--text-4);">Fehler beim Laden</td></tr>';
     }
 }
 
-function closeDetail() {
-    selectedChunkId = null;
-    document.getElementById('detail-panel').classList.remove('visible');
-    renderTable(allChunks);
+function computeGenealogyStats() {
+    if (!gAllChunks.length) return;
+    document.getElementById('g-stat-total').textContent = gAllChunks.length;
+    const typeCounts={};
+    gAllChunks.forEach(c => { typeCounts[c.type]=(typeCounts[c.type]||0)+c.appearances; });
+    const topType=Object.entries(typeCounts).sort((a,b)=>b[1]-a[1])[0];
+    document.getElementById('g-stat-top-type').textContent = topType?topType[0]:'—';
+    const avgFlag=gAllChunks.reduce((s,c)=>s+c.flag_rate,0)/gAllChunks.length;
+    document.getElementById('g-stat-flag-rate').textContent = (avgFlag*100).toFixed(0)+'%';
+    const risky=gAllChunks.filter(c=>c.appearances>=3).sort((a,b)=>b.flag_rate-a.flag_rate)[0];
+    if (risky) document.getElementById('g-stat-riskiest').textContent=(risky.preview||risky.id).substring(0,40)+'…';
 }
 
-function escHtml(str) {
-    if (!str) return '';
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
+function setTypeFilter(type, btn) {
+    gTypeFilter=type;
+    document.querySelectorAll('.filter-btn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    renderGenealogyTable();
 }
 
-function escAttr(str) {
-    if (!str) return '';
-    return str.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+function renderGenealogyTable() {
+    const sortKey=document.getElementById('g-sort-select').value;
+    let filtered=gTypeFilter==='all'?gAllChunks:gAllChunks.filter(c=>c.type===gTypeFilter);
+    filtered=[...filtered].sort((a,b)=>sortKey==='last_seen'?b.last_seen.localeCompare(a.last_seen):b[sortKey]-a[sortKey]);
+    if (!filtered.length) { document.getElementById('g-table-body').innerHTML='<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--text-4);">Keine Daten</td></tr>'; return; }
+    const maxApp=Math.max(...filtered.map(c=>c.appearances));
+    document.getElementById('g-table-body').innerHTML = filtered.map(c => {
+        const typeClass='type-'+c.type;
+        const flagColor=c.flag_rate>0.6?'#e55':c.flag_rate>0.3?'#e8a000':'#34a853';
+        const flagWidth=Math.round(c.flag_rate*40);
+        const barWidth=Math.round((c.appearances/maxApp)*60);
+        const lastSeen=c.last_seen?c.last_seen.substring(0,10):'—';
+        const preview=(c.preview||c.id||'').substring(0,60);
+        return `<tr class="data-row">
+            <td style="padding:10px 14px;">
+                <div style="font-size:12px;font-weight:500;color:var(--text-1);margin-bottom:2px;">${escHtml(preview)}${c.preview&&c.preview.length>60?'…':''}</div>
+                <div style="font-size:10px;color:var(--text-4);font-family:monospace;">${c.id.substring(0,20)}…</div>
+                <div style="display:inline-block;height:3px;width:${barWidth}px;background:var(--accent);border-radius:2px;margin-top:4px;opacity:0.4;"></div>
+            </td>
+            <td style="text-align:center;padding:10px 8px;"><span class="type-badge ${typeClass}">${c.type}</span></td>
+            <td style="text-align:center;padding:10px 8px;font-size:13px;font-weight:600;">${c.appearances}</td>
+            <td style="text-align:center;padding:10px 8px;">
+                <div style="display:flex;align-items:center;justify-content:center;gap:5px;">
+                    <div class="flag-bar"><div class="flag-bar-fill" style="width:${flagWidth}px;background:${flagColor};"></div></div>
+                    <span style="font-size:11px;color:${flagColor};font-weight:500;">${(c.flag_rate*100).toFixed(0)}%</span>
+                </div>
+            </td>
+            <td style="text-align:center;padding:10px 8px;font-size:13px;color:${c.bad_turns>0?'var(--red,#e55)':'var(--text-4)'};font-weight:${c.bad_turns>0?600:400};">${c.bad_turns}</td>
+            <td style="text-align:center;padding:10px 8px;font-size:12px;color:var(--text-3);">${c.avg_score>0?c.avg_score.toFixed(3):'—'}</td>
+            <td style="text-align:right;padding:10px 14px;font-size:11px;color:var(--text-4);">${lastSeen}</td>
+        </tr>`;
+    }).join('');
 }
+
+// ── Shared helpers ──
+function escHtml(str) { if(!str) return ''; const d=document.createElement('div'); d.textContent=str; return d.innerHTML; }
+function escAttr(str) { if(!str) return ''; return str.replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 
 loadChunks();
 </script>
