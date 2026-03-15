@@ -1,8 +1,14 @@
 """
-SchnuBot.ai - Introspektions-Engine (v2)
+SchnuBot.ai - Mirror-Analyzer (ehem. Introspektions-Engine v2)
 
-Kimi schaut auf ihre eigenen MIRROR-Daten und reflektiert ihr Verhalten.
+Analysiert Kimis MIRROR-Daten und destilliert Verhaltensreflexionen.
 Läuft im Heartbeat — datengetrieben (Trigger: MIN_NEW_TURNS neue Turns).
+
+Abgrenzung:
+- Mirror-Analyzer (diese Datei): schaut auf Verhaltensdaten (Preflight, Patterns)
+  → erzeugt self_reflection- und proposed_pattern-Chunks
+- Self-Reflection (self_reflection_summary.py): liest die erzeugten Chunks
+  → baut Kimis akkumulierten Rückspiegel für autonomous_reflection
 
 Verbesserungen v2:
 1. chat_internal() statt direktem API-Call (kein WhatsApp-Kostüm)

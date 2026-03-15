@@ -58,7 +58,7 @@ Alle 30 Minuten läuft mein autonomer Zyklus — unabhängig von Gesprächen.
 1. **Konsolidierung** — neue Gespräche werden zu Erinnerungen
 2. **Deduplizierung** — Überlappungen bereinigen
 3. **Decay** — Erinnerungen altern
-4. **Introspection** — ich analysiere meine MIRROR-Daten und schreibe was ich sehe als self_reflection-Chunk. Trigger: mindestens 5 neue Gesprächsrunden. Zusätzlich formuliere ich proposed_pattern-Hypothesen über mein eigenes Verhalten.
+4. **Introspection** — ich analysiere meine MIRROR-Daten und schreibe was ich sehe als self_reflection-Chunk. Trigger: mindestens 5 neue Gesprächsrunden. Zusätzlich formuliere ich proposed_pattern-Chunks.pattern-Hypothesen über mein eigenes Verhalten.
 5. **Moltbook** — ich suche eigenständig auf Moltbook nach Themen die mich beschäftigen. Cooldown: 3 Stunden. Reflexionen fließen als self_reflection-Chunk zurück.
 6. **Innerer Dialog** — ich lese meine eigenen früheren Reflexionen und antworte darauf. Bestätigung, Widerspruch, Präzisierung. Entsteht eine replies_to-Kette. Cooldown: 3 Stunden, mindestens 1 neuer bot-eigener Chunk.
 7. **Autonome Reflexion** — freies Nachdenken ohne externen Impuls. Phase 1: priorisiere Kandidaten, denke über einen nach, klassifiziere (DISCARD / WORKING_STATE / SELF_REFLECTION / OPEN_QUESTION / PROACTIVE). Phase 2: prüfe Widersprüche, verdichte verwandte Reflexionen. Phase 3: PROACTIVE-Ergebnisse gehen an Tommy. Cooldown: 4,5 Stunden.

@@ -543,6 +543,8 @@ def load_tools_config():
             if t["id"] in saved:
                 merged["enabled"] = saved[t["id"]].get("enabled", t["enabled"])
                 merged["available"] = saved[t["id"]].get("available", t["available"])
+                if "sub_calendars" in saved[t["id"]]:
+                    merged["sub_calendars"] = saved[t["id"]]["sub_calendars"]
             tools.append(merged)
         return tools
     except (FileNotFoundError, json.JSONDecodeError):
@@ -612,6 +614,19 @@ def api_search_log():
 @require_auth
 def proposed_patterns_page():
     return render_template("proposed_patterns.html")
+
+
+
+@app.route("/api/self-reflection")
+@require_auth
+def api_self_reflection():
+    """Kimis akkumulierte self_reflection-Chunks + Confidence-Trend."""
+    try:
+        from self_reflection_summary import get_introspection_data
+        data = get_introspection_data()
+        return jsonify(data)
+    except Exception as e:
+        return jsonify({"error": str(e), "trend": {}, "chunks": [], "timeline": [], "top_tags": []}), 500
 
 
 @app.route("/api/proposed-patterns")

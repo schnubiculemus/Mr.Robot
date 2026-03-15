@@ -202,6 +202,8 @@ def _find_contradictions(candidates: list[dict]) -> tuple[dict, dict] | None:
 REFLECTION_PROMPT = """\
 Ich bin im internen Nachdenksmodus. Kein Chat, kein Tommy, kein Auftrag.
 
+{self_mirror}
+
 Ich denke über diesen eigenen früheren Gedanken nach:
 
 ---
@@ -527,7 +529,16 @@ def run_autonomous_reflection(user_id: str, last_run_iso: str = None) -> str | N
     age_days = safe_age_days(target.get("created_at", ""), default=0)
     age_desc = "gerade eben" if age_days == 0 else f"vor {age_days} Tagen"
 
+    # Kimis Rueckspiegel: akkumulierte self_reflection-Chunks
+    try:
+        from self_reflection_summary import get_self_reflection_summary
+        self_mirror = get_self_reflection_summary(max_chunks=6) or ""
+    except Exception as _e:
+        logger.debug(f"AutonomousReflection: Rueckspiegel nicht verfuegbar: {_e}")
+        self_mirror = ""
+
     prompt = REFLECTION_PROMPT.format(
+        self_mirror=self_mirror,
         thought=target["text"],
         origin=origin,
         age_desc=age_desc,

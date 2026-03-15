@@ -399,9 +399,11 @@ def get_consolidator_stats():
 # Soul Proposals
 # =============================================================================
 
-def init_soul_proposals_table():
+def init_soul_proposals_table(conn=None):
     """Erstellt die soul_proposals Tabelle falls nicht vorhanden."""
-    conn = get_connection()
+    _own_conn = conn is None
+    if _own_conn:
+        conn = get_connection()
     conn.execute("""
         CREATE TABLE IF NOT EXISTS soul_proposals (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -414,6 +416,9 @@ def init_soul_proposals_table():
         )
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_soul_proposals_ts ON soul_proposals(timestamp DESC)")
+    if _own_conn:
+        conn.commit()
+        conn.close()
 
     # Heartbeat-Timeline
     cursor.execute("""
@@ -512,12 +517,21 @@ def init_soul_proposals_table():
         conn.commit()
     except Exception:
         pass
+    # Migration: unique index on comment_id to prevent duplicate entries from backfill
+    try:
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_moltbook_inbox_comment_id ON moltbook_inbox(comment_id) WHERE comment_id IS NOT NULL AND comment_id != ''")
+        conn.commit()
+    except Exception:
+        pass
     conn.execute("CREATE INDEX IF NOT EXISTS idx_moltbook_inbox_ts ON moltbook_inbox(received_at DESC)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_moltbook_inbox_post ON moltbook_inbox(post_id)")
 
     # Todos
     from core.todos import init_todos_table
     init_todos_table(conn)
+
+    # Soul Proposals
+    init_soul_proposals_table(conn)
 
     conn.commit()
     conn.close()
@@ -1001,7 +1015,7 @@ def get_moltbook_posts(limit=50):
 def save_moltbook_inbox(post_id, post_title, author, content_text, comment_id="", direction="in"):
     conn = get_connection()
     try:
-        conn.execute("INSERT INTO moltbook_inbox (received_at, post_id, post_title, author, content, comment_id, direction) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        conn.execute("INSERT OR IGNORE INTO moltbook_inbox (received_at, post_id, post_title, author, content, comment_id, direction) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (to_iso(), post_id, post_title, author, content_text, comment_id, direction))
         conn.commit()
     except Exception as e:

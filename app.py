@@ -128,30 +128,6 @@ def webhook():
             send_message(phone_number, reply)
             return jsonify({"status": "ok"}), 200
 
-    # /merge Befehl — Soul-PR übernehmen (nur Owner)
-    if text.strip().lower() in ("/merge", "merge"):
-        if phone_number != OWNER_ID:
-            logger.warning(f"Merge abgelehnt: {phone_number} ist nicht Owner")
-            return jsonify({"status": "unauthorized"}), 200
-        from autonomy import handle_merge
-        reply = handle_merge(phone_number)
-        save_message(phone_number, "assistant", reply)
-        send_message(phone_number, reply)
-        logger.info(f"Soul-PR Merge: {reply[:100]}")
-        return jsonify({"status": "soul_merge"}), 200
-
-    # /ablehnen Befehl — Soul-PR verwerfen (nur Owner)
-    if text.strip().lower() in ("/ablehnen", "ablehnen"):
-        if phone_number != OWNER_ID:
-            logger.warning(f"Reject abgelehnt: {phone_number} ist nicht Owner")
-            return jsonify({"status": "unauthorized"}), 200
-        from autonomy import handle_reject
-        reply = handle_reject(phone_number)
-        save_message(phone_number, "assistant", reply)
-        send_message(phone_number, reply)
-        logger.info(f"Soul-PR Reject: {reply[:100]}")
-        return jsonify({"status": "soul_reject"}), 200
-
     # /status Befehl — System-Status und Chunk-Stats
     if text.strip().lower() in ("/status", "status"):
         reply = _build_status_reply()

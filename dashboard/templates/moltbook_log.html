@@ -119,6 +119,19 @@
     transition: all .15s;
 }
 .translate-btn:hover { border-color: var(--accent); color: var(--accent); }
+.inbox-group { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 10px; overflow: hidden; }
+.inbox-group-header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 12px 16px; cursor: pointer;
+    background: var(--surface-2); border-bottom: 1px solid var(--border);
+    transition: background .12s;
+}
+.inbox-group-header:hover { background: var(--bg); }
+.inbox-group-title { font-size: 13px; font-weight: 600; color: var(--text-1); }
+.inbox-group-chevron { font-size: 12px; color: var(--text-4); flex-shrink: 0; transition: transform .15s; }
+.inbox-group-body { padding: 0 16px; }
+.inbox-group-body .inbox-row:last-child { border-bottom: none; }
+
 </style>
 <script>window._inboxTexts = {};</script>
 
@@ -263,33 +276,74 @@ async function loadInbox() {
         }
         window._inboxTexts = window._inboxTexts || {};
         entries.forEach(e => { window._inboxTexts[e.id] = e.content; });
-        list.innerHTML = entries.map(e => {
-            const isOut = e.direction === 'out';
-            const dot = !e.processed && !isOut ? '<span class="inbox-unread"></span>' : '';
-            const authorLabel = isOut
-                ? '<span style="color:var(--accent,#00e5ff)">SchnuBot</span>'
-                : dot + '@' + escHtml(e.author);
-            const rowStyle = isOut
-                ? 'margin-left:32px;border-left:2px solid var(--accent,#00e5ff);padding-left:10px'
+
+        // Nach Post gruppieren
+        const groups = {};
+        const groupOrder = [];
+        entries.forEach(e => {
+            const key = e.post_id || 'unknown';
+            if (!groups[key]) {
+                groups[key] = { title: e.post_title || e.post_id || '–', entries: [] };
+                groupOrder.push(key);
+            }
+            groups[key].entries.push(e);
+        });
+
+        list.innerHTML = groupOrder.map(postId => {
+            const g = groups[postId];
+            const unreadCount = g.entries.filter(e => !e.processed && e.direction !== 'out').length;
+            const totalCount = g.entries.length;
+            const unreadBadge = unreadCount > 0
+                ? `<span style="font-size:10px;background:#f97316;color:#fff;border-radius:10px;padding:1px 6px;margin-left:6px;font-weight:600">${unreadCount} neu</span>`
                 : '';
-            const badge = isOut
-                ? '<span style="font-size:9px;background:rgba(0,229,255,.12);color:var(--accent,#00e5ff);border-radius:3px;padding:1px 5px;margin-left:6px;font-weight:600">ANTWORT</span>'
-                : '';
-            const entryId = 'inbox-' + e.id;
-            return `<div class="inbox-row" style="${rowStyle}" id="${entryId}">
-                <div class="inbox-post-title">Re: ${escHtml(e.post_title || e.post_id)}</div>
-                <div class="entry-header" style="margin-bottom:4px">
-                    <div class="entry-time">${formatTs(e.received_at)}</div>
-                    <div class="inbox-author">${authorLabel}${badge}</div>
+            const countBadge = `<span style="font-size:11px;color:var(--text-4);margin-left:8px">${totalCount} Einträge</span>`;
+
+            const entriesHtml = g.entries.map(e => {
+                const isOut = e.direction === 'out';
+                const dot = !e.processed && !isOut ? '<span class="inbox-unread"></span>' : '';
+                const authorLabel = isOut
+                    ? '<span style="color:var(--accent,#00e5ff);font-weight:600">SchnuBot</span>'
+                    : dot + '<span style="font-weight:600">@' + escHtml(e.author) + '</span>';
+                const rowStyle = isOut
+                    ? 'margin-left:20px;border-left:2px solid var(--accent,#00e5ff);padding-left:12px;background:rgba(0,229,255,.03);border-radius:0 6px 6px 0;'
+                    : '';
+                const badge = isOut
+                    ? '<span style="font-size:9px;background:rgba(0,229,255,.12);color:var(--accent,#00e5ff);border-radius:3px;padding:1px 5px;margin-left:6px;font-weight:600">ANTWORT</span>'
+                    : '';
+                return `<div class="inbox-row" style="${rowStyle}" id="inbox-${e.id}">
+                    <div class="entry-header" style="margin-bottom:4px">
+                        <div class="entry-time">${formatTs(e.received_at)}</div>
+                        <div class="inbox-author">${authorLabel}${badge}</div>
+                    </div>
+                    <div class="inbox-content" id="text-${e.id}">${escHtml(e.content)}</div>
+                    ${!isOut ? `<button class="translate-btn" onclick="translateEntry(${e.id})">🌐 Übersetzen</button>` : ''}
+                </div>`;
+            }).join('');
+
+            return `<div class="inbox-group" id="group-${postId}">
+                <div class="inbox-group-header" onclick="toggleInboxGroup('${postId}')">
+                    <div style="flex:1;min-width:0">
+                        <span class="inbox-group-title">${escHtml(g.title)}</span>
+                        ${unreadBadge}${countBadge}
+                    </div>
+                    <span class="inbox-group-chevron" id="chevron-${postId}">▾</span>
                 </div>
-                <div class="inbox-content" id="text-${e.id}">${escHtml(e.content)}</div>
-                ${!isOut ? `<button class="translate-btn" onclick="translateEntry(${e.id})">🌐 Übersetzen</button>` : ''}
+                <div class="inbox-group-body" id="gbody-${postId}">${entriesHtml}</div>
             </div>`;
         }).join('');
+
         list.dataset.loaded = '1';
     } catch(e) {
         list.innerHTML = '<div class="empty-state">Fehler beim Laden.</div>';
     }
+}
+
+function toggleInboxGroup(postId) {
+    const body = document.getElementById('gbody-' + postId);
+    const chev = document.getElementById('chevron-' + postId);
+    const isOpen = body.style.display !== 'none';
+    body.style.display = isOpen ? 'none' : 'block';
+    chev.textContent = isOpen ? '▸' : '▾';
 }
 
 function escHtml(s) {

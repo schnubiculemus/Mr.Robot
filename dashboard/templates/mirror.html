@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}MIRROR{% endblock %}
+{% block title %}Behavior{% endblock %}
 
 {% block content %}
 <style>
@@ -104,8 +104,8 @@
 
 <div class="mirror-header">
     <div>
-        <div class="mirror-title">MIRROR</div>
-        <div class="mirror-sub">Jede Gesprächsrunde wird automatisch analysiert — Preflight-Status, Pattern-Flags und welche Memory-Chunks aktiv waren.</div>
+        <div class="mirror-title">Behavior</div>
+        <div class="mirror-sub">Verhaltensanalyse, Muster-Erkennung und Kimis akkumuliertes Selbstbild.</div>
     </div>
     <div style="display:flex;gap:8px;align-items:center">
         <select id="days-select" onchange="loadStats()" style="padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);color:var(--text-2);font-size:12px;cursor:pointer">
@@ -119,8 +119,9 @@
 
 <!-- Tabs -->
 <div class="tab-bar" style="display:flex;gap:4px;margin-bottom:20px;border-bottom:1px solid var(--border);padding-bottom:0">
-    <button class="tab-btn active" onclick="switchMirrorTab('mirror', this)">MIRROR</button>
-    <button class="tab-btn" onclick="switchMirrorTab('hypotheses', this)">Pattern Hypotheses</button>
+    <button class="tab-btn active" onclick="switchMirrorTab('mirror', this)">Turns</button>
+    <button class="tab-btn" onclick="switchMirrorTab('hypotheses', this)">Pattern-Radar</button>
+    <button class="tab-btn" onclick="switchMirrorTab('self_reflection', this)">Self-Reflection</button>
 </div>
 
 <!-- ══ TAB: MIRROR ══ -->
@@ -173,15 +174,39 @@
     <div id="h-patterns-list"><div class="loading">Lade Hypothesen...</div></div>
 </div>
 </div><!-- end mtab-hypotheses -->
+<!-- ══ TAB: SELF-REFLECTION ══ -->
+<div id="mtab-self_reflection" style="display:none">
+<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px">
+    <div class="hyp-stat-box"><div class="hyp-stat-label">Gesamt Reflexionen</div><div class="hyp-stat-value" id="sr-count">–</div></div>
+    <div class="hyp-stat-box"><div class="hyp-stat-label">Confidence-Trend</div><div class="hyp-stat-value" id="sr-trend" style="font-size:16px;padding-top:6px">–</div></div>
+    <div class="hyp-stat-box"><div class="hyp-stat-label">Starke Überzeugungen</div><div class="hyp-stat-value" id="sr-strong">–</div></div>
+</div>
+<div id="sr-timeline-wrap" style="margin-bottom:20px;display:none">
+    <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text-4);margin-bottom:10px">Confidence-Verlauf</div>
+    <div id="sr-timeline-chart" style="display:flex;align-items:flex-end;gap:3px;height:60px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px"></div>
+</div>
+<div class="card">
+    <div class="card-header">
+        <div>
+            <div class="card-title">Akkumuliertes Selbstbild</div>
+            <div class="card-subtitle">Kimis eigene self_reflection-Chunks — was sie über sich selbst gelernt hat</div>
+        </div>
+    </div>
+    <div id="sr-list"><div class="loading">Lade...</div></div>
+</div>
+</div><!-- end mtab-self_reflection -->
+
 
 <script>
 // ══ Tab switching ══
 function switchMirrorTab(tab, btn) {
-    document.getElementById('mtab-mirror').style.display      = tab==='mirror'?'':'none';
-    document.getElementById('mtab-hypotheses').style.display  = tab==='hypotheses'?'':'none';
+    document.getElementById('mtab-mirror').style.display         = tab==='mirror'?'':'none';
+    document.getElementById('mtab-hypotheses').style.display     = tab==='hypotheses'?'':'none';
+    document.getElementById('mtab-self_reflection').style.display= tab==='self_reflection'?'':'none';
     document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
     btn.classList.add('active');
     if (tab==='hypotheses' && !window._hypLoaded) { loadHypotheses(); loadHypStats(); window._hypLoaded=true; }
+    if (tab==='self_reflection' && !window._srLoaded) { loadSelfReflection(); window._srLoaded=true; }
 }
 
 // ══════════════════════════════
@@ -352,6 +377,63 @@ async function doHypAction(id, action) {
         if (data.ok) { if(card){card.style.transition='opacity .3s';card.style.opacity='0';setTimeout(()=>{card.remove();loadHypStats();},300);} }
         else { alert('Fehler: '+(data.error||'?')); card?.querySelectorAll('.hyp-action-btn').forEach(b=>b.disabled=false); }
     } catch(e) { alert('Netzwerkfehler'); card?.querySelectorAll('.hyp-action-btn').forEach(b=>b.disabled=false); }
+}
+
+
+// ══════════════════════════════
+// SELF-REFLECTION TAB
+// ══════════════════════════════
+async function loadSelfReflection() {
+    try {
+        const res = await fetch('/api/self-reflection');
+        const data = await res.json();
+        renderSelfReflection(data);
+    } catch(e) {
+        document.getElementById('sr-list').innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-4)">Fehler beim Laden.</div>';
+    }
+}
+
+function renderSelfReflection(data) {
+    const trend = data.trend || {};
+    document.getElementById('sr-count').textContent = trend.total || 0;
+    const trendEl = document.getElementById('sr-trend');
+    const trendMap = { steigend: '↑ steigend', fallend: '↓ fallend', stabil: '→ stabil' };
+    const trendColor = { steigend: 'var(--accent)', fallend: 'var(--red)', stabil: 'var(--text-2)' };
+    trendEl.textContent = trendMap[trend.trend] || '–';
+    trendEl.style.color = trendColor[trend.trend] || 'var(--text-2)';
+    document.getElementById('sr-strong').textContent = trend.strong_count || 0;
+
+    // Confidence timeline chart
+    const timeline = data.timeline || [];
+    if (timeline.length > 0) {
+        document.getElementById('sr-timeline-wrap').style.display = 'block';
+        const chart = document.getElementById('sr-timeline-chart');
+        const max = Math.max(...timeline.map(t => t.confidence), 1);
+        chart.innerHTML = timeline.map(t => {
+            const h = Math.round((t.confidence / max) * 44);
+            const col = t.confidence >= 0.7 ? 'var(--accent)' : t.confidence >= 0.5 ? 'var(--amber)' : 'var(--red)';
+            return `<div title="${t.date}: ${Math.round(t.confidence*100)}%
+${t.preview}" style="flex:1;min-width:4px;height:${h}px;background:${col};border-radius:2px 2px 0 0;cursor:default"></div>`;
+        }).join('');
+    }
+
+    // Chunks list
+    const list = document.getElementById('sr-list');
+    const chunks = data.chunks || [];
+    if (!chunks.length) { list.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-4)">Noch keine Reflexionen gespeichert.</div>'; return; }
+
+    list.innerHTML = chunks.map(c => {
+        const date = (c.created_at||'').replace('T',' ').slice(0,16);
+        const conf = Math.round((c.confidence||0.5)*100);
+        const confColor = conf >= 70 ? 'var(--accent)' : conf >= 50 ? 'var(--amber)' : 'var(--text-4)';
+        const tags = (c.tags||[]).filter(t => !['autonom','robot','inner-dialogue'].includes(t));
+        const tagHtml = tags.slice(0,4).map(t => `<span style="font-size:10px;padding:1px 5px;border-radius:3px;background:var(--surface-2);border:1px solid var(--border);color:var(--text-4);font-family:monospace">${escHtml(t)}</span>`).join('');
+        return `<div class="pattern-hyp-card">
+            <div class="hyp-date">${date} · <span style="color:${confColor};font-family:monospace">${conf}%</span> · <span style="color:var(--text-4)">${escHtml(c.epistemic_status||'inferred')}</span></div>
+            <div class="hyp-desc">${escHtml(c.text)}</div>
+            ${tagHtml ? `<div style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap">${tagHtml}</div>` : ''}
+        </div>`;
+    }).join('');
 }
 
 function escHtml(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }

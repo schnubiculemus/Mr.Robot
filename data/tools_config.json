@@ -13,7 +13,42 @@
     "icon": "\ud83d\udcc5",
     "description": "Termine lesen und erstellen",
     "enabled": true,
-    "available": true
+    "available": true,
+    "sub_calendars": [
+      {
+        "id": "calendar_work",
+        "name": "Arbeit (Google)",
+        "provider": "google",
+        "enabled": true,
+        "permissions": {
+          "read": true,
+          "write": true,
+          "delete": false
+        }
+      },
+      {
+        "id": "calendar_private",
+        "name": "Privat (iCloud)",
+        "provider": "icloud",
+        "enabled": true,
+        "permissions": {
+          "read": true,
+          "write": true,
+          "delete": false
+        }
+      },
+      {
+        "id": "calendar_study",
+        "name": "Study (iCloud)",
+        "provider": "icloud",
+        "enabled": true,
+        "permissions": {
+          "read": true,
+          "write": true,
+          "delete": false
+        }
+      }
+    ]
   },
   {
     "id": "email",

@@ -27,7 +27,9 @@
             <div class="smr">
                 <div class="smn sm-cog" onclick="openPanel('moltbook')"><span class="smi">🔍</span><span class="smname">Moltbook</span><span class="smdot on"></span></div>
                 <div class="sma">→</div>
-                <div class="smn sm-cog" onclick="openPanel('introspection')"><span class="smi">🪞</span><span class="smname">Introspection</span><span class="smdot on"></span></div>
+                <div class="smn sm-cog" onclick="openPanel('mirror_analyzer')"><span class="smi">🪞</span><span class="smname">Mirror-Analyzer</span><span class="smdot on"></span></div>
+                <div class="sma">→</div>
+                <div class="smn sm-cog" onclick="openPanel('self_reflection')"><span class="smi">💡</span><span class="smname">Self-Reflection</span><span class="smdot on"></span></div>
                 <div class="sma">→</div>
                 <div class="smn sm-cog" onclick="openPanel('inner_dialogue')"><span class="smi">💬</span><span class="smname">Innerer Dialog</span><span class="smdot on"></span></div>
                 <div class="sma">→</div>
@@ -35,7 +37,7 @@
             </div>
         </div>
 
-        <div class="smv"><div class="smvl"></div><div class="smvl"></div><div class="smvl"></div><div class="smvl"></div></div>
+        <div class="smv"><div class="smvl"></div><div class="smvl"></div><div class="smvl"></div><div class="smvl"></div><div class="smvl"></div></div>
 
         <!-- Gedächtnis -->
         <div class="sms" style="--c:rgba(167,139,250,.07);--b:rgba(167,139,250,.25)">
@@ -135,7 +137,8 @@
 <script>
 const SYSTEMS = {
     moltbook:{ icon:"🔍", name:"Moltbook", group:"Kognition", color:"#00e5ff", desc:"Alle 3 Stunden erkundet SchnuBot autonom ein KI-Agenten-Netzwerk. Er wählt die Suchanfrage selbst — auch aus freier Neugier. Wenn eine Reflexion stark genug ist, postet er sie. Antworten anderer Agenten landen in der Inbox.", inputs:["Memory-Chunks","Freie Neugier"], outputs:["self_reflection-Chunk","Moltbook-Posts","Inbox-Antworten"]},
-    introspection:{ icon:"🪞", name:"Introspection", group:"Kognition", color:"#00e5ff", desc:"Nach jeweils 5 neuen Gesprächsrunden analysiert SchnuBot seine MIRROR-Daten. Er schreibt eine Selbsteinschätzung und formuliert Verhaltenshypothesen (proposed_pattern).", inputs:["MIRROR-Turns","Preflight-Daten"], outputs:["self_reflection-Chunk","proposed_pattern-Chunk"]},
+    mirror_analyzer:{ icon:"🪞", name:"Mirror-Analyzer", group:"Kognition", color:"#00e5ff", desc:"Nach jeweils 5 neuen Gesprächsrunden analysiert SchnuBot seine MIRROR-Daten. Er schreibt eine Selbsteinschätzung und formuliert Verhaltenshypothesen (proposed_pattern).", inputs:["MIRROR-Turns","Preflight-Daten"], outputs:["self_reflection-Chunk","proposed_pattern-Chunk"]},
+    self_reflection:{ icon:"💡", name:"Self-Reflection", group:"Kognition", color:"#00e5ff", desc:"SchnuBots akkumuliertes Selbstbild. Liest die gespeicherten self_reflection-Chunks aus ChromaDB und baut daraus einen strukturierten Rückspiegel — der in die Autonome Reflexion einfließt. Phase 2 (nach Tasksystem 2.0): SchnuBot kann das aktiv als Tool aufrufen.", inputs:["self_reflection-Chunks (ChromaDB)"], outputs:["Rückspiegel-Text für autonomous_reflection","Confidence-Trend"]},
     inner_dialogue:{ icon:"💬", name:"Innerer Dialog", group:"Kognition", color:"#00e5ff", desc:"Alle 3 Stunden liest SchnuBot seinen ältesten unbeantworteten eigenen Chunk und antwortet darauf. Jede Antwort trägt eine replies_to-Referenz.", inputs:["robot-eigene Chunks"], outputs:["self_reflection-Chunk (replies_to)"]},
     autonomous_reflection:{ icon:"🧠", name:"Autonome Reflexion", group:"Kognition", color:"#00e5ff", desc:"Freies Nachdenken alle 4,5 Stunden. Klassifiziert Kandidaten, prüft Widersprüche, leitet PROACTIVE → Tommy.", inputs:["robot-eigene Chunks","proposed_pattern"], outputs:["self_reflection / working_state / proactive_candidate"]},
     mirror:{ icon:"📊", name:"Behavior (MIRROR + Patterns)", group:"Gedächtnis", color:"#a78bfa", desc:"Loggt jede Gesprächsrunde: aktive Chunks, Preflight-Status, 5 Pattern-Detektoren. Pattern Hypotheses sind Verhaltenshypothesen die SchnuBot selbst destilliert — du entscheidest was daraus wird.", inputs:["Jede SchnuBot-Antwort","Aktive Chunks"], outputs:["Turn-Log","Preflight-Status","Pattern-Flags","proposed_pattern"]},
@@ -153,7 +156,49 @@ let toolsState={}, activeId=null;
 async function loadToolsState(){try{(await(await fetch('/api/tools')).json()).forEach(t=>{toolsState[t.id]=t;});updateDots();}catch(e){}}
 function updateDots(){[['calendar','tdot-calendar'],['tasks','tdot-tasks'],['pdf','tdot-pdf']].forEach(([tid,did])=>{const dot=document.getElementById(did);if(dot&&toolsState[tid])dot.style.background=toolsState[tid].enabled?'#34d399':'#6b7280';});}
 async function toggleTool(toolId,enabled){try{const r=await fetch(`/api/tools/${toolId}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled})});if(!r.ok)throw new Error('HTTP '+r.status);toolsState[toolId]={...(toolsState[toolId]||{}),enabled};updateDots();if(activeId)openPanel(activeId);}catch(e){alert('Fehler: '+e.message);}}
-function openPanel(id){const sys=SYSTEMS[id];if(!sys)return;activeId=id;document.querySelectorAll('.smn').forEach(n=>n.classList.remove('sm-active'));document.getElementById('p-icon').textContent=sys.icon;document.getElementById('p-name').textContent=sys.name;document.getElementById('p-group').innerHTML=`<span style="color:${sys.color}">${sys.group}</span>`;document.getElementById('p-desc').textContent=sys.desc;document.getElementById('p-inputs').innerHTML=sys.inputs?.length?`<div class="sm-io-label">Eingaben</div>${sys.inputs.map(i=>`<span class="sm-io-tag">${i}</span>`).join('')}`:'';document.getElementById('p-outputs').innerHTML=sys.outputs?.length?`<div class="sm-io-label">Ausgaben</div>${sys.outputs.map(o=>`<span class="sm-io-tag">${o}</span>`).join('')}`:'';const te=document.getElementById('p-toggle');if(sys.toolId&&toolsState[sys.toolId]?.available){const en=toolsState[sys.toolId].enabled;te.innerHTML=`<div class="sm-toggle-row"><span style="font-size:13px;color:var(--text-2);font-weight:500">Tool aktiv</span><div style="display:flex;align-items:center;gap:10px"><span style="font-size:12px;color:var(--text-4)">${en?'Ein':'Aus'}</span><div class="sm-toggle-track" style="background:${en?'#34d399':'var(--border)'}" onclick="toggleTool('${sys.toolId}',${!en})"><div class="sm-toggle-thumb" style="left:${en?'21px':'3px'}"></div></div></div></div>`;}else{te.innerHTML='';}document.getElementById('sm-overlay').classList.add('open');document.getElementById('sm-panel').classList.add('open');}
+function renderSubCalendars(toolData) {
+    if (!toolData || !toolData.sub_calendars || !toolData.sub_calendars.length) return '';
+    const calRows = toolData.sub_calendars.map(cal => {
+        const provColor = cal.provider === 'google' ? '#1a73e8' : '#555';
+        const provLabel = cal.provider === 'google' ? 'Google' : 'iCloud';
+        const en = cal.enabled;
+        const perms = cal.permissions || {};
+        const permChips = ['read','write','delete'].map(p => {
+            const active = p === 'read' || perms[p];
+            const locked = p === 'read' ? 'opacity:.5;cursor:default;' : 'cursor:pointer;';
+            const bg = active ? 'background:var(--accent-dim);border-color:var(--accent);color:var(--accent);' : '';
+            const icons = {read:'👁',write:'✏️',delete:'🗑'};
+            const labels = {read:'Lesen',write:'Schreiben',delete:'Löschen'};
+            return `<span style="font-size:11px;padding:2px 7px;border-radius:4px;border:1px solid var(--border);background:var(--surface-2);${bg}${locked}" onclick="toggleCalPerm('${cal.id}','${p}',this)">${icons[p]} ${labels[p]}</span>`;
+        }).join('');
+        return `<div style="padding:10px 0;border-bottom:1px solid var(--border-light)">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+                <span style="font-size:13px;font-weight:500;color:var(--text-1);flex:1">${cal.name}</span>
+                <span style="font-size:10px;padding:2px 6px;border-radius:4px;background:${cal.provider==='google'?'#e8f0fe':'#f0f0f5'};color:${provColor};font-weight:500">${provLabel}</span>
+                <div class="sm-toggle-track" style="background:${en?'#34d399':'var(--border)'}" onclick="toggleSubCal('${cal.id}',${!en})"><div class="sm-toggle-thumb" style="left:${en?'21px':'3px'}"></div></div>
+            </div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap">${permChips}</div>
+        </div>`;
+    }).join('');
+    return `<div class="sm-io-label" style="margin-top:14px">Kalender</div>
+        <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:0 12px">${calRows}</div>`;
+}
+
+async function toggleSubCal(calId, enabled) {
+    await fetch(`/api/tools/calendar/sub/${calId}`, {method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled})});
+    await loadToolsState();
+    openPanel(activeId);
+}
+
+async function toggleCalPerm(calId, perm, el) {
+    if (perm === 'read') return;
+    const active = el.style.borderColor === 'var(--accent)' || el.style.color === 'var(--accent)';
+    await fetch(`/api/tools/calendar/sub/${calId}/perm`, {method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({perm, value: !active})});
+    await loadToolsState();
+    openPanel(activeId);
+}
+
+function openPanel(id){const sys=SYSTEMS[id];if(!sys)return;activeId=id;document.querySelectorAll('.smn').forEach(n=>n.classList.remove('sm-active'));document.getElementById('p-icon').textContent=sys.icon;document.getElementById('p-name').textContent=sys.name;document.getElementById('p-group').innerHTML=`<span style="color:${sys.color}">${sys.group}</span>`;document.getElementById('p-desc').textContent=sys.desc;document.getElementById('p-inputs').innerHTML=sys.inputs?.length?`<div class="sm-io-label">Eingaben</div>${sys.inputs.map(i=>`<span class="sm-io-tag">${i}</span>`).join('')}`:'';document.getElementById('p-outputs').innerHTML=sys.outputs?.length?`<div class="sm-io-label">Ausgaben</div>${sys.outputs.map(o=>`<span class="sm-io-tag">${o}</span>`).join('')}`:'';const te=document.getElementById('p-toggle');if(sys.toolId&&toolsState[sys.toolId]?.available){const en=toolsState[sys.toolId].enabled;const subCals=sys.toolId==='calendar'?renderSubCalendars(toolsState[sys.toolId]):'';te.innerHTML=`<div class="sm-toggle-row"><span style="font-size:13px;color:var(--text-2);font-weight:500">Tool aktiv</span><div style="display:flex;align-items:center;gap:10px"><span style="font-size:12px;color:var(--text-4)">${en?'Ein':'Aus'}</span><div class="sm-toggle-track" style="background:${en?'#34d399':'var(--border)'}" onclick="toggleTool('${sys.toolId}',${!en})"><div class="sm-toggle-thumb" style="left:${en?'21px':'3px'}"></div></div></div></div>${subCals}`;}else{te.innerHTML='';}document.getElementById('sm-overlay').classList.add('open');document.getElementById('sm-panel').classList.add('open');}
 function closePanel(){activeId=null;document.querySelectorAll('.smn').forEach(n=>n.classList.remove('sm-active'));document.getElementById('sm-overlay').classList.remove('open');document.getElementById('sm-panel').classList.remove('open');}
 loadToolsState();
 </script>

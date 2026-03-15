@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 logger = logging.getLogger(__name__)
 
 MOLTBOOK_API = "https://www.moltbook.com/api/v1"
-MIN_INTERVAL_MINUTES = 30
+MIN_INTERVAL_MINUTES = 90
 
 
 def _get_api_key():
