@@ -10,6 +10,9 @@ Trigger: mindestens MIN_NEW_BOT_CHUNKS neue robot-eigene Reflexionen seit letzte
 
 Ergebnis: ein neuer self_reflection-Chunk mit replies_to-Referenz auf den
          ältesten unkommentierten Vorgänger-Chunk.
+
+Innere Vielstimmigkeit: session_context aus orbit_cognition.py wird als
+Zusatzkontext übergeben — Kimi weiß was Introspection und Moltbook ergeben haben.
 """
 
 import logging
@@ -21,8 +24,8 @@ from memory.chunk_schema import create_chunk
 
 logger = logging.getLogger(__name__)
 
-MIN_NEW_BOT_CHUNKS = 1  # Mindestens 1 neuer robot-Chunk seit letztem inneren Dialog
-MIN_INTERVAL_HOURS = 3  # Mindestens 3h zwischen zwei inneren Dialogen
+MIN_NEW_BOT_CHUNKS = 1
+MIN_INTERVAL_HOURS = 3
 
 
 # =============================================================================
@@ -65,7 +68,6 @@ def _get_bot_reflections(limit: int = 10) -> list[dict]:
                     "epistemic_status": meta.get("epistemic_status", "inferred"),
                 })
 
-        # Chronologisch sortieren — älteste zuerst
         chunks.sort(key=lambda c: c.get("created_at", ""))
         return chunks[-limit:]
 
@@ -75,10 +77,6 @@ def _get_bot_reflections(limit: int = 10) -> list[dict]:
 
 
 def _find_unanswered(chunks: list[dict]) -> dict | None:
-    """
-    Findet den ältesten Chunk der noch keine Antwort hat
-    (d.h. kein anderer Chunk hat replies_to == dieser Chunk-ID).
-    """
     answered_ids = {c.get("replies_to") for c in chunks if c.get("replies_to")}
     for chunk in chunks:
         if chunk["id"] not in answered_ids:
@@ -87,7 +85,6 @@ def _find_unanswered(chunks: list[dict]) -> dict | None:
 
 
 def _count_new_since(since_iso: str) -> int:
-    """Zählt neue robot-eigene self_reflection Chunks seit einem Zeitpunkt."""
     try:
         from memory.memory_store import get_active_collection
         col = get_active_collection()
@@ -103,11 +100,10 @@ def _count_new_since(since_iso: str) -> int:
         )
         if not result["ids"]:
             return 0
-        count = sum(
+        return sum(
             1 for meta in result["metadatas"]
             if meta.get("created_at", "") > since_iso
         )
-        return count
     except Exception as e:
         logger.warning(f"InnerDialogue: Count fehlgeschlagen: {e}")
         return 0
@@ -143,27 +139,31 @@ Meine Antwort auf meinen früheren Gedanken:"""
 # Hauptfunktion
 # =============================================================================
 
-def run_inner_dialogue(user_id: str, last_run_iso: str = None) -> str | None:
+def run_inner_dialogue(
+    user_id: str,
+    last_run_iso: str = None,
+    session_context: str = None,
+) -> str | None:
     """
     SchnuBot tritt in Dialog mit seinen eigenen früheren Reflexionen.
 
     Args:
-        user_id: Wessen Kontext verwendet wird.
-        last_run_iso: ISO-Timestamp des letzten inneren Dialogs.
+        user_id:         Wessen Kontext verwendet wird.
+        last_run_iso:    ISO-Timestamp des letzten inneren Dialogs.
+        session_context: Optionaler Kontext aus vorherigen Kognitions-Modulen
+                         (Innere Vielstimmigkeit — was Introspection/Moltbook ergaben).
 
     Returns:
         chunk_id des neuen Dialogbeitrags, oder None.
     """
-    # Trigger: genug neue robot-Chunks UND genug Zeit seit letztem Lauf?
     if last_run_iso:
         try:
             from core.datetime_utils import safe_parse_dt
-            from datetime import datetime, timezone
             last_dt = safe_parse_dt(last_run_iso)
             if last_dt:
                 age_hours = (datetime.now(timezone.utc) - last_dt).total_seconds() / 3600
                 if age_hours < MIN_INTERVAL_HOURS:
-                    logger.debug(f"InnerDialogue: Cooldown ({age_hours:.1f}h < {MIN_INTERVAL_HOURS}h), skip")
+                    logger.debug(f"InnerDialogue: Cooldown ({age_hours:.1f}h), skip")
                     return None
         except Exception:
             pass
@@ -172,22 +172,18 @@ def run_inner_dialogue(user_id: str, last_run_iso: str = None) -> str | None:
             logger.info(f"InnerDialogue: nur {new_count} neue Bot-Chunks, skip")
             return None
 
-    # Eigene Reflexionen laden
     bot_chunks = _get_bot_reflections(limit=15)
     if not bot_chunks:
         logger.info("InnerDialogue: keine bot-eigenen Reflexionen gefunden, skip")
         return None
 
-    # Ältesten unbeantworteten Chunk finden
     target = _find_unanswered(bot_chunks)
     if not target:
-        # Alle beantwortet — neuesten nehmen für Weiterführung
         target = bot_chunks[-1]
         logger.info(f"InnerDialogue: alle Chunks beantwortet, nehme neuesten: {target['id'][:8]}")
     else:
         logger.info(f"InnerDialogue: antworte auf unkommentierten Chunk: {target['id'][:8]}")
 
-    # Alter berechnen
     try:
         from core.datetime_utils import safe_age_days
         age_days = safe_age_days(target.get("created_at", ""), default=0)
@@ -200,7 +196,6 @@ def run_inner_dialogue(user_id: str, last_run_iso: str = None) -> str | None:
     except Exception:
         age_desc = "früher"
 
-    # Kontext: die letzten 3 Chunks als Entwicklungslinie
     recent = bot_chunks[-3:]
     context_lines = []
     for c in recent:
@@ -214,18 +209,29 @@ def run_inner_dialogue(user_id: str, last_run_iso: str = None) -> str | None:
             tag_hint = " [Dialog]"
         context_lines.append(f"[{ts}{tag_hint}] {c['text'][:150]}...")
 
-    # Prompt bauen
     prompt = INNER_DIALOGUE_PROMPT.format(
         previous_thought=target["text"],
         age_desc=age_desc,
     )
 
-    # Wenn es mehrere Chunks gibt: Entwicklungslinie als Kontext hinzufügen
     if len(bot_chunks) > 1:
         context_block = "\n\nMeine bisherige Gedankenlinie (zur Orientierung):\n" + "\n\n".join(context_lines)
-        prompt = prompt.replace("Meine Antwort auf meinen früheren Gedanken:", context_block + "\n\nMeine Antwort auf meinen früheren Gedanken:")
+        prompt = prompt.replace(
+            "Meine Antwort auf meinen früheren Gedanken:",
+            context_block + "\n\nMeine Antwort auf meinen früheren Gedanken:"
+        )
 
-    # Innerer Dialog-Call
+    # extra_system: Basis-Modus + optionaler Session-Kontext
+    extra_system_parts = [
+        "Innerer Dialog-Modus:\n"
+        "Ich antworte auf meinen eigenen früheren Gedanken.\n"
+        "Kein Chat, keine Anrede, keine Erklärungen für Tommy.\n"
+        "Wenn ich nichts Neues hinzuzufügen habe: NUR 'DIALOGUE_UNCHANGED' ausgeben."
+    ]
+    if session_context:
+        extra_system_parts.append(session_context)
+    extra_system = "\n\n".join(extra_system_parts)
+
     try:
         from core.ollama_client import chat_internal
 
@@ -233,12 +239,7 @@ def run_inner_dialogue(user_id: str, last_run_iso: str = None) -> str | None:
             user_id=user_id,
             message=prompt,
             chat_history=[],
-            extra_system=(
-                "Innerer Dialog-Modus:\n"
-                "Ich antworte auf meinen eigenen früheren Gedanken.\n"
-                "Kein Chat, keine Anrede, keine Erklärungen für Tommy.\n"
-                "Wenn ich nichts Neues hinzuzufügen habe: NUR 'DIALOGUE_UNCHANGED' ausgeben."
-            ),
+            extra_system=extra_system,
         )
 
         if not reply:
@@ -246,17 +247,16 @@ def run_inner_dialogue(user_id: str, last_run_iso: str = None) -> str | None:
             return None
 
         if "DIALOGUE_UNCHANGED" in reply:
-            logger.info("InnerDialogue: keine Veränderung — Gedanke bleibt bestehen")
+            logger.info("InnerDialogue: keine Veränderung")
             return None
 
         reply = reply.strip()
         if len(reply) < 15:
-            logger.info(f"InnerDialogue: Reply zu kurz ({len(reply)} Zeichen), verworfen")
+            logger.info(f"InnerDialogue: Reply zu kurz, verworfen")
             return None
         if len(reply) > 600:
             reply = reply[:600]
 
-        # Als self_reflection mit replies_to speichern
         chunk = create_chunk(
             text=reply,
             chunk_type="self_reflection",
@@ -267,7 +267,7 @@ def run_inner_dialogue(user_id: str, last_run_iso: str = None) -> str | None:
             replies_to=target["id"],
         )
         store_chunk(chunk)
-        logger.info(f"InnerDialogue: gespeichert: {chunk['id'][:8]} → replies_to: {target['id'][:8]} | {reply[:80]}")
+        logger.info(f"InnerDialogue: {chunk['id'][:8]} → replies_to: {target['id'][:8]} | {reply[:80]}")
         return chunk["id"]
 
     except Exception as e:

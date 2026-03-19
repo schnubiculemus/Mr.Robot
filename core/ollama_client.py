@@ -5,8 +5,14 @@ Referenz: Konzeptdokument V1.1
 System-Prompt Aufbau:
 1. Datum/Uhrzeit
 2. soul.md (Identität)
-3. architecture.md (Selbstwissen)
-4. Memory-Chunks aus ChromaDB (dynamisch, kontextabhängig)
+3. style.md (Sprache & Ton) — nur chat-Modus
+4. tools.md (Tool-Übersicht) — nur chat-Modus
+5. architecture.md (Selbstwissen)
+6. Memory-Chunks aus ChromaDB (dynamisch, kontextabhängig)
+6.5 Kognitions-Echo (letzte 24h Kognitions-Outputs) — nur chat-Modus
+7. Globale Regeln (Preferences/Decisions)
+8. Web Search Hinweis — nur chat-Modus
+9. Markdown-Verbot — nur chat-Modus
 
 Legacy-Systeme entfernt:
 - Kein format_memory_for_prompt (altes Memory)
@@ -15,6 +21,7 @@ Legacy-Systeme entfernt:
 - Kein bim.facts — jetzt in ChromaDB
 - Kein user.md — in soul.md aufgegangen
 - Kein extract_memories — ersetzt durch Konsolidierer + Fast-Track
+- Kein rules.md — ersetzt durch style.md
 """
 
 import os
@@ -30,7 +37,7 @@ logger = logging.getLogger(__name__)
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(PROJECT_DIR)
 SOUL_PATH = os.path.join(ROOT_DIR, "soul.md")
-RULES_PATH = os.path.join(ROOT_DIR, "rules.md")
+STYLE_PATH = os.path.join(ROOT_DIR, "style.md")
 TOOLS_PATH = os.path.join(ROOT_DIR, "tools.md")
 ARCHITECTURE_PATH = os.path.join(ROOT_DIR, "architecture.md")
 
@@ -50,9 +57,9 @@ def load_soul():
     return load_file(SOUL_PATH) or f"Du bist {BOT_NAME}, ein hilfreicher Assistent."
 
 
-def load_rules():
-    """Lädt die Verhaltensregeln (rules.md)."""
-    return load_file(RULES_PATH)
+def load_style():
+    """Lädt Sprache und Ton (style.md)."""
+    return load_file(STYLE_PATH)
 
 
 def load_tools():
@@ -65,9 +72,129 @@ def load_architecture():
     return load_file(ARCHITECTURE_PATH)
 
 
-# Cache für globale Regeln (P1.16): Preferences/Decisions ändern sich selten,
-# müssen aber bei jeder Nachricht im Prompt sein. TTL vermeidet wiederholte
-# Collection-Scans. Cache wird nach 120s invalidiert oder bei leerem Ergebnis.
+# =============================================================================
+# Kognitions-Echo
+# =============================================================================
+
+# Cache: wird pro Prozess einmal gebaut und für 10 Minuten gehalten.
+# Kognition läuft alle 2h — 10 Minuten Cache ist kein echtes Staleness-Risiko.
+_cognition_echo_cache = None
+_cognition_echo_cache_time = 0
+_COGNITION_ECHO_TTL = 600  # 10 Minuten
+
+
+def load_cognition_echo() -> str | None:
+    """
+    Baut einen kompakten Kognitions-Echo Block aus dem heartbeat_state.json.
+
+    Zeigt Kimi im Chat-Prompt was sie in den letzten 24h gedacht hat:
+    - Welche Kognitions-Module gelaufen sind
+    - Was dabei herauskam (topic_core aus cognition_session)
+    - Confidence-Trend aus self_reflection_summary falls verfügbar
+
+    Ziel: Kimi spürt im Chat was nachts passiert ist — nicht als zufällig
+    retrievelter Chunk, sondern als fester Kontext-Block.
+
+    Returns None wenn keine relevanten Kognitions-Daten vorhanden.
+    """
+    global _cognition_echo_cache, _cognition_echo_cache_time
+
+    if (_cognition_echo_cache is not None and
+            (time.time() - _cognition_echo_cache_time) < _COGNITION_ECHO_TTL):
+        return _cognition_echo_cache
+
+    try:
+        from core.state import load_state
+        from core.datetime_utils import now_utc, safe_parse_dt
+        from datetime import timedelta
+
+        state = load_state()
+        cutoff = (now_utc() - timedelta(hours=24)).isoformat()
+
+        # cognition_session aus State lesen
+        session = state.get("cognition_session", {})
+        if not session:
+            _cognition_echo_cache = None
+            _cognition_echo_cache_time = time.time()
+            return None
+
+        lines = ["## Was ich zuletzt gedacht habe"]
+        has_content = False
+
+        # Module die gelaufen sind + was dabei rauskam
+        module_labels = {
+            "diary":                "Tagebuch",
+            "introspection":        "Mirror-Analyse",
+            "moltbook":             "Moltbook",
+            "inner_dialogue":       "Innerer Dialog",
+            "autonomous_reflection": "Autonome Reflexion",
+        }
+
+        for module_key, label in module_labels.items():
+            entry = session.get(module_key)
+            if not entry:
+                continue
+            # Nur Einträge der letzten 24h
+            ts = entry.get("timestamp", "")
+            if ts < cutoff:
+                continue
+
+            topic = entry.get("topic", "")
+            chunk_id = entry.get("chunk_id", "")
+            if not topic and not chunk_id:
+                continue
+
+            has_content = True
+            ts_short = ts[:16].replace("T", " ") if ts else "?"
+            line = f"[{ts_short}] {label}"
+            if topic:
+                line += f": {topic[:120]}"
+            lines.append(line)
+
+        if not has_content:
+            _cognition_echo_cache = None
+            _cognition_echo_cache_time = time.time()
+            return None
+
+        # Selbstbild-Trend anhängen wenn verfügbar
+        try:
+            from self_reflection_summary import get_confidence_trend, get_recent_reflections
+            chunks = get_recent_reflections(limit=10)
+            if chunks:
+                trend = get_confidence_trend(chunks)
+                trend_str = trend.get("trend", "stabil")
+                strong = trend.get("strong_count", 0)
+                total = trend.get("total", 0)
+                lines.append(
+                    f"\nSelbstbild-Trend: {trend_str} "
+                    f"({strong} starke Überzeugungen von {total} Reflexionen)"
+                )
+        except Exception:
+            pass
+
+        result = "\n".join(lines)
+        _cognition_echo_cache = result
+        _cognition_echo_cache_time = time.time()
+        return result
+
+    except Exception as e:
+        logger.debug(f"load_cognition_echo: {e}")
+        _cognition_echo_cache = None
+        _cognition_echo_cache_time = time.time()
+        return None
+
+
+def invalidate_cognition_echo_cache() -> None:
+    """Invalidiert den Kognitions-Echo Cache — wird von orbit_cognition aufgerufen."""
+    global _cognition_echo_cache, _cognition_echo_cache_time
+    _cognition_echo_cache = None
+    _cognition_echo_cache_time = 0
+
+
+# =============================================================================
+# Globale Regeln Cache
+# =============================================================================
+
 _global_rules_cache = None
 _global_rules_cache_time = 0
 _GLOBAL_RULES_TTL = 120  # Sekunden
@@ -83,7 +210,6 @@ def _load_global_rules():
     """
     global _global_rules_cache, _global_rules_cache_time
 
-    # Cache prüfen
     if _global_rules_cache is not None and (time.time() - _global_rules_cache_time) < _GLOBAL_RULES_TTL:
         return _global_rules_cache
 
@@ -127,18 +253,22 @@ def _load_global_rules():
     except Exception as e:
         logger.warning(f"Globale Regeln laden fehlgeschlagen: {e}")
 
-    # Cache setzen (auch leere Liste cachen, damit nicht dauernd gescannt wird)
     _global_rules_cache = global_chunks
     _global_rules_cache_time = time.time()
 
     return global_chunks
 
 
+# =============================================================================
+# System-Prompt Builder
+# =============================================================================
+
 def build_system_prompt(context_name=None, user_id=None, user_message=None, doc_context=None, mode="chat", extra_system=None):
     """
     Baut den System-Prompt dynamisch zusammen.
 
-    mode="chat"     → vollständiger WhatsApp-Prompt (rules, tools, Markdown-Verbot, Websearch)
+    mode="chat"     → vollständiger WhatsApp-Prompt (style, tools, Kognitions-Echo,
+                      Markdown-Verbot, Websearch)
     mode="internal" → schlanker Denkraum-Prompt (soul, architecture, memory, globale Regeln)
                       Kein WhatsApp-Kostüm, kein Deutsch-Zwang, kein Chat-Kontext.
                       Für Heartbeat, Moltbook, Diary, MIRROR — alles was nicht Tommy-Chat ist.
@@ -155,18 +285,16 @@ def build_system_prompt(context_name=None, user_id=None, user_message=None, doc_
     parts.append(load_soul())
 
     if mode == "chat":
-        # 3. Verhaltensregeln (chat only — enthält "Immer Deutsch" u.a. Chat-Regeln)
-        rules = load_rules()
-        if rules:
-            parts.append(rules)
+        # 3. Stil & Sprache (chat only)
+        style = load_style()
+        if style:
+            parts.append(style)
 
         # 4. Tool-Übersicht (chat only)
         tools = load_tools()
         if tools:
             parts.append(tools)
     else:
-        # Interner Modus: kein rules.md, kein tools.md
-        # Stattdessen expliziter Hinweis dass dies kein Gespräch ist
         parts.append(
             "INTERNER MODUS:\n"
             "Das ist kein Gespräch mit Tommy. Kein WhatsApp. Kein Assistent-Modus.\n"
@@ -187,11 +315,9 @@ def build_system_prompt(context_name=None, user_id=None, user_message=None, doc_
         global_rule_ids = {c["id"] for c in global_rules}
 
     # 7. Memory-Chunks (kontextabhängig)
-    # Im internen Modus besonders wertvoll: Kimi liest ihre eigenen Gedanken
     if user_message and not doc_context:
         try:
             chunks = score_and_select(user_message)
-            # Deduplizierung: Chunks die schon als globale Regeln geladen sind, rausfiltern
             if global_rule_ids:
                 chunks = [c for c in chunks if c["id"] not in global_rule_ids]
             memory_prompt = build_memory_prompt(chunks)
@@ -200,15 +326,30 @@ def build_system_prompt(context_name=None, user_id=None, user_message=None, doc_
         except Exception as e:
             logger.warning(f"Memory-Retrieval fehlgeschlagen: {e}")
 
+    # 7.5 Kognitions-Echo + Tommy-Kontext — nur chat-Modus
+    # Beide nach Memory, vor globalen Regeln.
+    # Kimi sieht was sie zuletzt gedacht hat UND wer ihr Gegenüber ist.
+    if mode == "chat":
+        echo = load_cognition_echo()
+        if echo:
+            parts.append(echo)
+
+        try:
+            from tommy_model import build_tommy_context
+            tommy_ctx = build_tommy_context()
+            if tommy_ctx:
+                parts.append(tommy_ctx)
+        except Exception as _te:
+            logger.debug(f"build_tommy_context nicht verfuegbar: {_te}")
+
     # 8. Globale Regeln am ENDE — nach Memory, vor der User-Nachricht
-    # Recency Bias: das Letzte im System-Prompt bekommt das meiste Gewicht.
     if global_rules:
         rules_prompt = build_global_rules_prompt(global_rules)
         if rules_prompt:
             parts.append(rules_prompt)
 
     if mode == "chat":
-        # 9. Web Search — nur im Chat-Modus
+        # 9. Web Search
         parts.append(
             "WEB SEARCH VERFUEGBAR:\n"
             "Wenn du aktuelle Informationen benoenigst (News, Preise, aktuelle Ereignisse, Fakten die du nicht sicher kennst), "
@@ -217,13 +358,13 @@ def build_system_prompt(context_name=None, user_id=None, user_message=None, doc_
             "Nur EINEN Search-Block pro Antwort. Nur wenn wirklich noetig — nicht bei allgemeinem Wissen."
         )
 
-        # 10. Markdown-Verbot — nur im Chat-Modus
+        # 10. Markdown-Verbot
         parts.append(
             "KEIN MARKDOWN. Keine Sternchen, keine Rauten, keine Trennlinien, keine Unterstriche, keine Backticks. "
             "Nur Fliesstext und Zeilenumbrueche. WhatsApp rendert Markdown nicht — es erscheint als Zeichensalat."
         )
 
-    # 11. Optionaler Zusatzblock (Explorer-Kontext, Task-Beschreibung, etc.)
+    # 11. Optionaler Zusatzblock
     if extra_system:
         parts.append(extra_system)
 
@@ -236,10 +377,14 @@ def build_system_prompt(context_name=None, user_id=None, user_message=None, doc_
     return "\n\n---\n\n".join(parts)
 
 
+# =============================================================================
+# Token-Tracking
+# =============================================================================
+
 def _track_tokens(prompt_tokens, completion_tokens):
     import json
     from datetime import datetime, timezone
-    data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
+    data_dir = os.path.join(ROOT_DIR, "data")
     os.makedirs(data_dir, exist_ok=True)
     path = os.path.join(data_dir, "token_usage.json")
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -262,13 +407,13 @@ def _track_tokens(prompt_tokens, completion_tokens):
         json.dump(usage, f, indent=2)
 
 
+# =============================================================================
+# Ollama API
+# =============================================================================
+
 def _call_ollama(messages):
     """
     Low-Level Ollama API Call — gemeinsame Basis für chat() und chat_internal().
-    Kümmert sich um API-Call, Token-Tracking, Fehlerbehandlung.
-
-    Returns:
-        dict — rohe Ollama-Antwort, oder None bei Fehler
     """
     from api_utils import api_call_with_retry
 
@@ -298,17 +443,14 @@ def _call_ollama(messages):
 
 def chat(user_id, message, chat_history, context_name=None, doc_context=None):
     """Sendet eine Nachricht an Kimi und gibt die Antwort zurück.
-    
-    WICHTIG: chat_history enthält die aktuelle User-Nachricht bereits
-    (wird in app.py vor dem Thread-Start via save_message gespeichert).
-    Daher KEIN zusätzlicher append von message — sonst sieht Kimi sie doppelt.
+
+    WICHTIG: chat_history enthält die aktuelle User-Nachricht bereits.
     message wird nur für build_system_prompt (Memory-Retrieval) verwendet.
 
     Returns:
         str — Kimi-Antwort
         dict — turn_meta mit chunks + global_rules für MIRROR-Logging
     """
-    # Chunks und Global Rules separat holen für MIRROR
     retrieved_chunks = []
     active_global_rules = []
     try:
@@ -343,12 +485,7 @@ def chat(user_id, message, chat_history, context_name=None, doc_context=None):
 
 def chat_internal(user_id, message, chat_history=None, context_name=None, doc_context=None, extra_system=None):
     """
-    Interner Kimi-Call für Heartbeat, Moltbook, Diary, MIRROR — alles was nicht Tommy-Chat ist.
-
-    Im Gegensatz zu chat():
-    - Hängt message EXPLIZIT als User-Message an (kein chat_history-Trick)
-    - Nutzt mode="internal" → kein WhatsApp-Kostüm, kein Deutsch-Zwang
-    - extra_system für Kontext-spezifische Anweisungen (Explorer, Reflexion, etc.)
+    Interner Kimi-Call für Heartbeat, Moltbook, Diary, MIRROR.
 
     Returns:
         str — Kimi-Antwort
@@ -376,7 +513,6 @@ def chat_internal(user_id, message, chat_history=None, context_name=None, doc_co
 
     messages = [{"role": "system", "content": system_prompt}]
     messages.extend(chat_history)
-    # EXPLIZIT anhängen — das ist der Kern-Unterschied zu chat()
     messages.append({"role": "user", "content": message})
 
     result = _call_ollama(messages)

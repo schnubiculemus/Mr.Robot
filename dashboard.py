@@ -280,7 +280,6 @@ def api_todos_update(todo_id):
     if action == "complete":
         todo = complete_todo(todo_id)
         return jsonify(todo)
-    # Feld-Updates
     todo = get_todo(todo_id)
     if not todo:
         return jsonify({"error": "nicht gefunden"}), 404
@@ -474,14 +473,12 @@ def api_stats():
         if created[:10] == today_str:
             today_count += 1
 
-    # Letzter Heartbeat aus heartbeat_state.json
     heartbeat_last_run = None
     heartbeat_age_min = None
     try:
         state_path = os.path.join(PROJECT_DIR, "heartbeat_state.json")
         with open(state_path, "r") as f:
             state = json.load(f)
-        # Suche nach *_last_run Key
         for key, val in state.items():
             if key.endswith("_last_run") and val:
                 dt = safe_parse_dt(val)
@@ -529,7 +526,7 @@ DEFAULT_TOOLS = [
     {"id": "calendar",   "name": "Kalender",          "icon": "📅", "description": "Termine lesen und erstellen",                "enabled": False, "available": False},
     {"id": "email",      "name": "E-Mail",            "icon": "✉️",  "description": "E-Mails lesen und senden",                  "enabled": False, "available": False},
     {"id": "voice",      "name": "Sprachnachrichten", "icon": "🎙️", "description": "Sprachnachrichten transkribieren (Whisper)", "enabled": True,  "available": True},
-    {"id": "tasks",      "name": "Aufgaben",          "icon": "✅", "description": "Aufgaben & Erinnerungen nach Kategorie",           "enabled": True,  "available": True},
+    {"id": "tasks",      "name": "Aufgaben",          "icon": "✅", "description": "Aufgaben & Erinnerungen nach Kategorie",     "enabled": True,  "available": True},
     {"id": "images",     "name": "Bildanalyse",       "icon": "🖼️", "description": "Bilder beschreiben und analysieren",        "enabled": False, "available": False},
 ]
 
@@ -554,8 +551,6 @@ def save_tools_config(tools):
     os.makedirs(os.path.dirname(TOOLS_CONFIG_PATH), exist_ok=True)
     with open(TOOLS_CONFIG_PATH, "w") as f:
         json.dump(tools, f, indent=2)
-
-
 
 
 # =============================================================================
@@ -616,11 +611,9 @@ def proposed_patterns_page():
     return render_template("proposed_patterns.html")
 
 
-
 @app.route("/api/self-reflection")
 @require_auth
 def api_self_reflection():
-    """Kimis akkumulierte self_reflection-Chunks + Confidence-Trend."""
     try:
         from self_reflection_summary import get_introspection_data
         data = get_introspection_data()
@@ -641,54 +634,37 @@ def api_proposed_patterns():
 @app.route("/api/proposed-patterns/<int:pattern_id>/action", methods=["POST"])
 @require_auth
 def api_proposed_pattern_action(pattern_id):
-    """
-    Aktionen auf ein proposed_pattern:
-    - dismiss: verwerfen
-    - keep: als working_state behalten
-    - promote: zu echtem Pattern promoten (working_state + Tag promoted-pattern)
-    """
     from core.database import update_proposed_pattern_status, get_proposed_patterns
-
     data = request.get_json() or {}
     action = data.get("action")
-
     if action not in ("dismiss", "keep", "promote"):
         return jsonify({"error": "Ungültige Aktion"}), 400
-
     patterns = get_proposed_patterns(limit=200)
     pattern = next((p for p in patterns if p["id"] == pattern_id), None)
     if not pattern:
         return jsonify({"error": "Pattern nicht gefunden"}), 404
-
     chunk_id = pattern["chunk_id"]
-
     try:
         if action == "dismiss":
             update_proposed_pattern_status(pattern_id, "dismissed")
             try:
-                from memory.memory_store import get_active_collection
                 col = get_active_collection()
                 col.update(ids=[chunk_id], metadatas=[{"status": "archived"}])
             except Exception:
                 pass
             return jsonify({"ok": True, "action": "dismissed"})
-
         elif action == "keep":
-            from memory.memory_store import get_active_collection
             col = get_active_collection()
             result = col.get(ids=[chunk_id], include=["metadatas"])
             existing_meta = result["metadatas"][0] if result["metadatas"] else {}
             col.update(ids=[chunk_id], metadatas=[{**existing_meta, "chunk_type": "working_state"}])
             update_proposed_pattern_status(pattern_id, "working_state", promoted_to=chunk_id)
             return jsonify({"ok": True, "action": "kept_as_working_state", "chunk_id": chunk_id})
-
         elif action == "promote":
-            from memory.memory_store import get_active_collection
             col = get_active_collection()
             result = col.get(ids=[chunk_id], include=["metadatas"])
             existing_meta = result["metadatas"][0] if result["metadatas"] else {}
             existing_tags = existing_meta.get("tags", "")
-            # Tags können als Liste oder String aus ChromaDB kommen
             if isinstance(existing_tags, list):
                 existing_tags = ",".join(existing_tags)
             new_tags = existing_tags + ",promoted-pattern" if existing_tags else "promoted-pattern"
@@ -700,7 +676,6 @@ def api_proposed_pattern_action(pattern_id):
             }])
             update_proposed_pattern_status(pattern_id, "promoted", promoted_to=chunk_id)
             return jsonify({"ok": True, "action": "promoted", "chunk_id": chunk_id})
-
     except Exception as e:
         logger.error(f"proposed_pattern action fehlgeschlagen: {e}")
         return jsonify({"error": str(e)}), 500
@@ -744,23 +719,17 @@ def api_mind():
             where={"$and": [{"source": "robot"}, {"status": "active"}]},
             include=["documents", "metadatas"],
         )
-
         if result["ids"]:
             for i, chunk_id in enumerate(result["ids"]):
                 meta = result["metadatas"][i]
                 text = result["documents"][i]
                 tags_raw = meta.get("tags", "")
-                tags = [t.strip() for t in str(tags_raw).split(",") if t.strip()] if tags_raw else []
                 chunk_type = meta.get("chunk_type", "")
-
-                # Tags können Liste oder kommaseparierter String sein
                 if isinstance(tags_raw, list):
                     tags = tags_raw
                 else:
                     tags = [t.strip() for t in str(tags_raw).split(",") if t.strip()]
-
                 tags_set = set(tags)
-
                 if "moltbook" in tags_set or "exploration" in tags_set:
                     origin, icon = "moltbook", "search"
                 elif "introspection" in tags_set:
@@ -775,38 +744,28 @@ def api_mind():
                     origin, icon = "introspection", "mirror"
                 else:
                     origin, icon = "other", "dot"
-
                 chunk_data = {
-                    "id": chunk_id,
-                    "id_short": chunk_id[:8],
-                    "text": text[:200],
-                    "full_text": text,
+                    "id": chunk_id, "id_short": chunk_id[:8],
+                    "text": text[:200], "full_text": text,
                     "chunk_type": chunk_type,
                     "created_at": meta.get("created_at", ""),
-                    "tags": tags,
-                    "replies_to": meta.get("replies_to", ""),
-                    "origin": origin,
-                    "icon": icon,
+                    "tags": tags, "replies_to": meta.get("replies_to", ""),
+                    "origin": origin, "icon": icon,
                     "confidence": float(meta.get("confidence", 0.5)),
                 }
-
                 timeline_chunks.append(chunk_data)
                 if "open_question" in tags:
                     open_questions.append(chunk_data)
                 if "proactive_candidate" in tags:
                     proactive_candidates.append(chunk_data)
-
                 if origin in levels:
                     existing = levels[origin].get("last_chunk")
                     if not existing or meta.get("created_at", "") > existing.get("created_at", ""):
                         levels[origin]["last_chunk"] = {
-                            "id": chunk_id[:8],
-                            "text": text[:120],
+                            "id": chunk_id[:8], "text": text[:120],
                             "created_at": meta.get("created_at", ""),
                         }
-
         timeline_chunks.sort(key=lambda c: c.get("created_at", ""), reverse=True)
-
     except Exception as e:
         logger.error(f"api_mind: {e}")
 
@@ -840,7 +799,6 @@ def api_moltbook_posts():
     return jsonify({"posts": posts, "count": len(posts)})
 
 
-
 @app.route("/api/translate", methods=["POST"])
 @require_auth
 def api_translate():
@@ -865,6 +823,7 @@ def api_moltbook_inbox():
     unread_only = request.args.get("unread", "0") == "1"
     entries = get_moltbook_inbox(limit=100, unread_only=unread_only)
     return jsonify({"entries": entries, "count": len(entries)})
+
 
 @app.route("/calendar")
 @require_auth
@@ -923,7 +882,6 @@ def api_tools_patch(tool_id):
 @app.route("/api/tools/calendar/sub/<cal_id>", methods=["PATCH"])
 @require_auth
 def api_calendar_sub_patch(cal_id):
-    """Aktiviert/deaktiviert einen Unterkalender."""
     data = request.get_json()
     tools = load_tools_config()
     for t in tools:
@@ -939,7 +897,6 @@ def api_calendar_sub_patch(cal_id):
 @app.route("/api/tools/calendar/sub/<cal_id>/perm", methods=["PATCH"])
 @require_auth
 def api_calendar_sub_perm(cal_id):
-    """Ändert ein Zugriffsrecht eines Unterkalenders."""
     data = request.get_json()
     perm_key = data.get("perm")
     perm_val = bool(data.get("value", False))
@@ -960,7 +917,6 @@ def api_calendar_sub_perm(cal_id):
     return jsonify({"error": "Kalender nicht gefunden"}), 404
 
 
-
 # =============================================================================
 # API: Token-Tracking
 # =============================================================================
@@ -968,8 +924,6 @@ def api_calendar_sub_perm(cal_id):
 @app.route("/api/tokens")
 @require_auth
 def api_tokens():
-    import json
-    from datetime import datetime, timezone, timedelta
     path = os.path.join(PROJECT_DIR, "data", "token_usage.json")
     try:
         with open(path, "r") as f:
@@ -979,14 +933,11 @@ def api_tokens():
 
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
-
-    # Letzte 7 Tage
     week_days = [(datetime.now(timezone.utc) - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)]
     last_week_days = [(datetime.now(timezone.utc) - timedelta(days=i+7)).strftime("%Y-%m-%d") for i in range(7)]
 
     today_data = usage.get(today, {"prompt": 0, "completion": 0, "total": 0, "calls": 0})
     yesterday_data = usage.get(yesterday, {"prompt": 0, "completion": 0, "total": 0, "calls": 0})
-
     week_total = sum(usage.get(d, {}).get("total", 0) for d in week_days)
     last_week_total = sum(usage.get(d, {}).get("total", 0) for d in last_week_days)
 
@@ -995,16 +946,13 @@ def api_tokens():
             return None
         return round((current - previous) / previous * 100, 1)
 
-    # Letzte 14 Tage fuer Chart
     chart_days = sorted([(datetime.now(timezone.utc) - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(13, -1, -1)])
     chart_data = [{"date": d, "total": usage.get(d, {}).get("total", 0), "calls": usage.get(d, {}).get("calls", 0)} for d in chart_days]
 
     return jsonify({
-        "today": today_data,
-        "yesterday": yesterday_data,
+        "today": today_data, "yesterday": yesterday_data,
         "today_vs_yesterday": pct_change(today_data["total"], yesterday_data["total"]),
-        "week_total": week_total,
-        "last_week_total": last_week_total,
+        "week_total": week_total, "last_week_total": last_week_total,
         "week_vs_last_week": pct_change(week_total, last_week_total),
         "chart": chart_data,
     })
@@ -1017,7 +965,6 @@ def api_tokens():
 @app.route("/api/chunks/trust")
 @require_auth
 def api_chunks_trust():
-    """Trust-Scores aller Chunks basierend auf MIRROR Turn-History."""
     from core.database import get_chunk_trust_scores
     try:
         scores = get_chunk_trust_scores()
@@ -1029,7 +976,6 @@ def api_chunks_trust():
 @app.route("/api/chunks")
 @require_auth
 def api_chunks():
-    """Alle Chunks mit Filtern."""
     collection_name = request.args.get("collection", "active")
     chunk_type = request.args.get("type", "")
     source = request.args.get("source", "")
@@ -1044,7 +990,6 @@ def api_chunks():
 
     chunks = _chunk_from_collection(collection)
 
-    # Filter anwenden
     if chunk_type:
         chunks = [c for c in chunks if c["chunk_type"] == chunk_type]
     if source:
@@ -1058,10 +1003,7 @@ def api_chunks():
         tag_lower = tag_filter.lower()
         chunks = [c for c in chunks if tag_lower in c["tags"].lower()]
 
-    # Sortierung: neueste zuerst
     chunks.sort(key=lambda c: c.get("created_at", ""), reverse=True)
-
-    # Aufbereiten
     for c in chunks:
         c["tags_list"] = _parse_tags(c["tags"])
         c["age"] = _age_str(c["created_at"])
@@ -1074,34 +1016,27 @@ def api_chunks():
 @app.route("/api/chunks/<chunk_id>")
 @require_auth
 def api_chunk_detail(chunk_id):
-    """Einzelner Chunk mit allen Details."""
     collection = get_active_collection()
     try:
         result = collection.get(ids=[chunk_id], include=["documents", "metadatas"])
         if not result["ids"]:
-            # In Archive suchen
             archive = get_archive_collection()
             result = archive.get(ids=[chunk_id], include=["documents", "metadatas"])
             if not result["ids"]:
                 return jsonify({"error": "Chunk nicht gefunden"}), 404
-
         meta = result["metadatas"][0]
         text = result["documents"][0]
-
         try:
             weight = float(meta.get("weight", 1.0))
             confidence = float(meta.get("confidence", 0.5))
         except (ValueError, TypeError):
             weight, confidence = 1.0, 0.5
-
-        chunk = {
-            "id": chunk_id,
-            "text": text,
+        return jsonify({
+            "id": chunk_id, "text": text,
             "chunk_type": meta.get("chunk_type", "unknown"),
             "source": meta.get("source", "unknown"),
             "status": meta.get("status", "active"),
-            "weight": round(weight, 4),
-            "confidence": round(confidence, 4),
+            "weight": round(weight, 4), "confidence": round(confidence, 4),
             "epistemic_status": meta.get("epistemic_status", "stated"),
             "created_at": meta.get("created_at", ""),
             "tags": meta.get("tags", ""),
@@ -1110,21 +1045,14 @@ def api_chunk_detail(chunk_id):
             "last_confirmed_at": meta.get("last_confirmed_at", ""),
             "last_decay_at": meta.get("last_decay_at", ""),
             "age": _age_str(meta.get("created_at", "")),
-        }
-
-        return jsonify(chunk)
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
-# =============================================================================
-# API: Chunk Edit + Archive
-# =============================================================================
-
 @app.route("/api/chunks/<chunk_id>", methods=["PATCH"])
 @require_auth
 def api_chunk_update(chunk_id):
-    """Aktualisiert weight, confidence und/oder tags eines Chunks."""
     data = request.get_json(silent=True) or {}
     collection = get_active_collection()
     try:
@@ -1132,12 +1060,9 @@ def api_chunk_update(chunk_id):
         if not result["ids"]:
             return jsonify({"error": "Chunk nicht gefunden"}), 404
         meta = dict(result["metadatas"][0])
-        if "weight" in data:
-            meta["weight"] = float(data["weight"])
-        if "confidence" in data:
-            meta["confidence"] = float(data["confidence"])
-        if "tags" in data:
-            meta["tags"] = str(data["tags"])
+        if "weight" in data: meta["weight"] = float(data["weight"])
+        if "confidence" in data: meta["confidence"] = float(data["confidence"])
+        if "tags" in data: meta["tags"] = str(data["tags"])
         collection.update(ids=[chunk_id], metadatas=[meta])
         return jsonify({"ok": True})
     except Exception as e:
@@ -1147,7 +1072,6 @@ def api_chunk_update(chunk_id):
 @app.route("/api/chunks/<chunk_id>/archive", methods=["POST"])
 @require_auth
 def api_chunk_archive(chunk_id):
-    """Verschiebt einen Chunk in die Archive-Collection."""
     active = get_active_collection()
     archive = get_archive_collection()
     try:
@@ -1156,12 +1080,9 @@ def api_chunk_archive(chunk_id):
             return jsonify({"error": "Chunk nicht gefunden"}), 404
         meta = dict(result["metadatas"][0])
         meta["status"] = "archived"
-        from core.datetime_utils import now_utc
         meta["archived_at"] = now_utc().isoformat()
         archive.add(
-            ids=[chunk_id],
-            documents=result["documents"],
-            metadatas=[meta],
+            ids=[chunk_id], documents=result["documents"], metadatas=[meta],
             embeddings=result["embeddings"] if result.get("embeddings") else None,
         )
         active.delete(ids=[chunk_id])
@@ -1173,34 +1094,28 @@ def api_chunk_archive(chunk_id):
 @app.route("/api/chunks/bulk-archive", methods=["POST"])
 @require_auth
 def api_chunks_bulk_archive():
-    """Archiviert mehrere Chunks auf einmal."""
     data = request.get_json(silent=True) or {}
     ids = data.get("ids", [])
     if not ids:
         return jsonify({"error": "Keine IDs übergeben"}), 400
     active = get_active_collection()
     archive = get_archive_collection()
-    done = []
-    errors = []
+    done, errors = [], []
     for chunk_id in ids:
         try:
             result = active.get(ids=[chunk_id], include=["documents", "metadatas", "embeddings"])
             if not result["ids"]:
-                errors.append(chunk_id)
-                continue
+                errors.append(chunk_id); continue
             meta = dict(result["metadatas"][0])
             meta["status"] = "archived"
-            from core.datetime_utils import now_utc
             meta["archived_at"] = now_utc().isoformat()
             archive.add(
-                ids=[chunk_id],
-                documents=result["documents"],
-                metadatas=[meta],
+                ids=[chunk_id], documents=result["documents"], metadatas=[meta],
                 embeddings=result["embeddings"] if result.get("embeddings") else None,
             )
             active.delete(ids=[chunk_id])
             done.append(chunk_id)
-        except Exception as e:
+        except Exception:
             errors.append(chunk_id)
     return jsonify({"archived": len(done), "errors": errors})
 
@@ -1212,18 +1127,14 @@ def api_chunks_bulk_archive():
 @app.route("/api/retrieval/simulate")
 @require_auth
 def api_retrieval_simulate():
-    """Simuliert ein Retrieval für eine Query — zeigt was im Prompt landen würde."""
     query = request.args.get("q", "")
     if not query:
         return jsonify({"error": "Query-Parameter 'q' fehlt"}), 400
 
-    from memory.retrieval import score_and_select, compute_score
+    from memory.retrieval import compute_score, apply_caps
     from memory.memory_store import query_active
 
-    # Rohkandidaten aus ChromaDB
     candidates = query_active(query, n_results=30)
-
-    # Scoring
     scored = []
     for chunk in candidates:
         score, details = compute_score(chunk)
@@ -1239,11 +1150,8 @@ def api_retrieval_simulate():
             "epistemic_status": chunk.get("epistemic_status", "stated"),
             "age": _age_str(chunk.get("created_at", "")),
         })
-
     scored.sort(key=lambda x: x["retrieval_score"], reverse=True)
 
-    # Finale Auswahl mit Ablehnungsgründen
-    from memory.retrieval import apply_caps
     for chunk in candidates:
         score, details = compute_score(chunk)
         chunk["_retrieval_score"] = round(score, 4)
@@ -1252,40 +1160,28 @@ def api_retrieval_simulate():
     selected_chunks, rejected_chunks = apply_caps(candidates)
     selected_ids = {c["id"] for c in selected_chunks}
     rejection_reasons = {c["id"]: reason for c, reason in rejected_chunks}
-
     for s in scored:
         s["selected"] = s["id"] in selected_ids
         s["rejection_reason"] = rejection_reasons.get(s["id"], None)
 
-    # Prompt-Vorschau bauen
     from memory.prompt_builder import build_memory_prompt
-    prompt_block = build_memory_prompt(selected_chunks) or ""
-    prompt_chars = len(prompt_block)
-    prompt_tokens_est = round(prompt_chars / 4)  # ~4 Zeichen pro Token
-
-    # Chunk-Reihenfolge im finalen Prompt (nach Typ-Reihenfolge)
     from memory.memory_config import PROMPT_TYPE_ORDER
-    def sort_key(c):
-        try:
-            return PROMPT_TYPE_ORDER.index(c.get("chunk_type", "hard_fact"))
-        except ValueError:
-            return 99
-    prompt_order = sorted(selected_chunks, key=sort_key)
-    prompt_order_ids = [c["id"] for c in prompt_order]
+    prompt_block = build_memory_prompt(selected_chunks) or ""
 
-    # Typen-Mix im finalen Prompt
+    def sort_key(c):
+        try: return PROMPT_TYPE_ORDER.index(c.get("chunk_type", "hard_fact"))
+        except ValueError: return 99
+
+    prompt_order = sorted(selected_chunks, key=sort_key)
     type_mix = {}
     for c in selected_chunks:
         t = c.get("chunk_type", "?")
         type_mix[t] = type_mix.get(t, 0) + 1
 
-    # Verdrängte Top-Kandidaten: guter Score aber rausgeflogen
-    displaced = [
-        s for s in scored
-        if not s["selected"]
-        and s["retrieval_score"] >= 0.65
-    ]
-    displaced.sort(key=lambda x: x["retrieval_score"], reverse=True)
+    displaced = sorted(
+        [s for s in scored if not s["selected"] and s["retrieval_score"] >= 0.65],
+        key=lambda x: x["retrieval_score"], reverse=True
+    )
 
     return jsonify({
         "query": query,
@@ -1293,47 +1189,36 @@ def api_retrieval_simulate():
         "selected_count": len(selected_chunks),
         "candidates": scored,
         "prompt_preview": prompt_block,
-        "prompt_chars": prompt_chars,
-        "prompt_tokens_est": prompt_tokens_est,
-        "prompt_order": prompt_order_ids,
+        "prompt_chars": len(prompt_block),
+        "prompt_tokens_est": round(len(prompt_block) / 4),
+        "prompt_order": [c["id"] for c in prompt_order],
         "type_mix": type_mix,
         "displaced_top": displaced[:5],
     })
 
 
-# =============================================================================
-# API: Retrieval Log (letzte Einträge)
-# =============================================================================
-
 @app.route("/api/retrieval/log")
 @require_auth
 def api_retrieval_log():
-    """Letzte Retrieval-Log Einträge."""
     log_path = os.path.join(PROJECT_DIR, "logs", "retrieval.log")
     limit = int(request.args.get("limit", 20))
-
     entries = []
     if os.path.exists(log_path):
         try:
             with open(log_path, "r") as f:
                 lines = f.readlines()
-
             for line in reversed(lines[-200:]):
                 line = line.strip()
-                if not line:
-                    continue
-                # Format: "2026-03-07 12:00:00,000 {json}"
+                if not line: continue
                 try:
                     json_start = line.index("{")
                     entry = json.loads(line[json_start:])
                     entries.append(entry)
-                    if len(entries) >= limit:
-                        break
+                    if len(entries) >= limit: break
                 except (ValueError, json.JSONDecodeError):
                     continue
         except IOError:
             pass
-
     return jsonify({"entries": entries, "total": len(entries)})
 
 
@@ -1344,7 +1229,6 @@ def api_retrieval_log():
 @app.route("/api/fasttrack/stats")
 @require_auth
 def api_fasttrack_stats():
-    """Aggregierte Fast-Track-Statistiken."""
     try:
         stats = get_fast_track_stats()
         stats["timestamp"] = now_berlin().strftime("%d.%m.%Y %H:%M")
@@ -1356,28 +1240,19 @@ def api_fasttrack_stats():
 @app.route("/api/fasttrack/events")
 @require_auth
 def api_fasttrack_events():
-    """Fast-Track Events mit optionalem Filter."""
     limit = int(request.args.get("limit", 50))
     user_id = request.args.get("user_id", None)
-    stored_filter = request.args.get("stored", "")  # "1", "0", oder ""
-
+    stored_filter = request.args.get("stored", "")
     try:
         events = get_fast_track_events(limit=limit * 2, user_id=user_id)
-
-        if stored_filter == "1":
-            events = [e for e in events if e["stored"] == 1]
-        elif stored_filter == "0":
-            events = [e for e in events if e["stored"] == 0]
-
+        if stored_filter == "1": events = [e for e in events if e["stored"] == 1]
+        elif stored_filter == "0": events = [e for e in events if e["stored"] == 0]
         events = events[:limit]
-
-        # Aufbereiten für Frontend
         for ev in events:
             ev["tags_list"] = _parse_tags(ev.get("tags", ""))
             ev["timestamp_short"] = ev["timestamp"][:16].replace("T", " ") if ev["timestamp"] else "?"
             ev["message_short"] = (ev.get("message_preview") or "")[:100]
             ev["chunk_text_short"] = (ev.get("chunk_text") or "")[:120]
-
         return jsonify({"events": events, "total": len(events)})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -1390,7 +1265,6 @@ def api_fasttrack_events():
 @app.route("/api/consolidator/stats")
 @require_auth
 def api_consolidator_stats():
-    """Aggregierte Konsolidierer-Statistiken."""
     try:
         stats = get_consolidator_stats()
         stats["timestamp"] = now_berlin().strftime("%d.%m.%Y %H:%M")
@@ -1402,110 +1276,69 @@ def api_consolidator_stats():
 @app.route("/api/consolidator/events")
 @require_auth
 def api_consolidator_events():
-    """Konsolidierer Events."""
     limit = int(request.args.get("limit", 30))
     try:
         events = get_consolidator_events(limit=limit)
         for ev in events:
             ev["timestamp_short"] = ev["timestamp"][:16].replace("T", " ") if ev["timestamp"] else "?"
-            try:
-                ev["actions"] = json.loads(ev.get("actions_json") or "[]")
-            except Exception:
-                ev["actions"] = []
-
-            # Zusammenfassung
+            try: ev["actions"] = json.loads(ev.get("actions_json") or "[]")
+            except Exception: ev["actions"] = []
             summary = {}
             for a in ev["actions"]:
                 k = a.get("action", "?")
                 summary[k] = summary.get(k, 0) + 1
             ev["actions_summary"] = summary
             ev["actions_count"] = len(ev["actions"])
-
-            # Funnel-Daten
             turns = ev.get("turns_count", 0)
-            # Kandidaten = block_size (Turns die an LLM gingen) minus dropped
             candidates_extracted = ev.get("block_size", 0)
             dropped = ev.get("dropped_count", 0)
-            actions_count = len(ev["actions"])
-            ev["funnel"] = {
-                "turns": turns,
-                "candidates_extracted": candidates_extracted,
-                "dropped": dropped,
-                "actions": actions_count,
-            }
-
-            # Netto-Effekt
+            ev["funnel"] = {"turns": turns, "candidates_extracted": candidates_extracted, "dropped": dropped, "actions": len(ev["actions"])}
             net = {"new": 0, "superseded": 0, "archived": 0}
             for a in ev["actions"]:
                 action = a.get("action", "")
-                if action == "store_new":
-                    net["new"] += 1
-                elif action == "supersede":
-                    net["superseded"] += 1
-                elif action == "archive":
-                    net["archived"] += 1
+                if action == "store_new": net["new"] += 1
+                elif action == "supersede": net["superseded"] += 1
+                elif action == "archive": net["archived"] += 1
             ev["net_effect"] = net
-
-            # No-Op Erklärung
             if ev.get("null_result"):
-                if ev.get("error"):
-                    ev["noop_reason"] = "LLM-Fehler: " + ev["error"][:80]
-                elif turns == 0:
-                    ev["noop_reason"] = "Block war leer"
-                elif candidates_extracted == 0:
-                    ev["noop_reason"] = "Keine Kandidaten extrahiert"
-                elif actions_count == 0:
-                    ev["noop_reason"] = "LLM hat keine Aktionen erzeugt"
-                else:
-                    ev["noop_reason"] = "Alle Aktionen verworfen"
-            else:
-                ev["noop_reason"] = None
-
+                if ev.get("error"): ev["noop_reason"] = "LLM-Fehler: " + ev["error"][:80]
+                elif turns == 0: ev["noop_reason"] = "Block war leer"
+                elif candidates_extracted == 0: ev["noop_reason"] = "Keine Kandidaten extrahiert"
+                elif len(ev["actions"]) == 0: ev["noop_reason"] = "LLM hat keine Aktionen erzeugt"
+                else: ev["noop_reason"] = "Alle Aktionen verworfen"
+            else: ev["noop_reason"] = None
         return jsonify({"events": events, "total": len(events)})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
-
 @app.route("/api/consolidator/diff/<chunk_id>")
 @require_auth
 def api_consolidator_diff(chunk_id):
-    """Gibt alten und neuen Text für einen supersede-Chunk zurück."""
     try:
-        # Neuer Chunk (active)
         active = get_active_collection()
         result = active.get(ids=[chunk_id], include=["documents", "metadatas"])
         if result["ids"]:
             new_text = result["documents"][0]
             supersedes = result["metadatas"][0].get("supersedes", "")
         else:
-            # Im Archiv suchen
             archive = get_archive_collection()
             result = archive.get(ids=[chunk_id], include=["documents", "metadatas"])
             if not result["ids"]:
                 return jsonify({"error": "Chunk nicht gefunden"}), 404
             new_text = result["documents"][0]
             supersedes = result["metadatas"][0].get("supersedes", "")
-
         old_text = None
         if supersedes:
-            # Alten Chunk im Archiv suchen
             archive = get_archive_collection()
             old_result = archive.get(ids=[supersedes], include=["documents"])
             if old_result["ids"]:
                 old_text = old_result["documents"][0]
             else:
-                # Evtl. noch aktiv
                 old_result = active.get(ids=[supersedes], include=["documents"])
                 if old_result["ids"]:
                     old_text = old_result["documents"][0]
-
-        return jsonify({
-            "chunk_id": chunk_id,
-            "new_text": new_text,
-            "old_text": old_text,
-            "supersedes": supersedes,
-        })
+        return jsonify({"chunk_id": chunk_id, "new_text": new_text, "old_text": old_text, "supersedes": supersedes})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -1515,57 +1348,43 @@ def api_consolidator_diff(chunk_id):
 # =============================================================================
 
 SOUL_MD_PATH = os.path.join(PROJECT_DIR, "soul.md")
-
-def _atomic_write(path, text):
-    """Schreibt text atomar: erst tmp-Datei, dann rename. Verhindert korrupte Dateien bei Absturz."""
-    import tempfile
-    dir_ = os.path.dirname(path)
-    with tempfile.NamedTemporaryFile("w", dir=dir_, delete=False, suffix=".tmp", encoding="utf-8") as tf:
-        tf.write(text)
-        tmp_path = tf.name
-    os.replace(tmp_path, path)  # atomar auf Linux
 RULES_MD_PATH = os.path.join(PROJECT_DIR, "rules.md")
 TOOLS_MD_PATH = os.path.join(PROJECT_DIR, "tools.md")
 ARCHITECTURE_MD_PATH = os.path.join(PROJECT_DIR, "architecture.md")
 
 
+def _atomic_write(path, text):
+    import tempfile
+    dir_ = os.path.dirname(path)
+    with tempfile.NamedTemporaryFile("w", dir=dir_, delete=False, suffix=".tmp", encoding="utf-8") as tf:
+        tf.write(text)
+        tmp_path = tf.name
+    os.replace(tmp_path, path)
+
+
 def _parse_soul_sections(text):
-    """Zerlegt soul.md in Sektionen. Gibt Liste von {title, content, index} zurück."""
     lines = text.split("\n")
     sections = []
     current_title = "__preamble__"
     current_lines = []
     idx = 0
-
     for line in lines:
         if line.strip() == "---":
-            continue  # Trennlinien ignorieren — werden beim Rebuild neu gesetzt
+            continue
         if line.startswith("## "):
             if current_lines or current_title == "__preamble__":
-                sections.append({
-                    "index": idx,
-                    "title": current_title,
-                    "content": "\n".join(current_lines).strip(),
-                })
+                sections.append({"index": idx, "title": current_title, "content": "\n".join(current_lines).strip()})
                 idx += 1
             current_title = line[3:].strip()
             current_lines = []
         else:
             current_lines.append(line)
-
-    # Letzte Sektion
     if current_lines or current_title != "__preamble__":
-        sections.append({
-            "index": idx,
-            "title": current_title,
-            "content": "\n".join(current_lines).strip(),
-        })
-
+        sections.append({"index": idx, "title": current_title, "content": "\n".join(current_lines).strip()})
     return sections
 
 
 def _rebuild_soul_md(sections):
-    """Baut soul.md aus Sektionen-Liste wieder zusammen."""
     parts = []
     for s in sections:
         if s["title"] == "__preamble__":
@@ -1578,12 +1397,10 @@ def _rebuild_soul_md(sections):
 @app.route("/api/soul/md")
 @require_auth
 def api_soul_md_get():
-    """Gibt soul.md als Sektionen zurück."""
     try:
         with open(SOUL_MD_PATH, "r") as f:
             text = f.read()
-        sections = _parse_soul_sections(text)
-        return jsonify({"sections": sections, "raw": text})
+        return jsonify({"sections": _parse_soul_sections(text), "raw": text})
     except FileNotFoundError:
         return jsonify({"error": "soul.md nicht gefunden"}), 404
 
@@ -1591,29 +1408,19 @@ def api_soul_md_get():
 @app.route("/api/soul/md", methods=["POST"])
 @require_auth
 def api_soul_md_save():
-    """Speichert soul.md — entweder als Rohtext oder als Sektionen-Liste."""
     data = request.get_json()
-
-    # Backup anlegen
     import shutil
-    backup_path = SOUL_MD_PATH + ".bak"
     if os.path.exists(SOUL_MD_PATH):
-        shutil.copy2(SOUL_MD_PATH, backup_path)
-
+        shutil.copy2(SOUL_MD_PATH, SOUL_MD_PATH + ".bak")
     if "raw" in data:
         new_text = data["raw"]
     elif "sections" in data:
         new_text = _rebuild_soul_md(data["sections"])
     else:
         return jsonify({"error": "raw oder sections erforderlich"}), 400
-
     _atomic_write(SOUL_MD_PATH, new_text)
     return jsonify({"ok": True, "chars": len(new_text)})
 
-
-# =============================================================================
-# API: Essence — generischer File-Editor für rules/tools/architecture
-# =============================================================================
 
 _ESSENCE_FILES = {
     "rules": RULES_MD_PATH,
@@ -1621,10 +1428,10 @@ _ESSENCE_FILES = {
     "architecture": ARCHITECTURE_MD_PATH,
 }
 
+
 @app.route("/api/essence/<file_key>")
 @require_auth
 def api_essence_get(file_key):
-    """Gibt eine Essence-Datei als Rohtext zurück."""
     if file_key not in _ESSENCE_FILES:
         return jsonify({"error": "Unbekannte Datei"}), 404
     try:
@@ -1638,7 +1445,6 @@ def api_essence_get(file_key):
 @app.route("/api/essence/<file_key>", methods=["POST"])
 @require_auth
 def api_essence_save(file_key):
-    """Speichert eine Essence-Datei."""
     if file_key not in _ESSENCE_FILES:
         return jsonify({"error": "Unbekannte Datei"}), 404
     data = request.get_json()
@@ -1653,10 +1459,6 @@ def api_essence_save(file_key):
     return jsonify({"ok": True, "chars": len(data["raw"])})
 
 
-# =============================================================================
-# API: Essence — Sektionen-Editor für rules/tools/architecture
-# =============================================================================
-
 @app.route("/api/essence/<file_key>/sections")
 @require_auth
 def api_essence_sections_get(file_key):
@@ -1665,8 +1467,7 @@ def api_essence_sections_get(file_key):
     try:
         with open(_ESSENCE_FILES[file_key], "r") as f:
             text = f.read()
-        sections = _parse_soul_sections(text)
-        return jsonify({"sections": sections, "raw": text})
+        return jsonify({"sections": _parse_soul_sections(text), "raw": text})
     except FileNotFoundError:
         return jsonify({"sections": [], "raw": "", "missing": True})
 
@@ -1681,8 +1482,7 @@ def api_essence_sections_save(file_key):
         return jsonify({"error": "sections erforderlich"}), 400
     path = _ESSENCE_FILES[file_key]
     import shutil
-    if os.path.exists(path):
-        shutil.copy2(path, path + ".bak")
+    if os.path.exists(path): shutil.copy2(path, path + ".bak")
     new_text = _rebuild_soul_md(data["sections"])
     _atomic_write(path, new_text)
     return jsonify({"ok": True, "chars": len(new_text)})
@@ -1695,16 +1495,12 @@ def api_essence_sections_save(file_key):
 @app.route("/api/diary/list")
 @require_auth
 def api_diary_list():
-    """Liste aller Tagebucheinträge, neueste zuerst."""
     diary_dir = os.path.join(PROJECT_DIR, "diary")
     entries = []
-
     if not os.path.isdir(diary_dir):
         return jsonify({"entries": []})
-
     for fname in sorted(os.listdir(diary_dir), reverse=True):
-        if not fname.endswith(".md"):
-            continue
+        if not fname.endswith(".md"): continue
         path = os.path.join(diary_dir, fname)
         date = None
         try:
@@ -1717,59 +1513,38 @@ def api_diary_list():
         except IOError:
             pass
         entries.append({"filename": fname[:-3], "date": date or fname[:-3]})
-
     return jsonify({"entries": entries, "total": len(entries)})
 
 
 @app.route("/api/diary/entry")
 @require_auth
 def api_diary_entry():
-    """Inhalt eines einzelnen Tagebucheintrags."""
     filename = request.args.get("file", "")
     if not filename or ".." in filename or "/" in filename:
         return jsonify({"error": "Ungültiger Dateiname"}), 400
-
     path = os.path.join(PROJECT_DIR, "diary", filename + ".md")
     if not os.path.isfile(path):
         return jsonify({"error": "Datei nicht gefunden"}), 404
-
     try:
         with open(path, "r", encoding="utf-8") as f:
             raw = f.read()
     except IOError as e:
         return jsonify({"error": str(e)}), 500
-
-    # Header parsen (Datum, Autor, Titel)
-    title, date, author, body = filename, None, None, raw
+    title, date, author = filename, None, None
     lines = raw.split("\n")
     header_end = 0
-
     for i, line in enumerate(lines):
         s = line.strip()
-        if s.startswith("# "):
-            title = s[2:]
-        elif s.lower().startswith("datum:"):
-            date = s.split(":", 1)[1].strip()
-        elif s.lower().startswith("autor:"):
-            author = s.split(":", 1)[1].strip()
-        elif s == "---" and i > 0:
-            header_end = i + 1
-            break
-
+        if s.startswith("# "): title = s[2:]
+        elif s.lower().startswith("datum:"): date = s.split(":", 1)[1].strip()
+        elif s.lower().startswith("autor:"): author = s.split(":", 1)[1].strip()
+        elif s == "---" and i > 0: header_end = i + 1; break
     body = "\n".join(lines[header_end:]).strip()
-
-    return jsonify({
-        "filename": filename,
-        "title": title,
-        "date": date,
-        "author": author,
-        "body": body,
-        "raw": raw,
-    })
+    return jsonify({"filename": filename, "title": title, "date": date, "author": author, "body": body, "raw": raw})
 
 
 # =============================================================================
-# Main
+# API: Soul Proposals
 # =============================================================================
 
 @app.route("/api/soul/proposals")
@@ -1779,10 +1554,10 @@ def api_soul_proposals():
     proposals = get_soul_proposals(limit=50, status=status or None)
     all_proposals = get_soul_proposals(limit=200)
     stats = {
-        "open": sum(1 for p in all_proposals if p["status"] == "open"),
-        "adopted": sum(1 for p in all_proposals if p["status"] == "adopted"),
+        "open":     sum(1 for p in all_proposals if p["status"] == "open"),
+        "adopted":  sum(1 for p in all_proposals if p["status"] == "adopted"),
         "rejected": sum(1 for p in all_proposals if p["status"] == "rejected"),
-        "total": len(all_proposals),
+        "total":    len(all_proposals),
     }
     return jsonify({"proposals": proposals, "stats": stats})
 
@@ -1797,6 +1572,377 @@ def api_soul_proposal_status(proposal_id):
     update_soul_proposal_status(proposal_id, status)
     return jsonify({"ok": True})
 
+
+# =============================================================================
+# ORBIT: Seite
+# =============================================================================
+
+@app.route("/orbit")
+@require_auth
+def orbit_page():
+    return render_template("orbit.html")
+
+
+# =============================================================================
+# ORBIT: Status & Control
+# =============================================================================
+
+ORBIT_RUNTIME_KEY = "mode"
+
+
+def _get_orbit_mode():
+    try:
+        conn = get_db_connection()
+        row = conn.execute(
+            "SELECT value FROM orbit_runtime WHERE key=?", (ORBIT_RUNTIME_KEY,)
+        ).fetchone()
+        return row["value"] if row else "running"
+    except Exception:
+        return "running"
+
+
+def _set_orbit_mode(mode):
+    try:
+        conn = get_db_connection()
+        conn.execute(
+            "INSERT INTO orbit_runtime(key,value) VALUES(?,?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (ORBIT_RUNTIME_KEY, mode)
+        )
+        conn.commit()
+    except Exception:
+        pass
+
+
+@app.route("/api/orbit/status")
+@require_auth
+def api_orbit_status():
+    return jsonify({"mode": _get_orbit_mode()})
+
+
+@app.route("/api/orbit/control", methods=["POST"])
+@require_auth
+def api_orbit_control():
+    data = request.get_json() or {}
+    action = data.get("action", "")
+    mode_map = {"not_aus": "not_aus", "soft_pause": "soft_pause", "resume": "running"}
+    if action not in mode_map:
+        return jsonify({"error": "Unbekannte Aktion"}), 400
+    _set_orbit_mode(mode_map[action])
+    return jsonify({"ok": True, "mode": mode_map[action]})
+
+
+# =============================================================================
+# ORBIT: Lage
+# =============================================================================
+
+@app.route("/api/orbit/lage")
+@require_auth
+def api_orbit_lage():
+    try:
+        conn = get_db_connection()
+
+        def count(table, where="1=1", params=()):
+            r = conn.execute(f"SELECT COUNT(*) FROM {table} WHERE {where}", params).fetchone()
+            return r[0] if r else 0
+
+        stats = {
+            "tasks_total":       count("orbit_tasks"),
+            "tasks_active":      count("orbit_tasks",  "status IN ('new','planned','active','waiting','paused')"),
+            "tasks_hot":         count("orbit_tasks",  "hot=1"),
+            "threads_open":      count("orbit_threads", "status IN ('new','watching')"),
+            "steps_running":     count("orbit_steps",  "status='running'"),
+            "steps_blocked":     count("orbit_steps",  "status='blocked'"),
+            "proactive_pending": count("orbit_proactive_messages", "release_state IN ('candidate','too_early','scheduled')"),
+        }
+
+        hot_rows = conn.execute(
+            "SELECT * FROM orbit_tasks WHERE hot=1 ORDER BY priority DESC, created_at DESC"
+        ).fetchall()
+        hot_tasks = [dict(r) for r in hot_rows]
+
+        ma = []
+        for table in ["orbit_tasks", "orbit_threads", "orbit_steps", "orbit_policies", "orbit_routines"]:
+            try:
+                rows = conn.execute(
+                    f"SELECT id, '{table}' as src FROM {table} WHERE manual_attention=1"
+                ).fetchall()
+                ma.extend([dict(r) for r in rows])
+            except Exception:
+                pass
+
+        return jsonify({"stats": stats, "hot_tasks": hot_tasks, "manual_attention": ma})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# =============================================================================
+# ORBIT: Tasks
+# =============================================================================
+
+@app.route("/api/orbit/tasks")
+@require_auth
+def api_orbit_tasks():
+    try:
+        conn = get_db_connection()
+        where, params = ["1=1"], []
+        sv = request.args.get("status", "")
+        tv = request.args.get("task_type", "")
+        if sv: where.append("status=?"); params.append(sv)
+        if tv: where.append("task_type=?"); params.append(tv)
+        rows = conn.execute(
+            f"SELECT * FROM orbit_tasks WHERE {' AND '.join(where)} ORDER BY hot DESC, created_at DESC LIMIT 200",
+            params
+        ).fetchall()
+        return jsonify({"tasks": [dict(r) for r in rows]})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/orbit/tasks/<task_id>/action", methods=["POST"])
+@require_auth
+def api_orbit_task_action(task_id):
+    import orbit as _orbit
+    data = request.get_json() or {}
+    action = data.get("action", "")
+    reason = data.get("reason", f"Dashboard: {action}")
+    action_map = {"pause": "paused", "resume": "active", "abort": "aborted"}
+    if action not in action_map:
+        return jsonify({"error": "Unbekannte Aktion"}), 400
+    ok = _orbit.task_transition(task_id, action_map[action], reason=reason)
+    return jsonify({"ok": ok})
+
+
+# =============================================================================
+# ORBIT: Threads
+# =============================================================================
+
+@app.route("/api/orbit/threads")
+@require_auth
+def api_orbit_threads():
+    try:
+        conn = get_db_connection()
+        where, params = ["1=1"], []
+        sv = request.args.get("status", "new,watching")
+        if sv:
+            statuses = [s.strip() for s in sv.split(",") if s.strip()]
+            if statuses:
+                where.append(f"status IN ({','.join('?'*len(statuses))})")
+                params.extend(statuses)
+        rows = conn.execute(
+            f"SELECT * FROM orbit_threads WHERE {' AND '.join(where)} ORDER BY created_at DESC LIMIT 200",
+            params
+        ).fetchall()
+        return jsonify({"threads": [dict(r) for r in rows]})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/orbit/threads/<thread_id>/action", methods=["POST"])
+@require_auth
+def api_orbit_thread_action(thread_id):
+    import orbit as _orbit
+    data = request.get_json() or {}
+    action = data.get("action", "")
+    reason = data.get("reason", "Dashboard: manuell")
+    if action == "discard":
+        ok = _orbit.discard_thread(thread_id, reason=reason)
+        return jsonify({"ok": ok})
+    return jsonify({"error": "Unbekannte Aktion"}), 400
+
+
+# =============================================================================
+# ORBIT: Steps
+# =============================================================================
+
+@app.route("/api/orbit/steps")
+@require_auth
+def api_orbit_steps():
+    try:
+        conn = get_db_connection()
+        where, params = ["1=1"], []
+        sv = request.args.get("status", "running,blocked,ready,deferred")
+        if sv:
+            statuses = [s.strip() for s in sv.split(",") if s.strip()]
+            if statuses:
+                where.append(f"status IN ({','.join('?'*len(statuses))})")
+                params.extend(statuses)
+        rows = conn.execute(
+            f"SELECT * FROM orbit_steps WHERE {' AND '.join(where)} ORDER BY created_at DESC LIMIT 100",
+            params
+        ).fetchall()
+        return jsonify({"steps": [dict(r) for r in rows]})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# =============================================================================
+# ORBIT: Proaktive Meldungen
+# =============================================================================
+
+@app.route("/api/orbit/proactive")
+@require_auth
+def api_orbit_proactive():
+    try:
+        conn = get_db_connection()
+        where, params = ["1=1"], []
+        sv = request.args.get("status", "candidate,too_early,scheduled")
+        if sv:
+            statuses = [s.strip() for s in sv.split(",") if s.strip()]
+            if statuses:
+                where.append(f"release_state IN ({','.join('?'*len(statuses))})")
+                params.extend(statuses)
+        rows = conn.execute(
+            f"SELECT * FROM orbit_proactive_messages WHERE {' AND '.join(where)} ORDER BY created_at DESC LIMIT 100",
+            params
+        ).fetchall()
+        return jsonify({"messages": [dict(r) for r in rows]})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# =============================================================================
+# ORBIT: Decisions
+# =============================================================================
+
+@app.route("/api/orbit/decisions")
+@require_auth
+def api_orbit_decisions():
+    try:
+        limit = min(int(request.args.get("limit", 50)), 200)
+        conn = get_db_connection()
+        rows = conn.execute(
+            "SELECT * FROM orbit_decisions ORDER BY created_at DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return jsonify({"decisions": [dict(r) for r in rows]})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# =============================================================================
+# ORBIT: Reviews
+# =============================================================================
+
+@app.route("/api/orbit/reviews")
+@require_auth
+def api_orbit_reviews():
+    try:
+        limit = min(int(request.args.get("limit", 30)), 100)
+        conn = get_db_connection()
+        rows = conn.execute(
+            "SELECT * FROM orbit_reviews ORDER BY created_at DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return jsonify({"reviews": [dict(r) for r in rows]})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# =============================================================================
+# ORBIT: Recovery
+# =============================================================================
+
+@app.route("/api/orbit/recovery")
+@require_auth
+def api_orbit_recovery():
+    try:
+        limit = min(int(request.args.get("limit", 10)), 50)
+        conn = get_db_connection()
+        rows = conn.execute(
+            "SELECT * FROM orbit_recovery_reports ORDER BY started_at DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return jsonify({"reports": [dict(r) for r in rows]})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# =============================================================================
+# ORBIT: Policies
+# =============================================================================
+
+@app.route("/api/orbit/policies")
+@require_auth
+def api_orbit_policies():
+    try:
+        conn = get_db_connection()
+        where, params = ["1=1"], []
+        sv = request.args.get("status", "active")
+        if sv: where.append("status=?"); params.append(sv)
+        rows = conn.execute(
+            f"SELECT * FROM orbit_policies WHERE {' AND '.join(where)} ORDER BY rank DESC, created_at DESC LIMIT 200",
+            params
+        ).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            try: d["scope"] = json.loads(d.get("scope") or "[]")
+            except Exception: d["scope"] = []
+            result.append(d)
+        return jsonify({"policies": result})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/orbit/policies/<policy_id>/action", methods=["POST"])
+@require_auth
+def api_orbit_policy_action(policy_id):
+    import orbit as _orbit
+    data = request.get_json() or {}
+    action = data.get("action", "")
+    reason = data.get("reason", f"Dashboard: {action}")
+    if action == "suppress":
+        ok = _orbit.suppress_policy(policy_id, reason=reason)
+        return jsonify({"ok": ok})
+    elif action == "activate":
+        ok = _orbit.activate_policy(policy_id, reason=reason)
+        return jsonify({"ok": ok})
+    elif action == "retire":
+        ok = _orbit.retire_policy(policy_id, reason=reason)
+        return jsonify({"ok": ok})
+    return jsonify({"error": "Unbekannte Aktion"}), 400
+
+
+# =============================================================================
+# ORBIT: Routinen
+# =============================================================================
+
+@app.route("/api/orbit/routines")
+@require_auth
+def api_orbit_routines():
+    try:
+        conn = get_db_connection()
+        where, params = ["1=1"], []
+        sv = request.args.get("status", "active")
+        if sv: where.append("status=?"); params.append(sv)
+        rows = conn.execute(
+            f"SELECT * FROM orbit_routines WHERE {' AND '.join(where)} ORDER BY created_at DESC LIMIT 200",
+            params
+        ).fetchall()
+        return jsonify({"routines": [dict(r) for r in rows]})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/orbit/routines/<routine_id>/action", methods=["POST"])
+@require_auth
+def api_orbit_routine_action(routine_id):
+    import orbit as _orbit
+    data = request.get_json() or {}
+    action = data.get("action", "")
+    reason = data.get("reason", f"Dashboard: {action}")
+    if action == "suppress":
+        conn = get_db_connection()
+        conn.execute("UPDATE orbit_routines SET status='suppressed' WHERE id=?", (routine_id,))
+        conn.commit()
+        return jsonify({"ok": True})
+    elif action == "activate":
+        ok = _orbit.activate_routine(routine_id, reason=reason)
+        return jsonify({"ok": ok})
+    return jsonify({"error": "Unbekannte Aktion"}), 400
+
+
+# =============================================================================
+# Main
+# =============================================================================
 
 if __name__ == "__main__":
     logger.info("Dashboard startet auf Port 5001...")

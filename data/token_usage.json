@@ -42,9 +42,33 @@
     "calls": 222
   },
   "2026-03-15": {
-    "prompt": 735828,
-    "completion": 257078,
-    "total": 992906,
-    "calls": 158
+    "prompt": 906306,
+    "completion": 399252,
+    "total": 1305558,
+    "calls": 239
+  },
+  "2026-03-16": {
+    "prompt": 694715,
+    "completion": 302414,
+    "total": 997129,
+    "calls": 185
+  },
+  "2026-03-17": {
+    "prompt": 120899,
+    "completion": 74245,
+    "total": 195144,
+    "calls": 39
+  },
+  "2026-03-18": {
+    "prompt": 1139016,
+    "completion": 306197,
+    "total": 1445213,
+    "calls": 192
+  },
+  "2026-03-19": {
+    "prompt": 296083,
+    "completion": 134185,
+    "total": 430268,
+    "calls": 88
   }
 }

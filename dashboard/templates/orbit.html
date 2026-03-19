@@ -1,0 +1,597 @@
+{% extends "base.html" %}
+{% block title %}ORBIT{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
+        <div>
+            <h1>ORBIT</h1>
+            <p>Autonome operative Exekutive — Lage &amp; Analyse</p>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <div id="orbit-status-pill" style="display:flex;align-items:center;gap:6px;padding:5px 14px;border-radius:20px;font-size:12px;font-weight:500;background:var(--accent-light);color:var(--accent)">
+                <span id="orbit-pulse" class="pulse" style="width:7px;height:7px;border-radius:50%;background:var(--accent);display:inline-block"></span>
+                <span id="orbit-status-text">Läuft</span>
+            </div>
+            <button class="btn btn-secondary" id="btn-pause" onclick="orbitAction('soft_pause')" style="font-size:12px;padding:6px 13px">⏸ Soft Pause</button>
+            <button class="btn" id="btn-notaus" onclick="orbitAction('not_aus')" style="font-size:12px;padding:6px 13px;background:var(--red);box-shadow:none">⛔ Not-Aus</button>
+        </div>
+    </div>
+</div>
+
+<!-- Tabs -->
+<div class="tabs" style="margin-bottom:24px">
+    <button class="tab-btn active" onclick="showTab('lage',this)">Lage</button>
+    <button class="tab-btn" onclick="showTab('analyse',this)">Analyse</button>
+    <button class="tab-btn" onclick="showTab('policies',this)">Policies</button>
+    <button class="tab-btn" onclick="showTab('routinen',this)">Routinen</button>
+</div>
+
+<!-- ═══ TAB: LAGE ═══ -->
+<div id="tab-lage" class="tab-pane active">
+
+    <div id="ma-banner" style="display:none;margin-bottom:18px;padding:13px 18px;border-radius:var(--radius);border:1px solid rgba(220,38,38,0.25);background:var(--red-dim)">
+        <div style="display:flex;align-items:center;gap:10px">
+            <span style="font-size:18px">🚨</span>
+            <div>
+                <div style="font-size:13px;font-weight:600;color:var(--red)">Manual Attention erforderlich</div>
+                <div id="ma-text" style="font-size:12px;color:var(--text-3);margin-top:2px"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="stats-grid" id="lage-stats">
+        <div class="loading">Lade...</div>
+    </div>
+
+    <!-- Heiße Tasks -->
+    <div class="card">
+        <div class="card-header">
+            <div><div class="card-title">🔥 Heiße Tasks</div><div class="card-subtitle">Operativ im Fokus — max. 3</div></div>
+            <span id="hot-count" class="badge badge-active">0</span>
+        </div>
+        <div id="hot-tasks-list"><div class="loading">Lade...</div></div>
+    </div>
+
+    <!-- Alle Tasks -->
+    <div class="card">
+        <div class="card-header">
+            <div><div class="card-title">Tasks</div><div class="card-subtitle">Alle ORBIT-Tasks</div></div>
+            <div style="display:flex;gap:6px">
+                <select class="filter-select" id="task-status-filter" onchange="loadTasks()" style="font-size:12px;padding:5px 9px">
+                    <option value="">Alle Status</option>
+                    <option value="new">new</option><option value="planned">planned</option>
+                    <option value="active">active</option><option value="waiting">waiting</option>
+                    <option value="paused">paused</option><option value="completed">completed</option>
+                    <option value="failed">failed</option><option value="aborted">aborted</option>
+                </select>
+                <select class="filter-select" id="task-type-filter" onchange="loadTasks()" style="font-size:12px;padding:5px 9px">
+                    <option value="">Alle Typen</option>
+                    <option value="action">action</option><option value="observation">observation</option><option value="follow_up">follow_up</option>
+                </select>
+            </div>
+        </div>
+        <div class="table-wrap">
+            <table><thead><tr><th>Typ</th><th>Ziel</th><th>Status</th><th>Priorität</th><th>Modus</th><th>Herkunft</th><th>Erstellt</th><th>Aktion</th></tr></thead>
+            <tbody id="tasks-tbody"><tr><td colspan="8" class="loading">Lade...</td></tr></tbody></table>
+        </div>
+    </div>
+
+    <!-- Threads -->
+    <div class="card">
+        <div class="card-header">
+            <div><div class="card-title">Orbit Threads</div><div class="card-subtitle">Offene Fäden</div></div>
+            <select class="filter-select" id="thread-status-filter" onchange="loadThreads()" style="font-size:12px;padding:5px 9px">
+                <option value="new,watching">Aktive</option><option value="">Alle</option>
+                <option value="new">new</option><option value="watching">watching</option>
+                <option value="converted">converted</option><option value="merged">merged</option><option value="discarded">discarded</option>
+            </select>
+        </div>
+        <div class="table-wrap">
+            <table><thead><tr><th>Thema</th><th>Status</th><th>Relevanz</th><th>Herkunft</th><th>Erstellt</th><th>Aktion</th></tr></thead>
+            <tbody id="threads-tbody"><tr><td colspan="6" class="loading">Lade...</td></tr></tbody></table>
+        </div>
+    </div>
+
+    <!-- Steps -->
+    <div class="card">
+        <div class="card-header">
+            <div><div class="card-title">Steps</div><div class="card-subtitle">Ausführungsqueue</div></div>
+            <select class="filter-select" id="step-status-filter" onchange="loadSteps()" style="font-size:12px;padding:5px 9px">
+                <option value="running,blocked,ready,deferred">Aktive</option><option value="">Alle</option>
+                <option value="ready">ready</option><option value="running">running</option>
+                <option value="blocked">blocked</option><option value="deferred">deferred</option>
+                <option value="done">done</option><option value="failed">failed</option>
+            </select>
+        </div>
+        <div class="table-wrap">
+            <table><thead><tr><th>Task</th><th>Typ</th><th>Tool</th><th>Status</th><th>Unterbrechbar</th><th>Retries</th></tr></thead>
+            <tbody id="steps-tbody"><tr><td colspan="6" class="loading">Lade...</td></tr></tbody></table>
+        </div>
+    </div>
+
+    <!-- Proaktive -->
+    <div class="card">
+        <div class="card-header">
+            <div><div class="card-title">Proaktive Meldungen</div><div class="card-subtitle">Anstehend &amp; gesendet</div></div>
+            <select class="filter-select" id="proactive-filter" onchange="loadProactive()" style="font-size:12px;padding:5px 9px">
+                <option value="candidate,too_early,scheduled">Anstehend</option><option value="">Alle</option>
+                <option value="sent">sent</option><option value="suppressed">suppressed</option><option value="discarded">discarded</option>
+            </select>
+        </div>
+        <div class="table-wrap">
+            <table><thead><tr><th>Typ</th><th>Inhalt</th><th>Status</th><th>Reaktion</th><th>Erstellt</th></tr></thead>
+            <tbody id="proactive-tbody"><tr><td colspan="5" class="loading">Lade...</td></tr></tbody></table>
+        </div>
+    </div>
+</div>
+
+<!-- ═══ TAB: ANALYSE ═══ -->
+<div id="tab-analyse" class="tab-pane">
+    <div class="card">
+        <div class="card-header"><div><div class="card-title">Decision Log</div><div class="card-subtitle">Wichtige ORBIT-Entscheidungen</div></div></div>
+        <div class="table-wrap">
+            <table><thead><tr><th>Typ</th><th>Begründung</th><th>Alternative</th><th>Confidence</th><th>Override</th><th>Zeit</th></tr></thead>
+            <tbody id="decisions-tbody"><tr><td colspan="6" class="loading">Lade...</td></tr></tbody></table>
+        </div>
+    </div>
+    <div class="card">
+        <div class="card-header"><div><div class="card-title">Reviews</div><div class="card-subtitle">Operative Nachprüfungen</div></div></div>
+        <div class="table-wrap">
+            <table><thead><tr><th>Objekt</th><th>Typ</th><th>Ergebnis</th><th>Begründung</th><th>Zeit</th></tr></thead>
+            <tbody id="reviews-tbody"><tr><td colspan="5" class="loading">Lade...</td></tr></tbody></table>
+        </div>
+    </div>
+    <div class="card">
+        <div class="card-header"><div><div class="card-title">Recovery-Berichte</div><div class="card-subtitle">Integritätsläufe</div></div></div>
+        <div id="recovery-list"><div class="loading">Lade...</div></div>
+    </div>
+</div>
+
+<!-- ═══ TAB: POLICIES ═══ -->
+<div id="tab-policies" class="tab-pane">
+    <div class="card">
+        <div class="card-header">
+            <div><div class="card-title">Policies</div><div class="card-subtitle">Operative Leitplanken</div></div>
+            <select class="filter-select" id="policy-status-filter" onchange="loadPolicies()" style="font-size:12px;padding:5px 9px">
+                <option value="active">Aktive</option><option value="">Alle</option>
+                <option value="proposed">proposed</option><option value="suppressed">suppressed</option>
+                <option value="retired">retired</option><option value="replaced">replaced</option>
+            </select>
+        </div>
+        <div class="table-wrap">
+            <table><thead><tr><th>Klasse</th><th>Begründung</th><th>Status</th><th>Scope</th><th>Härte</th><th>Fragile</th><th>Rang</th><th>Aktion</th></tr></thead>
+            <tbody id="policies-tbody"><tr><td colspan="8" class="loading">Lade...</td></tr></tbody></table>
+        </div>
+    </div>
+</div>
+
+<!-- ═══ TAB: ROUTINEN ═══ -->
+<div id="tab-routinen" class="tab-pane">
+    <div class="card">
+        <div class="card-header">
+            <div><div class="card-title">Routinen</div><div class="card-subtitle">Wiederkehrende Abläufe</div></div>
+            <select class="filter-select" id="routine-status-filter" onchange="loadRoutinen()" style="font-size:12px;padding:5px 9px">
+                <option value="active">Aktive</option><option value="">Alle</option>
+                <option value="proposed">proposed</option><option value="suppressed">suppressed</option><option value="retired">retired</option>
+            </select>
+        </div>
+        <div class="table-wrap">
+            <table><thead><tr><th>Klasse</th><th>Trigger</th><th>Status</th><th>Angewandt</th><th>Übersprungen</th><th>Abweichungen</th><th>Fragile</th><th>Aktion</th></tr></thead>
+            <tbody id="routinen-tbody"><tr><td colspan="8" class="loading">Lade...</td></tr></tbody></table>
+        </div>
+    </div>
+</div>
+
+<style>
+.tab-pane { display:none; }
+.tab-pane.active { display:block; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.35} }
+.pulse { animation:pulse 2s infinite; }
+.empty-state { padding:32px;text-align:center;color:var(--text-4);font-size:13px; }
+.hot-task-card { border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;margin-bottom:10px;position:relative; }
+.hot-task-card.priority-critical { border-left:3px solid var(--red); }
+.hot-task-card.priority-high { border-left:3px solid var(--amber); }
+.hot-badge { position:absolute;top:10px;right:12px;font-size:11px;background:var(--amber-light);color:var(--amber);padding:2px 8px;border-radius:10px;font-weight:500; }
+.recovery-card { border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;margin-bottom:8px;font-size:13px; }
+.recovery-card.clean { border-left:3px solid var(--accent); }
+.recovery-card.repaired { border-left:3px solid var(--amber); }
+.recovery-card.review_needed,.recovery-card.manual_attention { border-left:3px solid var(--red);background:var(--red-dim); }
+/* ORBIT Status Badges */
+.ob { display:inline-flex;align-items:center;padding:2px 9px;border-radius:20px;font-size:11px;font-weight:500;line-height:1.6; }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ─── Helpers ──────────────────────────────────────────────
+const OB_STATUS = {
+    new:'#f1f5f9:#64748b', planned:'var(--blue-dim):var(--blue)', active:'var(--accent-light):var(--accent)',
+    waiting:'var(--amber-light):var(--amber)', paused:'#f3f4f6:#6b7280', completed:'var(--accent-light):var(--accent)',
+    failed:'var(--red-light):var(--red)', aborted:'#f3f4f6:#6b7280', watching:'var(--blue-dim):var(--blue)',
+    converted:'var(--accent-light):var(--accent)', merged:'var(--purple-dim):var(--purple)',
+    discarded:'#f3f4f6:#9ca3af', proposed:'var(--cyan-dim):var(--cyan)',
+    suppressed:'var(--amber-dim):var(--amber)', retired:'#f3f4f6:#9ca3af', replaced:'var(--purple-dim):var(--purple)',
+    running:'var(--accent-light):var(--accent)', ready:'var(--blue-dim):var(--blue)',
+    blocked:'var(--red-light):var(--red)', deferred:'var(--amber-light):var(--amber)',
+    done:'var(--accent-light):var(--accent)', candidate:'var(--cyan-dim):var(--cyan)',
+    too_early:'var(--amber-light):var(--amber)', scheduled:'var(--blue-dim):var(--blue)',
+    sent:'var(--accent-light):var(--accent)', discarded_msg:'#f3f4f6:#9ca3af'
+};
+const TYPE_COLORS = {
+    action:'var(--blue)', observation:'var(--purple)', follow_up:'var(--cyan)',
+    action_policy:'var(--blue)', communication_policy:'var(--purple)',
+    risk_policy:'var(--red)', scheduling_policy:'var(--amber)',
+    check_routine:'var(--blue)', execution_routine:'var(--amber)',
+    communication_routine:'var(--purple)', review_routine:'var(--cyan)',
+    morning_briefing:'var(--blue)', evening_briefing:'var(--purple)',
+    critical_alert:'var(--red)', task_update:'var(--amber)',
+    recommendation:'var(--accent)', nudge:'var(--cyan)'
+};
+const PRIO_STYLE = {
+    low:'#f3f4f6:#6b7280', medium:'var(--blue-dim):var(--blue)',
+    high:'var(--amber-light):var(--amber)', critical:'var(--red-light):var(--red)'
+};
+
+function sBadge(s) {
+    const c = (OB_STATUS[s]||'#f3f4f6:#9ca3af').split(':');
+    return `<span class="ob" style="background:${c[0]};color:${c[1]}">${s}</span>`;
+}
+function pBadge(p) {
+    const c = (PRIO_STYLE[p]||'#f3f4f6:#6b7280').split(':');
+    return `<span class="ob" style="background:${c[0]};color:${c[1]};${p==='critical'?'font-weight:600':''}">${p}</span>`;
+}
+function tBadge(t) {
+    const col = TYPE_COLORS[t]||'var(--text-4)';
+    return `<span class="ob" style="background:${col};color:white">${t}</span>`;
+}
+function sid(id) { return `<span style="font-family:var(--font-mono);font-size:11px;color:var(--text-4)">${(id||'').slice(0,8)}</span>`; }
+function ts(s) { return s ? s.slice(0,16).replace('T',' ') : '—'; }
+function trunc(s,n=70) { return s && s.length>n ? s.slice(0,n)+'…' : s||'—'; }
+
+// ─── Tabs ─────────────────────────────────────────────────
+function showTab(name, btn) {
+    document.querySelectorAll('.tab-pane').forEach(p=>p.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+    document.getElementById('tab-'+name).classList.add('active');
+    btn.classList.add('active');
+    if (name==='analyse') { loadDecisions(); loadReviews(); loadRecovery(); }
+    if (name==='policies') loadPolicies();
+    if (name==='routinen') loadRoutinen();
+}
+
+// ─── ORBIT Status ─────────────────────────────────────────
+async function loadOrbitStatus() {
+    try {
+        const r = await fetch('/api/orbit/status');
+        if (!r.ok) return;
+        const d = await r.json();
+        const pill = document.getElementById('orbit-status-pill');
+        const pulse = document.getElementById('orbit-pulse');
+        const txt = document.getElementById('orbit-status-text');
+        const btnPause = document.getElementById('btn-pause');
+        if (d.mode === 'not_aus') {
+            pill.style.cssText = 'display:flex;align-items:center;gap:6px;padding:5px 14px;border-radius:20px;font-size:12px;font-weight:500;background:var(--red-light);color:var(--red)';
+            pulse.style.background='var(--red)'; pulse.classList.remove('pulse');
+            txt.textContent='⛔ Not-Aus'; btnPause.textContent='▶ Fortsetzen';
+        } else if (d.mode === 'soft_pause') {
+            pill.style.cssText = 'display:flex;align-items:center;gap:6px;padding:5px 14px;border-radius:20px;font-size:12px;font-weight:500;background:var(--amber-light);color:var(--amber)';
+            pulse.style.background='var(--amber)'; pulse.classList.remove('pulse');
+            txt.textContent='⏸ Soft Pause'; btnPause.textContent='▶ Fortsetzen';
+        } else {
+            pill.style.cssText = 'display:flex;align-items:center;gap:6px;padding:5px 14px;border-radius:20px;font-size:12px;font-weight:500;background:var(--accent-light);color:var(--accent)';
+            pulse.style.background='var(--accent)'; pulse.classList.add('pulse');
+            txt.textContent='Läuft'; btnPause.textContent='⏸ Soft Pause';
+        }
+    } catch(e) {}
+}
+
+async function orbitAction(action) {
+    const txt = document.getElementById('orbit-status-text').textContent;
+    let a = action;
+    if (action==='soft_pause' && txt.includes('Fortsetzen')) a='resume';
+    if (a==='not_aus' && !confirm('ORBIT Not-Aus auslösen? Alle autonomen Aktionen werden gestoppt.')) return;
+    try {
+        await fetch('/api/orbit/control', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({action:a})
+        });
+        loadOrbitStatus();
+    } catch(e) { alert('Fehler: '+e.message); }
+}
+
+// ─── Lage ─────────────────────────────────────────────────
+async function loadLageStats() {
+    try {
+        const r = await fetch('/api/orbit/lage');
+        const d = await r.json();
+        const ma = d.manual_attention || [];
+        const maBanner = document.getElementById('ma-banner');
+        if (ma.length > 0) {
+            maBanner.style.display='block';
+            document.getElementById('ma-text').textContent =
+                `${ma.length} Objekt${ma.length>1?'e':''} brauchen Aufmerksamkeit`;
+        } else { maBanner.style.display='none'; }
+
+        const s = d.stats || {};
+        document.getElementById('lage-stats').innerHTML = `
+            <div class="stat-card"><div class="stat-card-label">Tasks gesamt</div>
+                <div class="stat-card-value">${s.tasks_total??'—'}</div>
+                <div class="stat-card-sub">${s.tasks_active??0} aktiv</div></div>
+            <div class="stat-card"><div class="stat-card-label">🔥 Heiße Tasks</div>
+                <div class="stat-card-value" style="color:var(--amber)">${s.tasks_hot??'—'}</div>
+                <div class="stat-card-sub">von max. 3</div></div>
+            <div class="stat-card"><div class="stat-card-label">Threads offen</div>
+                <div class="stat-card-value" style="color:var(--blue)">${s.threads_open??'—'}</div>
+                <div class="stat-card-sub">new + watching</div></div>
+            <div class="stat-card"><div class="stat-card-label">Steps running</div>
+                <div class="stat-card-value" style="color:var(--accent)">${s.steps_running??'—'}</div>
+                <div class="stat-card-sub">${s.steps_blocked??0} blocked</div></div>
+            <div class="stat-card"><div class="stat-card-label">Proaktiv anstehend</div>
+                <div class="stat-card-value" style="color:var(--purple)">${s.proactive_pending??'—'}</div>
+                <div class="stat-card-sub">candidate + too_early</div></div>
+            <div class="stat-card"><div class="stat-card-label">Manual Attention</div>
+                <div class="stat-card-value" style="color:${ma.length>0?'var(--red)':'var(--text-1)'}">${ma.length}</div>
+                <div class="stat-card-sub">Objekte</div></div>`;
+
+        const hot = d.hot_tasks || [];
+        document.getElementById('hot-count').textContent = hot.length;
+        document.getElementById('hot-tasks-list').innerHTML = hot.length === 0
+            ? '<div class="empty-state">Keine heißen Tasks 🌡️</div>'
+            : hot.map(t=>`
+                <div class="hot-task-card priority-${t.priority}">
+                    <span class="hot-badge">🔥 hot</span>
+                    <div style="display:flex;align-items:center;gap:6px;margin-bottom:5px">
+                        ${tBadge(t.task_type)} ${pBadge(t.priority)} ${sBadge(t.status)}
+                    </div>
+                    <div style="font-size:13px;font-weight:500;color:var(--text-1);margin:5px 0 3px">${trunc(t.goal,120)}</div>
+                    <div style="font-size:11px;color:var(--text-4)">${sid(t.id)} · ${t.primary_origin||'—'} · ${ts(t.created_at)}</div>
+                </div>`).join('');
+    } catch(e) {
+        document.getElementById('lage-stats').innerHTML =
+            `<div style="color:var(--red);padding:16px;font-size:13px">Fehler: ${e.message}</div>`;
+    }
+}
+
+// ─── Tasks ───────────────────────────────────────────────
+async function loadTasks() {
+    const p = new URLSearchParams();
+    const sv = document.getElementById('task-status-filter').value;
+    const tv = document.getElementById('task-type-filter').value;
+    if (sv) p.set('status', sv);
+    if (tv) p.set('task_type', tv);
+    try {
+        const d = await (await fetch('/api/orbit/tasks?'+p)).json();
+        const tbody = document.getElementById('tasks-tbody');
+        if (!d.tasks?.length) { tbody.innerHTML='<tr><td colspan="8" class="empty-state">Keine Tasks</td></tr>'; return; }
+        tbody.innerHTML = d.tasks.map(t=>`<tr>
+            <td>${tBadge(t.task_type)}</td>
+            <td class="text-col">${trunc(t.goal,80)}</td>
+            <td>${sBadge(t.status)}</td>
+            <td>${pBadge(t.priority)}</td>
+            <td><span class="tag">${t.mode||'—'}</span></td>
+            <td style="font-size:11px;color:var(--text-4)">${t.primary_origin||'—'}</td>
+            <td style="font-size:11px;color:var(--text-4)">${ts(t.created_at)}</td>
+            <td style="white-space:nowrap">
+                ${t.status==='active'?`<button onclick="taskAction('${t.id}','pause')" class="btn btn-secondary" style="font-size:11px;padding:3px 8px">Pause</button>`:''}
+                ${t.status==='paused'?`<button onclick="taskAction('${t.id}','resume')" class="btn" style="font-size:11px;padding:3px 8px">Resume</button>`:''}
+                ${['new','planned','active','waiting','paused'].includes(t.status)?`<button onclick="taskAction('${t.id}','abort')" class="btn" style="font-size:11px;padding:3px 8px;background:var(--red);box-shadow:none;margin-left:3px">Abort</button>`:''}
+            </td></tr>`).join('');
+    } catch(e) {
+        document.getElementById('tasks-tbody').innerHTML=`<tr><td colspan="8" style="color:var(--red);padding:12px">${e.message}</td></tr>`;
+    }
+}
+
+async function taskAction(id, action) {
+    if (action==='abort' && !confirm('Task wirklich abbrechen?')) return;
+    await fetch('/api/orbit/tasks/'+id+'/action', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action})});
+    loadTasks(); loadLageStats();
+}
+
+// ─── Threads ──────────────────────────────────────────────
+async function loadThreads() {
+    const p = new URLSearchParams();
+    const sv = document.getElementById('thread-status-filter').value;
+    if (sv) p.set('status', sv);
+    try {
+        const d = await (await fetch('/api/orbit/threads?'+p)).json();
+        const tbody = document.getElementById('threads-tbody');
+        if (!d.threads?.length) { tbody.innerHTML='<tr><td colspan="6" class="empty-state">Keine Threads</td></tr>'; return; }
+        const relColors = {weak:'#f3f4f6:#9ca3af',medium:'var(--blue-dim):var(--blue)',strong:'var(--amber-light):var(--amber)'};
+        tbody.innerHTML = d.threads.map(t=>{
+            const rc = (relColors[t.relevance]||'#f3f4f6:#9ca3af').split(':');
+            return `<tr>
+                <td class="text-col">${trunc(t.topic_core,80)}</td>
+                <td>${sBadge(t.status)}</td>
+                <td><span class="ob" style="background:${rc[0]};color:${rc[1]}">${t.relevance||'—'}</span></td>
+                <td style="font-size:11px;color:var(--text-4)">${t.primary_origin||'—'}</td>
+                <td style="font-size:11px;color:var(--text-4)">${ts(t.created_at)}</td>
+                <td>${!['converted','discarded','merged'].includes(t.status)?`<button onclick="threadDiscard('${t.id}')" class="btn btn-secondary" style="font-size:11px;padding:3px 8px">Verwerfen</button>`:''}</td>
+            </tr>`;}).join('');
+    } catch(e) {
+        document.getElementById('threads-tbody').innerHTML=`<tr><td colspan="6" style="color:var(--red);padding:12px">${e.message}</td></tr>`;
+    }
+}
+
+async function threadDiscard(id) {
+    if (!confirm('Thread wirklich verwerfen?')) return;
+    await fetch('/api/orbit/threads/'+id+'/action', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'discard',reason:'Dashboard: manuell verworfen'})});
+    loadThreads(); loadLageStats();
+}
+
+// ─── Steps ───────────────────────────────────────────────
+async function loadSteps() {
+    const p = new URLSearchParams();
+    const sv = document.getElementById('step-status-filter').value;
+    if (sv) p.set('status', sv);
+    try {
+        const d = await (await fetch('/api/orbit/steps?'+p)).json();
+        const tbody = document.getElementById('steps-tbody');
+        if (!d.steps?.length) { tbody.innerHTML='<tr><td colspan="6" class="empty-state">Keine Steps</td></tr>'; return; }
+        tbody.innerHTML = d.steps.map(s=>`<tr>
+            <td>${sid(s.task_id)}</td>
+            <td><span class="tag">${s.step_type||'—'}</span></td>
+            <td style="font-size:11px">${s.tool_ref||'—'}</td>
+            <td>${sBadge(s.status)}</td>
+            <td style="text-align:center">${s.interruptible?'✓':'—'}</td>
+            <td style="text-align:center;color:var(--text-3)">${s.retry_count??0}</td>
+        </tr>`).join('');
+    } catch(e) {
+        document.getElementById('steps-tbody').innerHTML=`<tr><td colspan="6" style="color:var(--red);padding:12px">${e.message}</td></tr>`;
+    }
+}
+
+// ─── Proaktive ────────────────────────────────────────────
+async function loadProactive() {
+    const p = new URLSearchParams();
+    const sv = document.getElementById('proactive-filter').value;
+    if (sv) p.set('status', sv);
+    try {
+        const d = await (await fetch('/api/orbit/proactive?'+p)).json();
+        const tbody = document.getElementById('proactive-tbody');
+        if (!d.messages?.length) { tbody.innerHTML='<tr><td colspan="5" class="empty-state">Keine Meldungen</td></tr>'; return; }
+        tbody.innerHTML = d.messages.map(m=>{
+            const col = TYPE_COLORS[m.message_type]||'var(--text-4)';
+            return `<tr>
+                <td><span class="ob" style="background:${col};color:white">${m.message_type}</span></td>
+                <td class="text-col">${trunc(m.content_preview||m.content||'',80)}</td>
+                <td>${sBadge(m.release_state)}</td>
+                <td style="font-size:11px;color:var(--text-4)">${m.reaction||'—'}</td>
+                <td style="font-size:11px;color:var(--text-4)">${ts(m.created_at)}</td>
+            </tr>`;}).join('');
+    } catch(e) {
+        document.getElementById('proactive-tbody').innerHTML=`<tr><td colspan="5" style="color:var(--red);padding:12px">${e.message}</td></tr>`;
+    }
+}
+
+// ─── Decisions ────────────────────────────────────────────
+async function loadDecisions() {
+    try {
+        const d = await (await fetch('/api/orbit/decisions?limit=50')).json();
+        const tbody = document.getElementById('decisions-tbody');
+        if (!d.decisions?.length) { tbody.innerHTML='<tr><td colspan="6" class="empty-state">Keine Decisions</td></tr>'; return; }
+        tbody.innerHTML = d.decisions.map(dec=>`<tr>
+            <td><span class="tag">${dec.decision_type||'—'}</span></td>
+            <td class="text-col">${trunc(dec.reason,80)}</td>
+            <td style="font-size:11px;color:var(--text-4)">${trunc(dec.alternative_rejected,50)}</td>
+            <td style="text-align:center;font-size:12px">${dec.confidence!=null?(dec.confidence*100).toFixed(0)+'%':'—'}</td>
+            <td>${dec.override_class?sBadge(dec.override_class):'—'}</td>
+            <td style="font-size:11px;color:var(--text-4)">${ts(dec.created_at)}</td>
+        </tr>`).join('');
+    } catch(e) {
+        document.getElementById('decisions-tbody').innerHTML=`<tr><td colspan="6" style="color:var(--red);padding:12px">${e.message}</td></tr>`;
+    }
+}
+
+// ─── Reviews ──────────────────────────────────────────────
+async function loadReviews() {
+    try {
+        const d = await (await fetch('/api/orbit/reviews?limit=30')).json();
+        const tbody = document.getElementById('reviews-tbody');
+        if (!d.reviews?.length) { tbody.innerHTML='<tr><td colspan="5" class="empty-state">Keine Reviews</td></tr>'; return; }
+        const rCol = {justified:'var(--accent)',borderline:'var(--amber)',unnecessary:'var(--red)',failed_but_justified:'var(--purple)'};
+        tbody.innerHTML = d.reviews.map(rv=>`<tr>
+            <td>${sid(rv.subject_id)}</td>
+            <td><span class="tag">${rv.review_type||'—'}</span></td>
+            <td>${rv.result?`<span class="ob" style="background:${rCol[rv.result]||'var(--border)'};color:white">${rv.result}</span>`:'—'}</td>
+            <td class="text-col">${trunc(rv.reason,70)}</td>
+            <td style="font-size:11px;color:var(--text-4)">${ts(rv.created_at)}</td>
+        </tr>`).join('');
+    } catch(e) {
+        document.getElementById('reviews-tbody').innerHTML=`<tr><td colspan="5" style="color:var(--red);padding:12px">${e.message}</td></tr>`;
+    }
+}
+
+// ─── Recovery ─────────────────────────────────────────────
+async function loadRecovery() {
+    try {
+        const d = await (await fetch('/api/orbit/recovery?limit=10')).json();
+        const el = document.getElementById('recovery-list');
+        if (!d.reports?.length) { el.innerHTML='<div class="empty-state">Keine Recovery-Berichte</div>'; return; }
+        el.innerHTML = d.reports.map(rp=>`
+            <div class="recovery-card ${rp.result_status||''}">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+                    <div style="font-size:13px;font-weight:500">${rp.result_status||'—'}</div>
+                    <div style="font-size:11px;color:var(--text-4)">${ts(rp.started_at)}</div>
+                </div>
+                ${rp.summary?`<div style="font-size:12px;color:var(--text-3)">${rp.summary}</div>`:''}
+            </div>`).join('');
+    } catch(e) {
+        document.getElementById('recovery-list').innerHTML=`<div style="color:var(--red);padding:12px;font-size:13px">${e.message}</div>`;
+    }
+}
+
+// ─── Policies ─────────────────────────────────────────────
+async function loadPolicies() {
+    const p = new URLSearchParams();
+    const sv = document.getElementById('policy-status-filter').value;
+    if (sv) p.set('status', sv);
+    try {
+        const d = await (await fetch('/api/orbit/policies?'+p)).json();
+        const tbody = document.getElementById('policies-tbody');
+        if (!d.policies?.length) { tbody.innerHTML='<tr><td colspan="8" class="empty-state">Keine Policies</td></tr>'; return; }
+        tbody.innerHTML = d.policies.map(pol=>`<tr>
+            <td>${tBadge(pol.policy_class)}</td>
+            <td class="text-col">${trunc(pol.reason,70)}</td>
+            <td>${sBadge(pol.status)}</td>
+            <td><span class="tag" style="font-size:11px">${(pol.scope||[]).join(', ')||'—'}</span></td>
+            <td><span class="ob" style="background:${pol.hardness==='hard'?'var(--red-light)':'#f3f4f6'};color:${pol.hardness==='hard'?'var(--red)':'#6b7280'}">${pol.hardness||'soft'}</span></td>
+            <td style="text-align:center">${pol.fragile?'⚠️':'—'}</td>
+            <td style="text-align:center;font-size:12px;color:var(--text-3)">${pol.rank!=null?pol.rank.toFixed(2):'—'}</td>
+            <td style="white-space:nowrap">
+                ${pol.status==='active'?`<button onclick="policyAction('${pol.id}','suppress')" class="btn btn-secondary" style="font-size:11px;padding:3px 8px">Suppress</button>`:''}
+                ${pol.status==='suppressed'?`<button onclick="policyAction('${pol.id}','activate')" class="btn" style="font-size:11px;padding:3px 8px">Aktivieren</button>`:''}
+            </td>
+        </tr>`).join('');
+    } catch(e) {
+        document.getElementById('policies-tbody').innerHTML=`<tr><td colspan="8" style="color:var(--red);padding:12px">${e.message}</td></tr>`;
+    }
+}
+
+async function policyAction(id, action) {
+    await fetch('/api/orbit/policies/'+id+'/action', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action})});
+    loadPolicies();
+}
+
+// ─── Routinen ─────────────────────────────────────────────
+async function loadRoutinen() {
+    const p = new URLSearchParams();
+    const sv = document.getElementById('routine-status-filter').value;
+    if (sv) p.set('status', sv);
+    try {
+        const d = await (await fetch('/api/orbit/routines?'+p)).json();
+        const tbody = document.getElementById('routinen-tbody');
+        if (!d.routines?.length) { tbody.innerHTML='<tr><td colspan="8" class="empty-state">Keine Routinen</td></tr>'; return; }
+        tbody.innerHTML = d.routines.map(rt=>`<tr>
+            <td>${tBadge(rt.routine_class)}</td>
+            <td><span class="tag">${rt.primary_trigger_type||'—'}</span></td>
+            <td>${sBadge(rt.status)}</td>
+            <td style="text-align:center;font-size:12px">${rt.apply_count||0}</td>
+            <td style="text-align:center;font-size:12px">${rt.skip_count||0}</td>
+            <td style="text-align:center;font-size:12px">${rt.deviation_count||0}</td>
+            <td style="text-align:center">${rt.fragile?'⚠️':'—'}</td>
+            <td style="white-space:nowrap">
+                ${rt.status==='active'?`<button onclick="routineAction('${rt.id}','suppress')" class="btn btn-secondary" style="font-size:11px;padding:3px 8px">Suppress</button>`:''}
+                ${rt.status==='suppressed'?`<button onclick="routineAction('${rt.id}','activate')" class="btn" style="font-size:11px;padding:3px 8px">Aktivieren</button>`:''}
+            </td>
+        </tr>`).join('');
+    } catch(e) {
+        document.getElementById('routinen-tbody').innerHTML=`<tr><td colspan="8" style="color:var(--red);padding:12px">${e.message}</td></tr>`;
+    }
+}
+
+async function routineAction(id, action) {
+    await fetch('/api/orbit/routines/'+id+'/action', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action})});
+    loadRoutinen();
+}
+
+// ─── Init ─────────────────────────────────────────────────
+loadOrbitStatus(); loadLageStats(); loadTasks(); loadThreads(); loadSteps(); loadProactive();
+setInterval(() => {
+    if (document.getElementById('tab-lage').classList.contains('active')) {
+        loadLageStats(); loadTasks(); loadThreads(); loadSteps(); loadProactive();
+    }
+    loadOrbitStatus();
+}, 30000);
+</script>
+{% endblock %}

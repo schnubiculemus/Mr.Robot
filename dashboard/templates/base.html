@@ -141,12 +141,12 @@
         }
 
         .nav-link.nav-sub {
-    padding-left: 28px;
-    font-size: 12px;
-    opacity: 0.8;
-}
-.nav-link.nav-sub:hover { opacity: 1; }
-.nav-link {
+            padding-left: 28px;
+            font-size: 12px;
+            opacity: 0.8;
+        }
+        .nav-link.nav-sub:hover { opacity: 1; }
+        .nav-link {
             display: flex;
             align-items: center;
             gap: 9px;
@@ -662,7 +662,6 @@
                         </svg>
                         Essence
                     </a>
-
                     <a href="/diary" class="nav-link {% if request.path == '/diary' %}active{% endif %}">
                         <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
                             <rect x="3" y="2" width="10" height="12" rx="1.5"/>
@@ -700,8 +699,6 @@
                         </svg>
                         Behavior
                     </a>
-
-
                 </div>
 
                 <div class="nav-divider"></div>
@@ -721,6 +718,20 @@
                             <path d="M10 10l3 3"/>
                         </svg>
                         Web Search
+                    </a>
+                </div>
+
+                <div class="nav-divider"></div>
+
+                <div class="nav-section">
+                    <div class="nav-section-label">ORBIT</div>
+                    <a href="/orbit" class="nav-link {% if request.path == '/orbit' %}active{% endif %}">
+                        <svg class="nav-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="8" cy="8" r="5.5"/>
+                            <ellipse cx="8" cy="8" rx="5.5" ry="2.2" transform="rotate(40 8 8)"/>
+                            <circle cx="8" cy="8" r="1.2" fill="currentColor" stroke="none"/>
+                        </svg>
+                        ORBIT
                     </a>
                 </div>
 

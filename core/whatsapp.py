@@ -1,14 +1,62 @@
+import time
+import threading
 import requests
 
 WAHA_API_URL = "http://localhost:3000"
 WAHA_API_KEY = None
 WAHA_SESSION = "default"
+WEBHOOK_URL = "http://172.17.0.1:5000/webhook"
 
 
 def init_waha(api_key):
-    """Setzt den API-Key."""
+    """Setzt den API-Key und startet Webhook-Registrierung im Hintergrund."""
     global WAHA_API_KEY
     WAHA_API_KEY = api_key
+    # Webhook-Auto-Register deaktiviert — WAHA verliert Webhook beim PUT
+    # Webhook muss manuell im WAHA Dashboard gesetzt werden
+    pass
+
+
+def _register_webhook_with_retry(max_attempts: int = 30, delay: int = 3) -> None:
+    """
+    Wartet bis WAHA WORKING ist, setzt dann den Webhook.
+    Läuft im Hintergrund-Thread — blockiert den Bot-Start nicht.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    for attempt in range(max_attempts):
+        try:
+            resp = requests.get(
+                f"{WAHA_API_URL}/api/sessions",
+                headers=get_headers(),
+                timeout=5,
+            )
+            if resp.status_code == 200:
+                sessions = resp.json()
+                session = next((s for s in sessions if s.get("name") == WAHA_SESSION), None)
+                if session and session.get("status") == "WORKING":
+                    # Webhook setzen
+                    put_resp = requests.put(
+                        f"{WAHA_API_URL}/api/sessions/{WAHA_SESSION}",
+                        headers=get_headers(),
+                        json={"webhooks": [{"url": WEBHOOK_URL, "events": ["message"]}]},
+                        timeout=10,
+                    )
+                    if put_resp.status_code in (200, 201):
+                        logger.info(f"WAHA Webhook registriert: {WEBHOOK_URL}")
+                        return
+                    else:
+                        logger.warning(f"Webhook-Registrierung fehlgeschlagen: {put_resp.status_code} {put_resp.text[:100]}")
+                        # Trotzdem weitermachen — WAHA hat den Webhook manchmal schon gesetzt
+                        return
+        except Exception as e:
+            logger.debug(f"Webhook-Register Versuch {attempt+1}: {e}")
+
+        time.sleep(delay)
+
+    import logging
+    logging.getLogger(__name__).warning("Webhook-Registrierung: WAHA nicht erreichbar nach max. Versuchen")
 
 
 def get_headers():
@@ -23,7 +71,6 @@ def send_message(to, text):
     """Sendet eine WhatsApp-Nachricht über WAHA."""
     url = f"{WAHA_API_URL}/api/sendText"
 
-    # WhatsApp hat ein Limit von ~4096 Zeichen pro Nachricht
     chunks = split_message(text, max_length=4000)
 
     for chunk in chunks:
@@ -76,22 +123,15 @@ def extract_message(payload):
 
         message = payload.get("payload", {})
 
-        # Nur Nachrichten von anderen (nicht eigene)
         if message.get("fromMe", False):
             return None, None, None
 
-        # Absender-ID (LID-Format: 221152228159675@lid)
         from_id = message.get("from", "")
-
-        # Display-Name des Absenders
         notify_name = message.get("_data", {}).get("notifyName", "Unbekannt")
-
-        # Text extrahieren
         text = message.get("body", "")
         if not text:
             text = message.get("_data", {}).get("body", "")
 
-        # Medien erkennen (PDF via hasMedia) — VOR Text-Return prüfen
         if message.get("hasMedia"):
             media = message.get("media", {})
             mimetype = media.get("mimetype", "")
@@ -102,7 +142,6 @@ def extract_message(payload):
                 sentinel = f"[MEDIA:pdf:{media_url}:{filename}]"
                 combined = (sentinel + "\n" + caption).strip()
                 return from_id, combined, notify_name
-            # Audio/Sprachnachrichten (ogg, mp3, m4a, ptt)
             if any(t in mimetype.lower() for t in ("audio", "ogg", "mpeg")) and media_url:
                 sentinel = f"[MEDIA:audio:{media_url}:{filename}]"
                 return from_id, sentinel, notify_name

@@ -23,7 +23,7 @@ import threading
 
 logger = logging.getLogger(__name__)
 
-WHISPER_MODEL_SIZE = "base"   # tiny/base/small — base ist Empfehlung fuer CPU
+WHISPER_MODEL_SIZE = "large-v3"   # tiny/base/small — base ist Empfehlung fuer CPU
 WHISPER_LANGUAGE  = "de"      # Deutsch; None = auto-detect (langsamer)
 WHISPER_DEVICE    = "cpu"
 WHISPER_COMPUTE   = "int8"    # int8 spart RAM + ist schneller auf CPU

@@ -119,6 +119,9 @@ def _build_summary(steps: list) -> str:
                 "moltbook": "Moltbook",
                 "inner_dialogue": "Innerer Dialog",
                 "autonomous_reflection": "Autonome Reflexion",
+                "tommy_model":           "Tommy-Modell",
+                "cognition_feedback":    "Feedback-Schleife",
+                "briefing":              "Briefing",
                 "tagebuch": "Tagebuch",
                 "proaktiv": "Proaktiv",
                 "autonomie": "Autonomie",
@@ -159,3 +162,47 @@ def get_recent_runs(limit: int = 50) -> list:
             "had_error":   bool(row[6]),
         })
     return result
+
+
+def log_cognition_run(user_id: str, results: dict) -> None:
+    """
+    Schreibt einen Kognitions-Run als HeartbeatRun in die DB.
+    Wird von orbit_cognition.run_kognition() am Ende aufgerufen.
+
+    results: Dict mit Modul-Namen als Keys und Status-Strings als Values
+    Beispiel: {"diary": "skip", "introspection": "aa34aa8b", "moltbook": "4adab624", ...}
+    """
+    run = HeartbeatRun(user_id)
+    run.run_id = str(uuid.uuid4())
+
+    module_labels = {
+        "diary":                 "tagebuch",
+        "introspection":         "introspection",
+        "moltbook":              "moltbook",
+        "inner_dialogue":        "inner_dialogue",
+        "autonomous_reflection": "autonomous_reflection",
+        "tommy_model":           "tommy_model",
+        "cognition_feedback":    "cognition_feedback",
+        "briefing":              "briefing",
+    }
+
+    for module, label in module_labels.items():
+        val = results.get(module)
+        if val is None:
+            continue
+        if val == "skip":
+            run.step(label, "skip", "")
+        elif val == "error":
+            run.step(label, "error", "fehlgeschlagen")
+        elif val == "ok":
+            run.step(label, "ok", "")
+        elif val:
+            # chunk_id — kurz anzeigen
+            run.step(label, "ok", val[:8])
+
+    run.finished_at = datetime.now(timezone.utc).isoformat()
+    try:
+        _save_run(run)
+        logger.debug(f"log_cognition_run gespeichert: {run.run_id[:8]}")
+    except Exception as e:
+        logger.warning(f"log_cognition_run fehlgeschlagen: {e}")

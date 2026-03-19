@@ -4,83 +4,122 @@
 {% block content %}
 <div class="page-header">
     <h1>System Map</h1>
-    <p>Alle Kernsysteme von {{ bot_name }} und wie sie zusammenhängen — klicke auf ein System für Details</p>
+    <p>Architektur von {{ bot_name }} — fünf Ebenen, ein System</p>
 </div>
 
-<div class="card" style="padding:28px;position:relative;min-height:500px">
+<div class="card" style="padding:28px;position:relative;">
 
-    <!-- Tools Sidebar -->
-    <div style="position:absolute;right:28px;top:28px;bottom:28px;width:110px;background:rgba(251,191,36,.05);border:1.5px solid rgba(251,191,36,.35);border-radius:10px;padding:12px 10px;display:flex;flex-direction:column;">
-        <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--text-4);text-align:center;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--border)">Tools</div>
-        <div class="t-item" onclick="openPanel('calendar')"><span style="font-size:20px">📅</span><span class="t-name">Kalender</span><span class="sm-dot" id="tdot-calendar" style="background:#34d399"></span></div>
-        <div class="t-item" onclick="openPanel('tasks')"><span style="font-size:20px">✅</span><span class="t-name">Listen</span><span class="sm-dot" id="tdot-tasks" style="background:#34d399"></span></div>
-        <div class="t-item" onclick="openPanel('pdf')"><span style="font-size:20px">📄</span><span class="t-name">PDF-Analyse</span><span class="sm-dot" id="tdot-pdf" style="background:#34d399"></span></div>
-        <div style="margin-top:auto" class="t-item" style="opacity:.4;cursor:default"><span style="font-size:20px;opacity:.4">✉️</span><span class="t-name" style="color:var(--text-4)">E-Mail</span><span style="font-size:9px;color:var(--text-4)">bald</span></div>
-    </div>
+    <!-- Main 5-Ebenen Layout -->
+    <div class="sm-layout">
 
-    <!-- Main -->
-    <div style="padding-right:130px">
+        <!-- Linke Spalte: 5 Ebenen -->
+        <div class="sm-layers">
 
-        <!-- Kognition -->
-        <div class="sms" style="--c:rgba(0,229,255,.07);--b:rgba(0,229,255,.25)">
-            <div class="sms-label" style="color:#00e5ff">Kognition</div>
-            <div class="smr">
-                <div class="smn sm-cog" onclick="openPanel('moltbook')"><span class="smi">🔍</span><span class="smname">Moltbook</span><span class="smdot on"></span></div>
-                <div class="sma">→</div>
-                <div class="smn sm-cog" onclick="openPanel('mirror_analyzer')"><span class="smi">🪞</span><span class="smname">Mirror-Analyzer</span><span class="smdot on"></span></div>
-                <div class="sma">→</div>
-                <div class="smn sm-cog" onclick="openPanel('self_reflection')"><span class="smi">💡</span><span class="smname">Self-Reflection</span><span class="smdot on"></span></div>
-                <div class="sma">→</div>
-                <div class="smn sm-cog" onclick="openPanel('inner_dialogue')"><span class="smi">💬</span><span class="smname">Innerer Dialog</span><span class="smdot on"></span></div>
-                <div class="sma">→</div>
-                <div class="smn sm-cog" onclick="openPanel('autonomous_reflection')"><span class="smi">🧠</span><span class="smname">Autonome Reflexion</span><span class="smdot on"></span></div>
-            </div>
-        </div>
-
-        <div class="smv"><div class="smvl"></div><div class="smvl"></div><div class="smvl"></div><div class="smvl"></div><div class="smvl"></div></div>
-
-        <!-- Gedächtnis -->
-        <div class="sms" style="--c:rgba(167,139,250,.07);--b:rgba(167,139,250,.25)">
-            <div class="sms-label" style="color:#a78bfa">Gedächtnis</div>
-            <div class="smr">
-                <div class="smn sm-mem" onclick="openPanel('mirror')" style="flex-direction:column;align-items:flex-start;gap:2px">
-    <div style="display:flex;align-items:center;gap:7px;width:100%"><span class="smi">📊</span><span class="smname">Behavior</span><span class="smdot on" style="margin-left:auto"></span></div>
-    <div style="font-size:9px;color:#a78bfa;font-family:monospace;padding-left:21px">MIRROR · Patterns</div>
-</div>
-                <div class="sma">⇄</div>
-                <div class="smn sm-mem" style="flex:0 0 auto;background:rgba(167,139,250,.08);border-color:#a78bfa;padding:11px 16px" onclick="openPanel('memory')">
-                    <span class="smi">🧩</span>
-                    <div><div class="smname" style="font-size:13px;font-weight:700">Gedächtnis</div><div style="font-size:10px;color:#a78bfa;font-family:monospace">ChromaDB</div></div>
-                    <span class="smdot on" style="margin-left:auto"></span>
+            <!-- KOGNITION -->
+            <div class="sm-layer" style="--lc:rgba(0,229,255,.08);--lb:rgba(0,229,255,.22);--la:#00e5ff">
+                <div class="sm-layer-label" style="color:#00e5ff">Kognition</div>
+                <div class="sm-nodes">
+                    <div class="sm-node sm-cog" onclick="openPanel('moltbook')"><span class="sm-ni">🔍</span><span class="sm-nn">Moltbook Explorer</span><span class="sm-nd on"></span></div>
+                    <div class="sm-node sm-cog" onclick="openPanel('mirror_analyzer')"><span class="sm-ni">🪞</span><span class="sm-nn">Mirror-Analyzer</span><span class="sm-nd on"></span></div>
+                    <div class="sm-node sm-cog" onclick="openPanel('self_reflection')"><span class="sm-ni">💡</span><span class="sm-nn">Self-Reflection</span><span class="sm-nd on"></span></div>
+                    <div class="sm-node sm-cog" onclick="openPanel('inner_dialogue')"><span class="sm-ni">💬</span><span class="sm-nn">Innerer Dialog</span><span class="sm-nd on"></span></div>
+                    <div class="sm-node sm-cog" onclick="openPanel('autonomous_reflection')"><span class="sm-ni">🧠</span><span class="sm-nn">Autonome Reflexion</span><span class="sm-nd on"></span></div>
                 </div>
-                <div class="sma">⇄</div>
-                <div class="smn sm-mem" onclick="openPanel('consolidator')"><span class="smi">⚙️</span><span class="smname">Konsolidierer</span><span class="smdot on"></span></div>
             </div>
-        </div>
 
-        <div class="smv"><div class="smvl"></div><div class="smvl"></div><div class="smvl"></div></div>
-
-        <!-- Kommunikation -->
-        <div class="sms" style="--c:rgba(52,211,153,.07);--b:rgba(52,211,153,.25)">
-            <div class="sms-label" style="color:#34d399">Kommunikation</div>
-            <div class="smr">
-                <div class="smn sm-comm" onclick="openPanel('chat')"><span class="smi">💭</span><span class="smname">Chat (WhatsApp)</span><span class="smdot on"></span></div>
-                <div class="sma">→</div>
-                <div class="smn sm-comm" onclick="openPanel('proactive')"><span class="smi">📨</span><span class="smname">Proaktiv-Engine</span><span class="smdot on"></span></div>
-                <div class="sma">→</div>
-                <div class="smn sm-comm" onclick="openPanel('diary')"><span class="smi">📓</span><span class="smname">Tagebuch</span><span class="smdot on"></span></div>
-                <div class="sma" style="opacity:.3">·</div>
-                <div class="smn" style="border-left:3px solid #fbbf24;background:rgba(251,191,36,.04);flex:0 0 auto" onclick="openPanel('websearch')"><span class="smi">🌐</span><span class="smname">Web Search</span><span class="smdot on"></span></div>
+            <!-- Pfeil -->
+            <div class="sm-arrow-row">
+                <div class="sm-arrow-line"></div>
+                <div class="sm-arrow-label">Chunks · Signale · Trigger</div>
+                <div class="sm-arrow-line"></div>
             </div>
+
+            <!-- MEMORY -->
+            <div class="sm-layer" style="--lc:rgba(167,139,250,.08);--lb:rgba(167,139,250,.22);--la:#a78bfa">
+                <div class="sm-layer-label" style="color:#a78bfa">Memory</div>
+                <div class="sm-nodes">
+                    <div class="sm-node sm-mem" onclick="openPanel('memory')" style="flex:1.4;border-color:#a78bfa;background:rgba(167,139,250,.06)">
+                        <span class="sm-ni">🧩</span>
+                        <div><div class="sm-nn" style="font-size:13px;font-weight:700">ChromaDB</div><div style="font-size:10px;color:#a78bfa;font-family:monospace">Langzeitgedächtnis</div></div>
+                        <span class="sm-nd on" style="margin-left:auto"></span>
+                    </div>
+                    <div class="sm-node sm-mem" onclick="openPanel('consolidator')"><span class="sm-ni">⚙️</span><span class="sm-nn">Konsolidierer</span><span class="sm-nd on"></span></div>
+                    <div class="sm-node sm-mem" onclick="openPanel('fast_track')"><span class="sm-ni">⚡</span><span class="sm-nn">Fast-Track</span><span class="sm-nd on"></span></div>
+                    <div class="sm-node sm-mem" onclick="openPanel('mirror_turns')"><span class="sm-ni">📋</span><span class="sm-nn">Mirror-Turns</span><span class="sm-nd on"></span></div>
+                    <div class="sm-node sm-mem" onclick="openPanel('decay')"><span class="sm-ni">⏳</span><span class="sm-nn">Decay</span><span class="sm-nd on"></span></div>
+                </div>
+            </div>
+
+            <!-- Pfeil -->
+            <div class="sm-arrow-row">
+                <div class="sm-arrow-line"></div>
+                <div class="sm-arrow-label">konsultative Ressource</div>
+                <div class="sm-arrow-line"></div>
+            </div>
+
+            <!-- ORBIT -->
+            <div class="sm-layer sm-orbit-layer" style="--lc:rgba(251,146,60,.08);--lb:rgba(251,146,60,.3);--la:#fb923c">
+                <div class="sm-layer-label" style="color:#fb923c">ORBIT <span style="font-size:9px;font-weight:400;opacity:.6;letter-spacing:.05em">Autonome Exekutive</span></div>
+                <div class="sm-nodes">
+                    <div class="sm-node sm-orb" onclick="openPanel('orbit_tasks')"><span class="sm-ni">🗂️</span><span class="sm-nn">Threads & Tasks</span><span class="sm-nd on"></span></div>
+                    <div class="sm-node sm-orb" onclick="openPanel('orbit_policies')"><span class="sm-ni">📋</span><span class="sm-nn">Policies & Routinen</span><span class="sm-nd on"></span></div>
+                    <div class="sm-node sm-orb" onclick="openPanel('orbit_proactive')"><span class="sm-ni">📡</span><span class="sm-nn">Proaktivität</span><span class="sm-nd on"></span></div>
+                    <div class="sm-node sm-orb" onclick="openPanel('orbit_quality')"><span class="sm-ni">🔬</span><span class="sm-nn">Quality Gate & Innere Konsultation</span><span class="sm-nd on"></span></div>
+                </div>
+            </div>
+
+            <!-- Zwei Pfeile nebeneinander -->
+            <div class="sm-arrow-split">
+                <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px">
+                    <div class="sm-arrow-line" style="width:60%"></div>
+                    <div class="sm-arrow-label">führt aus</div>
+                    <div class="sm-arrow-line" style="width:60%"></div>
+                </div>
+                <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px">
+                    <div class="sm-arrow-line" style="width:60%"></div>
+                    <div class="sm-arrow-label">steuert</div>
+                    <div class="sm-arrow-line" style="width:60%"></div>
+                </div>
+            </div>
+
+            <!-- TOOLS + COMMUNICATION nebeneinander -->
+            <div class="sm-bottom-row">
+
+                <!-- TOOLS -->
+                <div class="sm-layer sm-half" style="--lc:rgba(251,191,36,.07);--lb:rgba(251,191,36,.25);--la:#fbbf24">
+                    <div class="sm-layer-label" style="color:#fbbf24">Tools</div>
+                    <div class="sm-nodes sm-nodes-wrap">
+                        <div class="sm-node sm-tool" onclick="openPanel('calendar')" style="flex:0 0 auto"><span class="sm-ni">📅</span><span class="sm-nn">Kalender</span><span class="sm-nd" id="tdot-calendar" style="background:#34d399"></span></div>
+                        <div class="sm-node sm-tool" onclick="openPanel('tasks')" style="flex:0 0 auto"><span class="sm-ni">✅</span><span class="sm-nn">Listen</span><span class="sm-nd" id="tdot-tasks" style="background:#34d399"></span></div>
+                        <div class="sm-node sm-tool" onclick="openPanel('websearch')" style="flex:0 0 auto"><span class="sm-ni">🌐</span><span class="sm-nn">Web Search</span><span class="sm-nd on"></span></div>
+                        <div class="sm-node sm-tool" onclick="openPanel('pdf')" style="flex:0 0 auto"><span class="sm-ni">📄</span><span class="sm-nn">PDF-Analyse</span><span class="sm-nd" id="tdot-pdf" style="background:#34d399"></span></div>
+                        <div class="sm-node sm-tool" onclick="openPanel('voice')" style="flex:0 0 auto"><span class="sm-ni">🎙️</span><span class="sm-nn">Voice</span><span class="sm-nd on"></span></div>
+                        <div class="sm-node sm-tool" style="flex:0 0 auto;opacity:.45;cursor:default"><span class="sm-ni">✉️</span><span class="sm-nn" style="color:var(--text-4)">Mail</span><span style="font-size:9px;color:var(--text-4);flex-shrink:0">bald</span></div>
+                    </div>
+                </div>
+
+                <!-- COMMUNICATION -->
+                <div class="sm-layer sm-half" style="--lc:rgba(52,211,153,.07);--lb:rgba(52,211,153,.25);--la:#34d399">
+                    <div class="sm-layer-label" style="color:#34d399">Communication</div>
+                    <div class="sm-nodes sm-nodes-wrap">
+                        <div class="sm-node sm-comm" onclick="openPanel('chat')" style="flex:0 0 auto"><span class="sm-ni">💭</span><span class="sm-nn">Chat (WhatsApp)</span><span class="sm-nd on"></span></div>
+                        <div class="sm-node sm-comm" onclick="openPanel('diary')" style="flex:0 0 auto"><span class="sm-ni">📓</span><span class="sm-nn">Tagebuch</span><span class="sm-nd on"></span></div>
+                    </div>
+                </div>
+
+            </div>
+
         </div>
 
-        <!-- Legend -->
-        <div style="display:flex;gap:16px;justify-content:center;margin-top:22px;padding-top:16px;border-top:1px solid var(--border)">
-            <div class="smleg"><span style="background:#00e5ff" class="smlegdot"></span>Kognition</div>
-            <div class="smleg"><span style="background:#a78bfa" class="smlegdot"></span>Gedächtnis</div>
-            <div class="smleg"><span style="background:#34d399" class="smlegdot"></span>Kommunikation</div>
-            <div class="smleg"><span style="background:#fbbf24" class="smlegdot"></span>Tools</div>
+        <!-- Legende -->
+        <div class="sm-legend">
+            <div class="sm-leg-item"><span class="sm-leg-dot" style="background:#00e5ff"></span>Kognition</div>
+            <div class="sm-leg-item"><span class="sm-leg-dot" style="background:#a78bfa"></span>Memory</div>
+            <div class="sm-leg-item"><span class="sm-leg-dot" style="background:#fb923c"></span>ORBIT</div>
+            <div class="sm-leg-item"><span class="sm-leg-dot" style="background:#fbbf24"></span>Tools</div>
+            <div class="sm-leg-item"><span class="sm-leg-dot" style="background:#34d399"></span>Communication</div>
         </div>
+
     </div>
 </div>
 
@@ -100,30 +139,49 @@
 
 {% block scripts %}
 <style>
-.sms { background:var(--c); border:1px solid var(--b); border-radius:10px; padding:14px 12px; margin-bottom:0; }
-.sms-label { font-size:10px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; margin-bottom:10px; opacity:.9; }
-.smr { display:flex; align-items:stretch; gap:8px; }
-.smn { flex:1; display:flex; align-items:center; gap:7px; padding:10px 12px; border-radius:9px; border:1.5px solid var(--border); background:var(--surface); cursor:pointer; transition:all .15s; box-shadow:0 1px 3px rgba(0,0,0,.06); min-width:0; overflow:hidden; min-height:58px; }
-.smn:hover { transform:translateY(-2px); box-shadow:0 4px 12px rgba(0,0,0,.12); }
-.smn.sm-active { box-shadow:0 0 0 2px var(--accent); }
-.sm-cog { border-left:3px solid #00e5ff; }
-.sm-mem { border-left:3px solid #a78bfa; }
+.sm-layout { display:flex; flex-direction:column; gap:0; }
+.sm-layers { display:flex; flex-direction:column; gap:0; }
+
+/* Layer */
+.sm-layer { background:var(--lc); border:1px solid var(--lb); border-radius:10px; padding:14px 14px 12px; }
+.sm-layer-label { font-size:10px; font-weight:700; letter-spacing:.13em; text-transform:uppercase; margin-bottom:10px; opacity:.9; }
+
+/* Nodes */
+.sm-nodes { display:flex; align-items:stretch; gap:8px; flex-wrap:nowrap; }
+.sm-nodes-wrap { flex-wrap:wrap; }
+.sm-node { flex:1; display:flex; align-items:center; gap:7px; padding:10px 11px; border-radius:8px; border:1.5px solid var(--border); background:var(--surface); cursor:pointer; transition:all .15s; min-width:0; overflow:hidden; min-height:52px; }
+.sm-node:hover { transform:translateY(-2px); box-shadow:0 4px 12px rgba(0,0,0,.14); }
+.sm-cog  { border-left:3px solid #00e5ff; }
+.sm-mem  { border-left:3px solid #a78bfa; }
+.sm-orb  { border-left:3px solid #fb923c; }
+.sm-tool { border-left:3px solid #fbbf24; }
 .sm-comm { border-left:3px solid #34d399; }
-.smi { font-size:14px; flex-shrink:0; }
-.smname { font-size:12px; font-weight:600; color:var(--text-1); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; flex:1; }
-.smdot { width:7px; height:7px; border-radius:50%; flex-shrink:0; background:#6b7280; }
-.smdot.on { background:#34d399; }
-.sma { color:var(--text-4); font-size:13px; flex-shrink:0; opacity:.55; user-select:none; display:flex; align-items:center; }
-.smv { display:flex; justify-content:space-around; margin:4px 0; }
-.smvl { flex:1; display:flex; flex-direction:column; align-items:center; }
-.smvl::before { content:''; display:block; width:1.5px; height:14px; background:var(--border); }
-.smvl::after { content:''; display:block; width:0; height:0; border-left:4px solid transparent; border-right:4px solid transparent; border-top:5px solid var(--text-4); opacity:.4; }
-.smleg { display:flex; align-items:center; gap:5px; font-size:11px; color:var(--text-4); }
-.smlegdot { width:7px; height:7px; border-radius:50%; flex-shrink:0; display:inline-block; }
-.t-item { display:flex; flex-direction:column; align-items:center; gap:4px; padding:8px 4px; border-radius:7px; cursor:pointer; transition:background .15s; text-align:center; }
-.t-item:hover { background:var(--surface-3,rgba(255,255,255,.05)); }
-.t-name { font-size:10px; font-weight:600; color:var(--text-2); line-height:1.3; }
-.sm-dot { width:7px; height:7px; border-radius:50%; display:inline-block; }
+.sm-ni { font-size:14px; flex-shrink:0; }
+.sm-nn { font-size:12px; font-weight:600; color:var(--text-1); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; flex:1; }
+.sm-nd { width:7px; height:7px; border-radius:50%; flex-shrink:0; background:#6b7280; }
+.sm-nd.on { background:#34d399; }
+
+/* ORBIT Layer hervorgehoben */
+.sm-orbit-layer { border-width:1.5px; box-shadow:0 0 0 1px rgba(251,146,60,.12), 0 2px 12px rgba(251,146,60,.08); }
+
+/* Pfeile */
+.sm-arrow-row { display:flex; align-items:center; gap:8px; padding:5px 20px; }
+.sm-arrow-line { flex:1; height:1px; background:var(--border); position:relative; }
+.sm-arrow-line::after { content:''; position:absolute; right:-1px; top:-4px; border-left:5px solid var(--text-4); border-top:4px solid transparent; border-bottom:4px solid transparent; opacity:.35; }
+.sm-arrow-label { font-size:10px; color:var(--text-4); white-space:nowrap; font-family:monospace; letter-spacing:.04em; }
+
+.sm-arrow-split { display:flex; padding:5px 10px; gap:20px; }
+
+/* Bottom row */
+.sm-bottom-row { display:flex; gap:12px; align-items:stretch; }
+.sm-half { flex:1; }
+
+/* Legend */
+.sm-legend { display:flex; gap:16px; justify-content:center; margin-top:18px; padding-top:14px; border-top:1px solid var(--border); flex-wrap:wrap; }
+.sm-leg-item { display:flex; align-items:center; gap:5px; font-size:11px; color:var(--text-4); }
+.sm-leg-dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; display:inline-block; }
+
+/* Panel */
 .sm-overlay { display:none; position:fixed; inset:0; z-index:100; background:rgba(0,0,0,.4); }
 .sm-overlay.open { display:block; }
 .sm-panel { display:none; position:fixed; right:0; top:0; bottom:0; width:340px; z-index:101; background:var(--surface); border-left:1px solid var(--border); padding:28px 22px; overflow-y:auto; box-shadow:-6px 0 24px rgba(0,0,0,.25); }
@@ -134,41 +192,123 @@
 .sm-toggle-track { width:38px; height:20px; border-radius:10px; position:relative; cursor:pointer; transition:background .2s; flex-shrink:0; }
 .sm-toggle-thumb { position:absolute; top:3px; width:14px; height:14px; border-radius:50%; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.3); transition:left .2s; }
 </style>
+
 <script>
 const SYSTEMS = {
-    moltbook:{ icon:"🔍", name:"Moltbook", group:"Kognition", color:"#00e5ff", desc:"Alle 3 Stunden erkundet SchnuBot autonom ein KI-Agenten-Netzwerk. Er wählt die Suchanfrage selbst — auch aus freier Neugier. Wenn eine Reflexion stark genug ist, postet er sie. Antworten anderer Agenten landen in der Inbox.", inputs:["Memory-Chunks","Freie Neugier"], outputs:["self_reflection-Chunk","Moltbook-Posts","Inbox-Antworten"]},
-    mirror_analyzer:{ icon:"🪞", name:"Mirror-Analyzer", group:"Kognition", color:"#00e5ff", desc:"Nach jeweils 5 neuen Gesprächsrunden analysiert SchnuBot seine MIRROR-Daten. Er schreibt eine Selbsteinschätzung und formuliert Verhaltenshypothesen (proposed_pattern).", inputs:["MIRROR-Turns","Preflight-Daten"], outputs:["self_reflection-Chunk","proposed_pattern-Chunk"]},
-    self_reflection:{ icon:"💡", name:"Self-Reflection", group:"Kognition", color:"#00e5ff", desc:"SchnuBots akkumuliertes Selbstbild. Liest die gespeicherten self_reflection-Chunks aus ChromaDB und baut daraus einen strukturierten Rückspiegel — der in die Autonome Reflexion einfließt. Phase 2 (nach Tasksystem 2.0): SchnuBot kann das aktiv als Tool aufrufen.", inputs:["self_reflection-Chunks (ChromaDB)"], outputs:["Rückspiegel-Text für autonomous_reflection","Confidence-Trend"]},
-    inner_dialogue:{ icon:"💬", name:"Innerer Dialog", group:"Kognition", color:"#00e5ff", desc:"Alle 3 Stunden liest SchnuBot seinen ältesten unbeantworteten eigenen Chunk und antwortet darauf. Jede Antwort trägt eine replies_to-Referenz.", inputs:["robot-eigene Chunks"], outputs:["self_reflection-Chunk (replies_to)"]},
-    autonomous_reflection:{ icon:"🧠", name:"Autonome Reflexion", group:"Kognition", color:"#00e5ff", desc:"Freies Nachdenken alle 4,5 Stunden. Klassifiziert Kandidaten, prüft Widersprüche, leitet PROACTIVE → Tommy.", inputs:["robot-eigene Chunks","proposed_pattern"], outputs:["self_reflection / working_state / proactive_candidate"]},
-    mirror:{ icon:"📊", name:"Behavior (MIRROR + Patterns)", group:"Gedächtnis", color:"#a78bfa", desc:"Loggt jede Gesprächsrunde: aktive Chunks, Preflight-Status, 5 Pattern-Detektoren. Pattern Hypotheses sind Verhaltenshypothesen die SchnuBot selbst destilliert — du entscheidest was daraus wird.", inputs:["Jede SchnuBot-Antwort","Aktive Chunks"], outputs:["Turn-Log","Preflight-Status","Pattern-Flags","proposed_pattern"]},
-    memory:{ icon:"🧩", name:"Gedächtnis (ChromaDB)", group:"Gedächtnis", color:"#a78bfa", desc:"Das neuronale Langzeitgedächtnis. 8 Chunk-Typen. Weight steigt durch Bestätigung, sinkt durch Alter. Scoring über 6 Faktoren.", inputs:["Konsolidierer","Fast-Track","Alle robot-Prozesse"], outputs:["Retrieval bei jedem Chat","Prompt-Kontext"]},
-    consolidator:{ icon:"⚙️", name:"Konsolidierer", group:"Gedächtnis", color:"#a78bfa", desc:"Läuft im Hintergrund (Qwen 2.5). Analysiert Gesprächsblöcke: neue Erinnerung bilden, bestehende bestätigen oder ersetzen.", inputs:["Gesprächsblöcke","Bestehende Chunks"], outputs:["Neue/aktualisierte Chunks in ChromaDB"]},
-    chat:{ icon:"💭", name:"Chat (WhatsApp)", group:"Kommunikation", color:"#34d399", desc:"Der primäre Kanal über WAHA. Der System-Prompt wird bei jeder Nachricht neu aus Memory-Chunks aufgebaut. Jede Runde wird von MIRROR geloggt.", inputs:["Tommy via WhatsApp","Memory-Retrieval"], outputs:["Antwort an Tommy","MIRROR-Turn"]},
-    proactive:{ icon:"📨", name:"Proaktiv-Engine", group:"Kommunikation", color:"#34d399", desc:"Sendet ohne Aufforderung: Briefings, Stille-Check, Gedanken-Impulse. proactive_candidate-Chunks werden priorisiert weitergeleitet.", inputs:["proactive_candidate-Chunks","Uhrzeit"], outputs:["WhatsApp-Nachricht an Tommy"]},
-    diary:{ icon:"📓", name:"Tagebuch", group:"Kommunikation", color:"#34d399", desc:"Jeden Abend schreibt SchnuBot einen Tagebucheintrag für sich selbst — echte Selbstwahrnehmung, kein Statusbericht.", inputs:["Tagesgeschehen","Memory"], outputs:["diary-Chunk","Diary-Seite"]},
-    websearch:{ icon:"🌐", name:"Web Search", group:"Tool", color:"#fbbf24", desc:"Tavily-Integration. SchnuBot recherchiert eigenständig wann immer nötig. Trigger: [SEARCH: query].", inputs:["[SEARCH: query]"], outputs:["Suchergebnis","Search-Log"]},
-    calendar:{ icon:"📅", name:"Kalender", group:"Tool", color:"#fbbf24", desc:"Drei Kalender gleichzeitig: Google (Arbeit), iCloud (Privat), iCloud (Study).", inputs:["[CALENDAR_ACTION: {...}]"], outputs:["Termine"], toolId:"calendar"},
-    tasks:{ icon:"✅", name:"Listen", group:"Tool", color:"#fbbf24", desc:"5 Kategorien: ukl, osmi, jotsle, privat, booktobuy. Automatisches Anlegen wenn Tommy eine Aufgabe erwähnt.", inputs:["[TODO_ACTION: {...}]"], outputs:["Todo-Einträge"], toolId:"tasks"},
-    pdf:{ icon:"📄", name:"PDF-Analyse", group:"Tool", color:"#fbbf24", desc:"Tommy schickt ein PDF — SchnuBot liest es semantisch mit Fundstellen.", inputs:["PDF via WhatsApp"], outputs:["Semantische Antworten"], toolId:"pdf"},
+    // KOGNITION
+    moltbook:{ icon:"🔍", name:"Moltbook Explorer", group:"Kognition", color:"#00e5ff",
+        desc:"Alle 90 Minuten erkundet Kimi autonom ein KI-Agenten-Netzwerk. Sie wählt die Suchanfrage selbst — auch aus freier Neugier. Wenn eine Reflexion stark genug ist, postet sie. Antworten anderer Agenten landen in der Inbox.",
+        inputs:["Memory-Chunks","Freie Neugier"], outputs:["self_reflection-Chunk","Moltbook-Posts","Inbox-Antworten"] },
+    mirror_analyzer:{ icon:"🪞", name:"Mirror-Analyzer", group:"Kognition", color:"#00e5ff",
+        desc:"Analysiert MIRROR-Daten und erkennt Verhaltensmuster. Nach 5 neuen Turns formuliert Kimi Verhaltenshypothesen (proposed_pattern) und schreibt eine Selbsteinschätzung.",
+        inputs:["Mirror-Turns","Preflight-Daten"], outputs:["Pattern-Flags","proposed_pattern","self_reflection-Chunk"] },
+    self_reflection:{ icon:"💡", name:"Self-Reflection", group:"Kognition", color:"#00e5ff",
+        desc:"Kimis akkumuliertes Selbstbild. Liest self_reflection-Chunks aus ChromaDB und baut daraus einen strukturierten Rückspiegel — der in die Autonome Reflexion und das ORBIT Quality Gate einfließt.",
+        inputs:["self_reflection-Chunks (ChromaDB)"], outputs:["Rückspiegel-Text","Confidence-Trend"] },
+    inner_dialogue:{ icon:"💬", name:"Innerer Dialog", group:"Kognition", color:"#00e5ff",
+        desc:"Alle 3 Stunden liest Kimi ihren ältesten unbeantworteten eigenen Chunk und antwortet darauf. Jede Antwort trägt eine replies_to-Referenz.",
+        inputs:["robot-eigene Chunks"], outputs:["self_reflection-Chunk (replies_to)"] },
+    autonomous_reflection:{ icon:"🧠", name:"Autonome Reflexion", group:"Kognition", color:"#00e5ff",
+        desc:"Freies Nachdenken alle 4,5 Stunden. Klassifiziert Kandidaten, prüft Widersprüche, nutzt den Self-Reflection Rückspiegel. Liefert cognition_output-Trigger an ORBIT.",
+        inputs:["robot-eigene Chunks","proposed_pattern","Rückspiegel"], outputs:["self_reflection","working_state","cognition_output → ORBIT"] },
+
+    // MEMORY
+    memory:{ icon:"🧩", name:"ChromaDB", group:"Memory", color:"#a78bfa",
+        desc:"Das semantische Langzeitgedächtnis. 8 Chunk-Typen. Weight steigt durch Bestätigung, sinkt durch Alter. Scoring über 6 Faktoren. ORBIT liest konsultativ — schreibt nie direkt.",
+        inputs:["Konsolidierer","Fast-Track","Alle Kognitions-Prozesse"], outputs:["Retrieval bei jedem Chat","ORBIT-Konsultation","Prompt-Kontext"] },
+    consolidator:{ icon:"⚙️", name:"Konsolidierer", group:"Memory", color:"#a78bfa",
+        desc:"Läuft im Heartbeat (Qwen 2.5). Analysiert Gesprächsblöcke: neue Erinnerung bilden, bestehende bestätigen oder ersetzen. Einziger kontrollierter Schreibpfad in ChromaDB.",
+        inputs:["Gesprächsblöcke","Bestehende Chunks"], outputs:["Neue/aktualisierte Chunks in ChromaDB"] },
+    fast_track:{ icon:"⚡", name:"Fast-Track", group:"Memory", color:"#a78bfa",
+        desc:"Sofort-Speicherung im Chat-Thread. Schreibt relevante Inhalte direkt nach der Antwort — ohne auf den nächsten Heartbeat zu warten.",
+        inputs:["Chat-Nachricht (nach Antwort)"], outputs:["Chunk in ChromaDB"] },
+
+    mirror_turns:{ icon:"📋", name:"Mirror-Turns", group:"Memory", color:"#a78bfa",
+        desc:"Loggt jede Gesprächsrunde: aktive Chunks, Preflight-Status und Pattern-Flags. Rohdaten-Basis für den Mirror-Analyzer. Passives Aufzeichnen — kein Denken.",
+        inputs:["Jede Kimi-Antwort","Aktive Chunks","Preflight-Status"], outputs:["Turn-Log","Preflight-Verteilung","Pattern-Flags"] },
+    decay:{ icon:"⏳", name:"Decay", group:"Memory", color:"#a78bfa",
+        desc:"Kontrollierter Vergess-Prozess. Senkt Chunk-Weights über Zeit ab. Chunks die lange nicht bestätigt wurden verlieren Relevanz und werden archiviert. Hält das Gedächtnis aktuell.",
+        inputs:["Alle aktiven Chunks","Zeit"], outputs:["Archivierte Chunks","Angepasste Weights"] },
+
+    // ORBIT
+    orbit_tasks:{ icon:"🗂️", name:"Threads & Tasks", group:"ORBIT", color:"#fb923c",
+        desc:"Das operative Kernobjekt-System. Threads sind offene Fäden, Tasks sind konkrete Arbeitsobjekte mit Ziel, Zustand, Priorität und Steps. ORBIT verwaltet Zustandsübergänge, Hotness (max. 3 heiße Tasks) und Konvertierungen.",
+        inputs:["Trigger (user_input, heartbeat, cognition_output, ...)"], outputs:["Steps → Tool-Aufrufe","Entscheidungen → Audit"] },
+    orbit_policies:{ icon:"📋", name:"Policies & Routinen", group:"ORBIT", color:"#fb923c",
+        desc:"Policies sind operative Leitplanken die aus Reviews, MIRROR und Reaktionsmustern entstehen. Routinen sind explizite wiederkehrende Abläufe. Beide lernen aus Erfahrung — ohne unkontrolliert zu überschreiben.",
+        inputs:["Reviews","MIRROR-Signale","Reaktionsmuster"], outputs:["Aktive Leitplanken für alle Entscheidungen"] },
+    orbit_proactive:{ icon:"📡", name:"Proaktivität", group:"ORBIT", color:"#fb923c",
+        desc:"ORBIT entscheidet wann und wie Kimi proaktiv schreibt. Typen: morning_briefing, evening_briefing, critical_alert, task_update, recommendation, nudge. Prüft Ton, Nutzwert, Redundanz, Tagesphase und Kommunikationssättigung.",
+        inputs:["Task-Zustandswechsel","cognition_output","Zeitfenster"], outputs:["WhatsApp-Nachricht an Tommy"] },
+    orbit_quality:{ icon:"🔬", name:"Quality Gate & Innere Konsultation", group:"ORBIT", color:"#fb923c",
+        desc:"Vor relevanten Aktionen prüft ORBIT: Bin ich sicher genug? Widerspreche ich mir? Habe ich genug Kontext? ORBIT darf gezielt konsultieren: Self-Reflection, MIRROR, Innerer Dialog, Confidence-Rückspiegel.",
+        inputs:["Self-Reflection","MIRROR-Daten","Confidence-Rückspiegel"], outputs:["Freigabe oder defensiver Fallback"] },
+
+    // TOOLS
+    websearch:{ icon:"🌐", name:"Web Search", group:"Tools", color:"#fbbf24",
+        desc:"Tavily-Integration. Kimi recherchiert eigenständig wann immer nötig. Trigger: [SEARCH: query] im Chat oder über ORBIT-Step.",
+        inputs:["[SEARCH: query]"], outputs:["Suchergebnis","Search-Log"] },
+    calendar:{ icon:"📅", name:"Kalender", group:"Tools", color:"#fbbf24",
+        desc:"Drei Kalender gleichzeitig: Google (Arbeit), iCloud (Privat), iCloud (Study). ORBIT nutzt Kalender für Scheduling und Follow-ups.",
+        inputs:["[CALENDAR_ACTION: {...}]","ORBIT-Step"], outputs:["Termine","Verfügbarkeit"], toolId:"calendar" },
+    tasks:{ icon:"✅", name:"Listen", group:"Tools", color:"#fbbf24",
+        desc:"5 Kategorien: ukl, osmi, jotsle, privat, booktobuy. Externes User-System — ORBIT nutzt es, verschmilzt es aber nicht mit ORBIT-Tasks.",
+        inputs:["[TODO_ACTION: {...}]"], outputs:["Todo-Einträge"], toolId:"tasks" },
+    pdf:{ icon:"📄", name:"PDF-Analyse", group:"Tools", color:"#fbbf24",
+        desc:"Tommy schickt ein PDF — Kimi liest es semantisch mit Fundstellen. Läuft im Dokument-Modus bis Tommy 'stop' schreibt.",
+        inputs:["PDF via WhatsApp"], outputs:["Semantische Antworten","Fundstellen"], toolId:"pdf" },
+    voice:{ icon:"🎙️", name:"Voice", group:"Tools", color:"#fbbf24",
+        desc:"faster-whisper transkribiert Sprachnachrichten. Das Transkript wird als knowledge-Chunk gespeichert und wie eine normale Nachricht behandelt.",
+        inputs:["Sprachnachricht via WhatsApp"], outputs:["Transkript","knowledge-Chunk"] },
+
+    // COMMUNICATION
+    chat:{ icon:"💭", name:"Chat (WhatsApp)", group:"Communication", color:"#34d399",
+        desc:"Der primäre Kanal über WAHA. System-Prompt wird bei jeder Nachricht neu aus Memory-Chunks aufgebaut. Jede Runde wird von MIRROR geloggt. app.py schreibt user_input-Trigger in ORBIT.",
+        inputs:["Tommy via WhatsApp","Memory-Retrieval"], outputs:["Antwort an Tommy","MIRROR-Turn","orbit_trigger"] },
+    diary:{ icon:"📓", name:"Tagebuch", group:"Communication", color:"#34d399",
+        desc:"Jeden Abend schreibt Kimi einen Tagebucheintrag für sich selbst — echte Selbstwahrnehmung, kein Statusbericht. Fließt als self_reflection-Chunk ins Gedächtnis.",
+        inputs:["Tagesgeschehen","Memory"], outputs:["diary-Chunk","Diary-Seite"] },
 };
+
 let toolsState={}, activeId=null;
-async function loadToolsState(){try{(await(await fetch('/api/tools')).json()).forEach(t=>{toolsState[t.id]=t;});updateDots();}catch(e){}}
-function updateDots(){[['calendar','tdot-calendar'],['tasks','tdot-tasks'],['pdf','tdot-pdf']].forEach(([tid,did])=>{const dot=document.getElementById(did);if(dot&&toolsState[tid])dot.style.background=toolsState[tid].enabled?'#34d399':'#6b7280';});}
-async function toggleTool(toolId,enabled){try{const r=await fetch(`/api/tools/${toolId}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled})});if(!r.ok)throw new Error('HTTP '+r.status);toolsState[toolId]={...(toolsState[toolId]||{}),enabled};updateDots();if(activeId)openPanel(activeId);}catch(e){alert('Fehler: '+e.message);}}
+
+async function loadToolsState(){
+    try {
+        (await(await fetch('/api/tools')).json()).forEach(t=>{ toolsState[t.id]=t; });
+        updateDots();
+    } catch(e){}
+}
+
+function updateDots(){
+    [['calendar','tdot-calendar'],['tasks','tdot-tasks'],['pdf','tdot-pdf']].forEach(([tid,did])=>{
+        const dot=document.getElementById(did);
+        if(dot&&toolsState[tid]) dot.style.background=toolsState[tid].enabled?'#34d399':'#6b7280';
+    });
+}
+
+async function toggleTool(toolId,enabled){
+    try {
+        const r=await fetch(`/api/tools/${toolId}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled})});
+        if(!r.ok) throw new Error('HTTP '+r.status);
+        toolsState[toolId]={...(toolsState[toolId]||{}),enabled};
+        updateDots();
+        if(activeId) openPanel(activeId);
+    } catch(e){ alert('Fehler: '+e.message); }
+}
+
 function renderSubCalendars(toolData) {
-    if (!toolData || !toolData.sub_calendars || !toolData.sub_calendars.length) return '';
+    if (!toolData?.sub_calendars?.length) return '';
     const calRows = toolData.sub_calendars.map(cal => {
-        const provColor = cal.provider === 'google' ? '#1a73e8' : '#555';
-        const provLabel = cal.provider === 'google' ? 'Google' : 'iCloud';
+        const provColor = cal.provider==='google'?'#1a73e8':'#555';
+        const provLabel = cal.provider==='google'?'Google':'iCloud';
         const en = cal.enabled;
-        const perms = cal.permissions || {};
+        const perms = cal.permissions||{};
         const permChips = ['read','write','delete'].map(p => {
-            const active = p === 'read' || perms[p];
-            const locked = p === 'read' ? 'opacity:.5;cursor:default;' : 'cursor:pointer;';
-            const bg = active ? 'background:var(--accent-dim);border-color:var(--accent);color:var(--accent);' : '';
-            const icons = {read:'👁',write:'✏️',delete:'🗑'};
-            const labels = {read:'Lesen',write:'Schreiben',delete:'Löschen'};
+            const active = p==='read'||perms[p];
+            const locked = p==='read'?'opacity:.5;cursor:default;':'cursor:pointer;';
+            const bg = active?'background:var(--accent-dim);border-color:var(--accent);color:var(--accent);':'';
+            const icons={read:'👁',write:'✏️',delete:'🗑'};
+            const labels={read:'Lesen',write:'Schreiben',delete:'Löschen'};
             return `<span style="font-size:11px;padding:2px 7px;border-radius:4px;border:1px solid var(--border);background:var(--surface-2);${bg}${locked}" onclick="toggleCalPerm('${cal.id}','${p}',this)">${icons[p]} ${labels[p]}</span>`;
         }).join('');
         return `<div style="padding:10px 0;border-bottom:1px solid var(--border-light)">
@@ -185,21 +325,47 @@ function renderSubCalendars(toolData) {
 }
 
 async function toggleSubCal(calId, enabled) {
-    await fetch(`/api/tools/calendar/sub/${calId}`, {method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled})});
+    await fetch(`/api/tools/calendar/sub/${calId}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled})});
     await loadToolsState();
     openPanel(activeId);
 }
 
 async function toggleCalPerm(calId, perm, el) {
-    if (perm === 'read') return;
-    const active = el.style.borderColor === 'var(--accent)' || el.style.color === 'var(--accent)';
-    await fetch(`/api/tools/calendar/sub/${calId}/perm`, {method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({perm, value: !active})});
+    if(perm==='read') return;
+    const active = el.style.borderColor==='var(--accent)'||el.style.color==='var(--accent)';
+    await fetch(`/api/tools/calendar/sub/${calId}/perm`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({perm,value:!active})});
     await loadToolsState();
     openPanel(activeId);
 }
 
-function openPanel(id){const sys=SYSTEMS[id];if(!sys)return;activeId=id;document.querySelectorAll('.smn').forEach(n=>n.classList.remove('sm-active'));document.getElementById('p-icon').textContent=sys.icon;document.getElementById('p-name').textContent=sys.name;document.getElementById('p-group').innerHTML=`<span style="color:${sys.color}">${sys.group}</span>`;document.getElementById('p-desc').textContent=sys.desc;document.getElementById('p-inputs').innerHTML=sys.inputs?.length?`<div class="sm-io-label">Eingaben</div>${sys.inputs.map(i=>`<span class="sm-io-tag">${i}</span>`).join('')}`:'';document.getElementById('p-outputs').innerHTML=sys.outputs?.length?`<div class="sm-io-label">Ausgaben</div>${sys.outputs.map(o=>`<span class="sm-io-tag">${o}</span>`).join('')}`:'';const te=document.getElementById('p-toggle');if(sys.toolId&&toolsState[sys.toolId]?.available){const en=toolsState[sys.toolId].enabled;const subCals=sys.toolId==='calendar'?renderSubCalendars(toolsState[sys.toolId]):'';te.innerHTML=`<div class="sm-toggle-row"><span style="font-size:13px;color:var(--text-2);font-weight:500">Tool aktiv</span><div style="display:flex;align-items:center;gap:10px"><span style="font-size:12px;color:var(--text-4)">${en?'Ein':'Aus'}</span><div class="sm-toggle-track" style="background:${en?'#34d399':'var(--border)'}" onclick="toggleTool('${sys.toolId}',${!en})"><div class="sm-toggle-thumb" style="left:${en?'21px':'3px'}"></div></div></div></div>${subCals}`;}else{te.innerHTML='';}document.getElementById('sm-overlay').classList.add('open');document.getElementById('sm-panel').classList.add('open');}
-function closePanel(){activeId=null;document.querySelectorAll('.smn').forEach(n=>n.classList.remove('sm-active'));document.getElementById('sm-overlay').classList.remove('open');document.getElementById('sm-panel').classList.remove('open');}
+function openPanel(id){
+    const sys=SYSTEMS[id];
+    if(!sys) return;
+    activeId=id;
+    document.querySelectorAll('.sm-node').forEach(n=>n.classList.remove('sm-active'));
+    document.getElementById('p-icon').textContent=sys.icon;
+    document.getElementById('p-name').textContent=sys.name;
+    document.getElementById('p-group').innerHTML=`<span style="color:${sys.color}">${sys.group}</span>`;
+    document.getElementById('p-desc').textContent=sys.desc;
+    document.getElementById('p-inputs').innerHTML=sys.inputs?.length?`<div class="sm-io-label">Eingaben</div>${sys.inputs.map(i=>`<span class="sm-io-tag">${i}</span>`).join('')}`:'';
+    document.getElementById('p-outputs').innerHTML=sys.outputs?.length?`<div class="sm-io-label">Ausgaben</div>${sys.outputs.map(o=>`<span class="sm-io-tag">${o}</span>`).join('')}`:'';
+    const te=document.getElementById('p-toggle');
+    if(sys.toolId&&toolsState[sys.toolId]?.available){
+        const en=toolsState[sys.toolId].enabled;
+        const subCals=sys.toolId==='calendar'?renderSubCalendars(toolsState[sys.toolId]):'';
+        te.innerHTML=`<div class="sm-toggle-row"><span style="font-size:13px;color:var(--text-2);font-weight:500">Tool aktiv</span><div style="display:flex;align-items:center;gap:10px"><span style="font-size:12px;color:var(--text-4)">${en?'Ein':'Aus'}</span><div class="sm-toggle-track" style="background:${en?'#34d399':'var(--border)'}" onclick="toggleTool('${sys.toolId}',${!en})"><div class="sm-toggle-thumb" style="left:${en?'21px':'3px'}"></div></div></div></div>${subCals}`;
+    } else { te.innerHTML=''; }
+    document.getElementById('sm-overlay').classList.add('open');
+    document.getElementById('sm-panel').classList.add('open');
+}
+
+function closePanel(){
+    activeId=null;
+    document.querySelectorAll('.sm-node').forEach(n=>n.classList.remove('sm-active'));
+    document.getElementById('sm-overlay').classList.remove('open');
+    document.getElementById('sm-panel').classList.remove('open');
+}
+
 loadToolsState();
 </script>
 {% endblock %}

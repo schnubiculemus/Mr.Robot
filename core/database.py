@@ -129,9 +129,336 @@ def init_db():
         ON mirror_turns(user_id, timestamp DESC)
     """)
 
+    # =========================================================================
+    # ORBIT: Autonome operative Exekutive (Build Step 1)
+    # =========================================================================
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS orbit_threads (
+            id TEXT PRIMARY KEY,
+            topic_core TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'new',
+            relevance TEXT NOT NULL DEFAULT 'weak',
+            primary_origin TEXT NOT NULL,
+            secondary_origins TEXT DEFAULT '[]',
+            source_refs TEXT DEFAULT '[]',
+            parent_thread_id TEXT,
+            linked_task_id TEXT,
+            trigger_refs TEXT DEFAULT '[]',
+            history_refs TEXT DEFAULT '[]',
+            review_flags TEXT DEFAULT '[]',
+            reason TEXT,
+            discard_reason TEXT,
+            merge_target_id TEXT,
+            stale INTEGER NOT NULL DEFAULT 0,
+            orphaned INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_orbit_threads_status ON orbit_threads(status)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_orbit_threads_ts ON orbit_threads(created_at DESC)")
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS orbit_tasks (
+            id TEXT PRIMARY KEY,
+            task_type TEXT NOT NULL,
+            goal TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'new',
+            mode TEXT NOT NULL DEFAULT 'background',
+            priority TEXT NOT NULL DEFAULT 'medium',
+            primary_origin TEXT NOT NULL,
+            secondary_origins TEXT DEFAULT '[]',
+            parent_task_id TEXT,
+            child_task_ids TEXT DEFAULT '[]',
+            source_thread_id TEXT,
+            current_step_id TEXT,
+            plan_ref TEXT,
+            fallback_ref TEXT,
+            confidence REAL DEFAULT 0.5,
+            operational_maturity REAL DEFAULT 0.0,
+            hot INTEGER NOT NULL DEFAULT 0,
+            review_required INTEGER NOT NULL DEFAULT 0,
+            stale INTEGER NOT NULL DEFAULT 0,
+            orphaned INTEGER NOT NULL DEFAULT 0,
+            manual_attention INTEGER NOT NULL DEFAULT 0,
+            constraint_set TEXT DEFAULT '[]',
+            history_refs TEXT DEFAULT '[]',
+            decision_refs TEXT DEFAULT '[]',
+            policy_refs TEXT DEFAULT '[]',
+            routine_refs TEXT DEFAULT '[]',
+            trigger_refs TEXT DEFAULT '[]',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_orbit_tasks_status ON orbit_tasks(status)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_orbit_tasks_hot ON orbit_tasks(hot, priority)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_orbit_tasks_ts ON orbit_tasks(created_at DESC)")
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS orbit_steps (
+            id TEXT PRIMARY KEY,
+            task_id TEXT NOT NULL,
+            step_type TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'ready',
+            description TEXT,
+            tool_ref TEXT,
+            tool_usage_mode TEXT,
+            interruptible INTEGER NOT NULL DEFAULT 1,
+            preflight_required INTEGER NOT NULL DEFAULT 0,
+            fallback_ref TEXT,
+            worker_id TEXT,
+            retry_count INTEGER NOT NULL DEFAULT 0,
+            runtime_meta TEXT DEFAULT '{}',
+            decision_ref TEXT,
+            result_ref TEXT,
+            blocked_reason TEXT,
+            deferred_reason TEXT,
+            failure_mode TEXT,
+            commit_point INTEGER NOT NULL DEFAULT 0,
+            history_refs TEXT DEFAULT '[]',
+            orphaned INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (task_id) REFERENCES orbit_tasks(id)
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_orbit_steps_task ON orbit_steps(task_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_orbit_steps_status ON orbit_steps(status)")
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS orbit_policies (
+            id TEXT PRIMARY KEY,
+            policy_class TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'proposed',
+            scope TEXT NOT NULL DEFAULT '[]',
+            hardness TEXT NOT NULL DEFAULT 'soft',
+            weight REAL DEFAULT 0.5,
+            rank INTEGER DEFAULT 0,
+            evidence_type TEXT,
+            source_chunk_refs TEXT DEFAULT '[]',
+            review_refs TEXT DEFAULT '[]',
+            mirror_refs TEXT DEFAULT '[]',
+            reaction_refs TEXT DEFAULT '[]',
+            trigger_refs TEXT DEFAULT '[]',
+            reason TEXT,
+            activation_reason TEXT,
+            replaced_by TEXT,
+            replaces TEXT,
+            reactivation_history TEXT DEFAULT '[]',
+            fragile INTEGER NOT NULL DEFAULT 0,
+            stale INTEGER NOT NULL DEFAULT 0,
+            history_refs TEXT DEFAULT '[]',
+            primary_origin TEXT NOT NULL,
+            secondary_origins TEXT DEFAULT '[]',
+            review_flags TEXT DEFAULT '[]',
+            orphaned INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_orbit_policies_status ON orbit_policies(status)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_orbit_policies_class ON orbit_policies(policy_class)")
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS orbit_routines (
+            id TEXT PRIMARY KEY,
+            routine_class TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'proposed',
+            procedure_body TEXT NOT NULL,
+            primary_trigger_type TEXT NOT NULL,
+            secondary_trigger_types TEXT DEFAULT '[]',
+            bindings TEXT DEFAULT '{}',
+            weight REAL DEFAULT 0.5,
+            rank INTEGER DEFAULT 0,
+            source_refs TEXT DEFAULT '[]',
+            policy_refs TEXT DEFAULT '[]',
+            evidence_refs TEXT DEFAULT '[]',
+            apply_count INTEGER NOT NULL DEFAULT 0,
+            skip_count INTEGER NOT NULL DEFAULT 0,
+            deviation_count INTEGER NOT NULL DEFAULT 0,
+            success_pattern TEXT,
+            fragile INTEGER NOT NULL DEFAULT 0,
+            stale INTEGER NOT NULL DEFAULT 0,
+            history_refs TEXT DEFAULT '[]',
+            primary_origin TEXT NOT NULL,
+            secondary_origins TEXT DEFAULT '[]',
+            review_flags TEXT DEFAULT '[]',
+            orphaned INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_orbit_routines_status ON orbit_routines(status)")
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS orbit_proactive_messages (
+            id TEXT PRIMARY KEY,
+            message_type TEXT NOT NULL,
+            release_state TEXT NOT NULL DEFAULT 'candidate',
+            primary_origin TEXT NOT NULL,
+            secondary_origins TEXT DEFAULT '[]',
+            channel_target TEXT,
+            trigger_refs TEXT DEFAULT '[]',
+            source_task_id TEXT,
+            source_thread_id TEXT,
+            source_review_id TEXT,
+            reason TEXT,
+            release_threshold_reason TEXT,
+            too_early_reason TEXT,
+            suppressed_reason TEXT,
+            reaction_class TEXT,
+            reaction_refs TEXT DEFAULT '[]',
+            proactive_reputation_impact REAL DEFAULT 0.0,
+            history_refs TEXT DEFAULT '[]',
+            review_flags TEXT DEFAULT '[]',
+            orphaned INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_orbit_pm_state ON orbit_proactive_messages(release_state)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_orbit_pm_ts ON orbit_proactive_messages(created_at DESC)")
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS orbit_reviews (
+            id TEXT PRIMARY KEY,
+            review_type TEXT NOT NULL,
+            target_ref TEXT NOT NULL,
+            trigger_refs TEXT DEFAULT '[]',
+            reason TEXT,
+            result TEXT,
+            confidence REAL DEFAULT 0.5,
+            mirror_refs TEXT DEFAULT '[]',
+            reaction_refs TEXT DEFAULT '[]',
+            policy_candidate_refs TEXT DEFAULT '[]',
+            routine_candidate_refs TEXT DEFAULT '[]',
+            manual_attention INTEGER NOT NULL DEFAULT 0,
+            history_refs TEXT DEFAULT '[]',
+            created_at TEXT NOT NULL
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_orbit_reviews_ts ON orbit_reviews(created_at DESC)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_orbit_reviews_target ON orbit_reviews(target_ref)")
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS orbit_decisions (
+            id TEXT PRIMARY KEY,
+            decision_type TEXT NOT NULL,
+            target_ref TEXT NOT NULL,
+            trigger_refs TEXT DEFAULT '[]',
+            reason TEXT NOT NULL,
+            alternative_rejected TEXT,
+            confidence REAL DEFAULT 0.5,
+            policy_refs TEXT DEFAULT '[]',
+            routine_refs TEXT DEFAULT '[]',
+            inner_resources_used TEXT DEFAULT '[]',
+            outcome_ref TEXT,
+            review_ref TEXT,
+            override_class TEXT,
+            channel_choice TEXT,
+            history_refs TEXT DEFAULT '[]',
+            created_at TEXT NOT NULL
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_orbit_decisions_ts ON orbit_decisions(created_at DESC)")
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS orbit_triggers (
+            id TEXT PRIMARY KEY,
+            trigger_type TEXT NOT NULL,
+            source TEXT,
+            payload TEXT DEFAULT '{}',
+            processed INTEGER NOT NULL DEFAULT 0,
+            processed_at TEXT,
+            linked_object_id TEXT,
+            created_at TEXT NOT NULL
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_orbit_triggers_processed ON orbit_triggers(processed, created_at ASC)")
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS orbit_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            from_id TEXT NOT NULL,
+            from_type TEXT NOT NULL,
+            to_id TEXT NOT NULL,
+            to_type TEXT NOT NULL,
+            link_type TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_orbit_links_from ON orbit_links(from_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_orbit_links_to ON orbit_links(to_id)")
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS orbit_reputation (
+            id TEXT PRIMARY KEY,
+            subject_type TEXT NOT NULL,
+            subject_id TEXT NOT NULL,
+            message_type TEXT,
+            score REAL NOT NULL DEFAULT 0.5,
+            sample_count INTEGER NOT NULL DEFAULT 0,
+            last_updated TEXT NOT NULL
+        )
+    """)
+    cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_orbit_rep_subject ON orbit_reputation(subject_type, subject_id, message_type)")
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS orbit_wiedervorlagen (
+            id TEXT PRIMARY KEY,
+            target_ref TEXT NOT NULL,
+            target_type TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            due_at TEXT NOT NULL,
+            processed INTEGER NOT NULL DEFAULT 0,
+            processed_at TEXT,
+            created_at TEXT NOT NULL
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_orbit_wv_due ON orbit_wiedervorlagen(processed, due_at ASC)")
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS orbit_runtime (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS orbit_recovery_reports (
+            id TEXT PRIMARY KEY,
+            started_at TEXT NOT NULL,
+            finished_at TEXT,
+            found_orphaned INTEGER NOT NULL DEFAULT 0,
+            found_stale INTEGER NOT NULL DEFAULT 0,
+            found_running_no_worker INTEGER NOT NULL DEFAULT 0,
+            actions_taken TEXT DEFAULT '[]',
+            manual_attention_raised INTEGER NOT NULL DEFAULT 0,
+            error TEXT
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_orbit_recovery_ts ON orbit_recovery_reports(started_at DESC)")
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS orbit_audit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            actor TEXT NOT NULL,
+            action TEXT NOT NULL,
+            target_type TEXT,
+            target_id TEXT,
+            detail TEXT,
+            override_class TEXT
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_orbit_audit_ts ON orbit_audit(timestamp DESC)")
+
     conn.commit()
     conn.close()
-    logger.info("Datenbank initialisiert (WAL-Modus)")
+    logger.info("Datenbank initialisiert (WAL-Modus + ORBIT-Tabellen)")
 
 
 def get_or_create_user(phone_number, display_name=None):

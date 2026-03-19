@@ -415,13 +415,23 @@ def _archive_superseded(chunk_ids: list[str]) -> None:
 # Hauptfunktion
 # =============================================================================
 
-def run_autonomous_reflection(user_id: str, last_run_iso: str = None) -> str | None:
+def run_autonomous_reflection(
+    user_id: str,
+    last_run_iso: str = None,
+    session_context: str = None,
+) -> str | None:
     """
     Autonomer Reflexionsmodus — SchnuBot denkt geordnet nach.
 
     Phase 1: Nachdenken über einen priorisierten Kandidaten
     Phase 2: Widerspruchsprüfung oder Verdichtung
     Phase 3: proactive_candidate → proactive.py
+
+    Args:
+        user_id:         Wessen Kontext verwendet wird.
+        last_run_iso:    ISO-Timestamp des letzten Reflexions-Laufs.
+        session_context: Optionaler Kontext aus vorherigen Kognitions-Modulen
+                         (Innere Vielstimmigkeit — was Introspection/Moltbook/Dialog ergaben).
 
     Returns:
         chunk_id des gespeicherten Ergebnisses, oder None.
@@ -472,15 +482,18 @@ def run_autonomous_reflection(user_id: str, last_run_iso: str = None) -> str | N
             )
 
             try:
+                _contradiction_extra = (
+                    "Widerspruchs-Analyse-Modus:\n"
+                    "Ich prüfe ob ich mir selbst widerspreche.\n"
+                    "Kein Chat, keine Anrede. Folge dem Format exakt."
+                )
+                if session_context:
+                    _contradiction_extra += "\n\n" + session_context
                 reply, _ = chat_internal(
                     user_id=user_id,
                     message=prompt,
                     chat_history=[],
-                    extra_system=(
-                        "Widerspruchs-Analyse-Modus:\n"
-                        "Ich prüfe ob ich mir selbst widerspreche.\n"
-                        "Kein Chat, keine Anrede. Folge dem Format exakt."
-                    ),
+                    extra_system=_contradiction_extra,
                 )
 
                 if reply and len(reply) > 15:
@@ -547,16 +560,19 @@ def run_autonomous_reflection(user_id: str, last_run_iso: str = None) -> str | N
     )
 
     try:
+        _reflection_extra = (
+            "Autonomer Reflexionsmodus:\n"
+            "Ich denke für mich selbst nach — kein Chat, keine Anrede, kein WhatsApp-Stil.\n"
+            "Folge dem Format exakt: KLASSIFIKATION und GEDANKE.\n"
+            "Wenn nichts Substanzielles: KLASSIFIKATION: DISCARD"
+        )
+        if session_context:
+            _reflection_extra += "\n\n" + session_context
         reply, _ = chat_internal(
             user_id=user_id,
             message=prompt,
             chat_history=[],
-            extra_system=(
-                "Autonomer Reflexionsmodus:\n"
-                "Ich denke für mich selbst nach — kein Chat, keine Anrede, kein WhatsApp-Stil.\n"
-                "Folge dem Format exakt: KLASSIFIKATION und GEDANKE.\n"
-                "Wenn nichts Substanzielles: KLASSIFIKATION: DISCARD"
-            ),
+            extra_system=_reflection_extra,
         )
 
         if not reply or len(reply) < 15:

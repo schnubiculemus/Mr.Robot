@@ -22,7 +22,7 @@ if not WEBHOOK_SECRET:
     )
 
 # Bot-Name (zentral)
-BOT_NAME = os.getenv("BOT_NAME", "Mr.Robot")
+BOT_NAME = os.getenv("BOT_NAME", "Kimi")
 
 # Datenbank
 DB_PATH = os.getenv("DB_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "bot.db"))
