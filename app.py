@@ -405,9 +405,9 @@ def _process_chat(phone_number, text, display_name, context_name):
                 pass
             if _tasks_enabled:
                 try:
-                    from core.todos import extract_todo_action, execute_todo_action
-                    reply, todo_action = extract_todo_action(reply)
-                    if todo_action:
+                    from core.todos import extract_all_todo_actions, execute_todo_action
+                    reply, todo_actions = extract_all_todo_actions(reply)
+                    for todo_action in todo_actions:
                         todo_result = execute_todo_action(phone_number, todo_action)
                         if todo_result:
                             reply = reply + ("\n\n" if reply else "") + todo_result
@@ -451,6 +451,44 @@ def _process_chat(phone_number, text, display_name, context_name):
                             reply = reply + ("\n\n" if reply else "") + mb_result
                 except Exception as e:
                     logger.warning(f"Moltbook-Parsing fehlgeschlagen: {e}")
+
+                        # Code-Execution-Parsing
+            try:
+                import re as _re3, json as _cej
+                _ce_pat = _re3.compile(r"\[CODE:\s*(\{.*?\})\s*\]", _re3.DOTALL)
+                _ce_hits = list(_ce_pat.finditer(reply))
+                if _ce_hits:
+                    reply = _ce_pat.sub("", reply).strip()
+                    reply = _re3.sub(r"\n{3,}", "\n\n", reply).strip()
+                    for _ce_m in _ce_hits:
+                        _ce_raw = _ce_m.group(1).replace("\n", " ")
+                        _ce_p = _cej.loads(_ce_raw)
+                        _ce_a = _ce_p.pop("action", "run")
+                        from core.code_exec import execute_code_exec
+                        _ce_r = execute_code_exec(_ce_a, _ce_p)
+                        if _ce_r:
+                            reply = reply + ("\n\n" if reply else "") + _ce_r
+            except Exception as _cee:
+                logger.warning(f"CODE-Parsing fehlgeschlagen: {_cee}")
+
+            # Server-Read-Parsing
+            try:
+                import re as _re2, json as _srj2
+                _sr_pat = _re2.compile(r'\[SERVER_READ:\s*(\{.*?\})\s*\]', _re2.DOTALL)
+                _sr_hits = list(_sr_pat.finditer(reply))
+                if _sr_hits:
+                    reply = _sr_pat.sub("", reply).strip()
+                    reply = _re2.sub(r"\n{3,}", "\n\n", reply).strip()
+                    for _sr_m in _sr_hits:
+                        _sr_raw = _sr_m.group(1).replace("\n", " ")
+                        _sr_p = _srj2.loads(_sr_raw)
+                        _sr_a = _sr_p.pop("action", "status")
+                        from core.server_read import execute_server_read
+                        _sr_r = execute_server_read(_sr_a, _sr_p)
+                        if _sr_r:
+                            reply = reply + ("\n\n" if reply else "") + _sr_r
+            except Exception as _sre2:
+                logger.warning(f"SERVER_READ-Parsing fehlgeschlagen: {_sre2}")
 
             save_message(phone_number, "assistant", reply)
             send_message(phone_number, reply)

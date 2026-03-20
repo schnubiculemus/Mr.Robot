@@ -26,6 +26,7 @@
     </select>
     <select class="filter-select" id="project-filter" onchange="applyFilters()">
         <option value="">Alle Listen</option>
+        <option value="kimi">🤖 kimi — Kimis Vorhaben</option>
         <option value="ukl">ukl — UKL / Arbeit</option>
         <option value="osmi">osmi — Medieninformatik</option>
         <option value="jotsle">jotsle — Julia & Tommy</option>
@@ -73,6 +74,7 @@
                 <label class="field-label">Liste / Kategorie</label>
                 <select class="field-input" id="f-project">
                     <option value="">— wählen —</option>
+                    <option value="kimi">🤖 kimi — Kimis Vorhaben</option>
                     <option value="ukl">ukl — UKL / Arbeit</option>
                     <option value="osmi">osmi — Medieninformatik</option>
                     <option value="jotsle">jotsle — Julia & Tommy</option>
@@ -306,16 +308,21 @@ function renderTodos(todos) {
         groups[g].push(t);
     });
 
-    // Sortierung: Allgemein zuletzt
+    // Sortierung: kimi zuerst, Allgemein zuletzt
     const sorted = Object.entries(groups).sort(([a],[b]) => {
+        if (a === 'kimi') return -1;
+        if (b === 'kimi') return 1;
         if (a === 'Allgemein') return 1;
         if (b === 'Allgemein') return -1;
         return a.localeCompare(b);
     });
 
-    container.innerHTML = sorted.map(([group, items]) =>
-        `<div class="group-label">${group}</div>` + items.map(renderTodo).join('')
-    ).join('');
+    container.innerHTML = sorted.map(([group, items]) => {
+        const isKimi = group === 'kimi';
+        const label = isKimi ? '🤖 KIMI' : group.toUpperCase();
+        const style = isKimi ? 'color:var(--accent);border-bottom-color:var(--accent)' : '';
+        return `<div class="group-label" style="${style}">${label}</div>` + items.map(renderTodo).join('');
+    }).join('');
 }
 
 function renderTodo(t) {

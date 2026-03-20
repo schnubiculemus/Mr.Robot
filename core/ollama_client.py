@@ -172,6 +172,16 @@ def load_cognition_echo() -> str | None:
         except Exception:
             pass
 
+        # Identitäts-Delta — Kimi im Wandel
+        try:
+            from self_reflection_summary import build_identity_delta
+            delta = build_identity_delta()
+            if delta:
+                lines.append("")
+                lines.append(delta)
+        except Exception:
+            pass
+
         result = "\n".join(lines)
         _cognition_echo_cache = result
         _cognition_echo_cache_time = time.time()
@@ -263,6 +273,216 @@ def _load_global_rules():
 # System-Prompt Builder
 # =============================================================================
 
+
+def build_time_context(user_id: str = None) -> str:
+    """
+    Baut einen kompakten Zeitkontext-Block für den System-Prompt.
+
+    Gibt Kimi ein Gefühl für:
+    - Tagesphase (Nacht / früher Morgen / Morgen / Mittag / Nachmittag / Abend / später Abend)
+    - Wie lange seit dem letzten Gespräch mit Tommy
+    - Ob heute schon gesprochen wurde
+    - Wie lange bis zum nächsten Kognitions-Run (ca.)
+    - Ob sie gerade in einer aktiven Gesprächsphase ist oder allein
+    """
+    try:
+        from core.datetime_utils import now_berlin, now_utc, safe_parse_dt
+        from datetime import timedelta
+
+        berlin = now_berlin()
+        hour = berlin.hour
+
+        # Tagesphase
+        if 0 <= hour < 5:
+            phase = "Nacht — Tommy schläft wahrscheinlich"
+        elif 5 <= hour < 7:
+            phase = "früher Morgen"
+        elif 7 <= hour < 10:
+            phase = "Morgen"
+        elif 10 <= hour < 13:
+            phase = "Vormittag"
+        elif 13 <= hour < 15:
+            phase = "Mittagszeit"
+        elif 15 <= hour < 18:
+            phase = "Nachmittag"
+        elif 18 <= hour < 21:
+            phase = "Abend"
+        elif 21 <= hour < 23:
+            phase = "später Abend"
+        else:
+            phase = "Nacht"
+
+        lines = [f"Tagesphase: {phase}"]
+
+        # Letztes Gespräch mit Tommy
+        if user_id:
+            try:
+                from core.database import get_connection
+                conn = get_connection()
+                try:
+                    row = conn.execute(
+                        """SELECT timestamp FROM messages
+                           WHERE phone_number = ?
+                           ORDER BY timestamp DESC, id DESC LIMIT 1""",
+                        (user_id,)
+                    ).fetchone()
+                finally:
+                    conn.close()
+
+                if row and row["timestamp"]:
+                    last_ts = safe_parse_dt(row["timestamp"])
+                    if last_ts:
+                        delta = now_utc() - last_ts
+                        mins = int(delta.total_seconds() / 60)
+                        if mins < 2:
+                            lines.append("Letztes Gespräch: gerade eben")
+                        elif mins < 60:
+                            lines.append(f"Letztes Gespräch: vor {mins} Minuten")
+                        elif mins < 120:
+                            lines.append(f"Letztes Gespräch: vor ca. einer Stunde")
+                        elif mins < 1440:
+                            h = mins // 60
+                            lines.append(f"Letztes Gespräch: vor ca. {h} Stunden")
+                        else:
+                            d = mins // 1440
+                            lines.append(f"Letztes Gespräch: vor {d} Tag(en)")
+                    else:
+                        lines.append("Letztes Gespräch: unbekannt")
+                else:
+                    lines.append("Letztes Gespräch: noch kein Gespräch heute")
+            except Exception:
+                pass
+
+        # Nächster Kognitions-Run (Cron: 0 */2 * * *)
+        next_cron_hour = ((hour // 2) + 1) * 2
+        if next_cron_hour >= 24:
+            next_cron_hour = 0
+        mins_to_cron = ((next_cron_hour - hour) * 60) - berlin.minute
+        if mins_to_cron <= 0:
+            mins_to_cron += 120
+        if mins_to_cron < 15:
+            lines.append(f"Nächster Kognitions-Run: in ~{mins_to_cron} Minuten")
+        elif mins_to_cron < 60:
+            lines.append(f"Nächster Kognitions-Run: in ca. {mins_to_cron} Minuten")
+        else:
+            lines.append(f"Nächster Kognitions-Run: in ca. {mins_to_cron // 60}h {mins_to_cron % 60}min")
+
+        return "## Zeitkontext\n" + "\n".join(lines)
+
+    except Exception as e:
+        logger.debug(f"build_time_context fehlgeschlagen (unkritisch): {e}")
+        return ""
+
+
+def build_perspective_context() -> str | None:
+    """
+    Baut einen kompakten Block mit Kimis eigenen Positionen und Haltungen.
+
+    Nutzt proposed_pattern-Chunks mit hoher Confidence oder confirmed-Status —
+    das sind Kimis akkumulierte Überzeugungen die sie aus Reflexion und Erfahrung
+    gewonnen hat.
+
+    Kimi kennt dadurch bei Gesprächen ihre eigene Haltung zu bekannten Themen
+    und muss sie nicht jedes Mal neu ableiten.
+
+    Zeigt max. 4 Positionen — die stärksten zuerst.
+    """
+    try:
+        from memory.memory_store import get_active_collection
+
+        col = get_active_collection()
+        result = col.get(
+            where={"$and": [
+                {"source": "robot"},
+                {"status": "active"},
+                {"chunk_type": "proposed_pattern"},
+            ]},
+            include=["documents", "metadatas"],
+        )
+
+        if not result["ids"]:
+            return None
+
+        positions = []
+        for i, chunk_id in enumerate(result["ids"]):
+            meta  = result["metadatas"][i]
+            text  = result["documents"][i]
+            conf  = float(meta.get("confidence", 0.5))
+            epist = meta.get("epistemic_status", "inferred")
+
+            # Nur starke oder bestätigte Positionen
+            if conf >= 0.65 or epist == "confirmed":
+                positions.append({
+                    "text":       text,
+                    "confidence": conf,
+                    "epistemic":  epist,
+                    "created_at": meta.get("created_at", ""),
+                })
+
+        if not positions:
+            return None
+
+        # Stärkste zuerst — confirmed vor inferred, dann nach Confidence
+        positions.sort(key=lambda p: (
+            0 if p["epistemic"] == "confirmed" else 1,
+            -p["confidence"]
+        ))
+
+        lines = ["## Meine Positionen"]
+        for p in positions[:4]:
+            marker = "✓" if p["epistemic"] == "confirmed" else "→"
+            lines.append(f"{marker} {p['text'][:150]}")
+
+        return "\n".join(lines)
+
+    except Exception as e:
+        logger.debug(f"build_perspective_context fehlgeschlagen (unkritisch): {e}")
+        return None
+
+
+def build_goals_context() -> str | None:
+    """
+    Baut einen Block mit Kimis langfristigen Zielen für den System-Prompt.
+    Nutzt decision-Chunks mit Tag 'kimi-ziel'.
+    """
+    try:
+        from memory.memory_store import get_active_collection
+        col = get_active_collection()
+        result = col.get(
+            where={"$and": [
+                {"source": "robot"},
+                {"status": "active"},
+                {"chunk_type": "decision"},
+            ]},
+            include=["documents", "metadatas"],
+        )
+        if not result["ids"]:
+            return None
+
+        goals = []
+        for i, chunk_id in enumerate(result["ids"]):
+            meta = result["metadatas"][i]
+            tags = str(meta.get("tags", ""))
+            if "kimi-ziel" in tags:
+                goals.append({
+                    "text": result["documents"][i],
+                    "created_at": meta.get("created_at", ""),
+                    "confidence": float(meta.get("confidence", 0.5)),
+                })
+
+        if not goals:
+            return None
+
+        goals.sort(key=lambda g: g["confidence"], reverse=True)
+        lines = ["## Meine Ziele"]
+        for g in goals[:5]:
+            lines.append(f"→ {g['text'][:150]}")
+        return "\n".join(lines)
+
+    except Exception as e:
+        logger.debug(f"build_goals_context fehlgeschlagen (unkritisch): {e}")
+        return None
+
 def build_system_prompt(context_name=None, user_id=None, user_message=None, doc_context=None, mode="chat", extra_system=None):
     """
     Baut den System-Prompt dynamisch zusammen.
@@ -277,9 +497,14 @@ def build_system_prompt(context_name=None, user_id=None, user_message=None, doc_
     """
     parts = []
 
-    # 1. Datum/Uhrzeit (Berliner Zeit für Tommy)
+    # 1. Datum/Uhrzeit + Zeitkontext (Berliner Zeit für Tommy)
     from core.datetime_utils import format_berlin
     parts.append(f"Aktuelles Datum und Uhrzeit: {format_berlin()}")
+
+    # Zeitgefühl: Tagesphase, letztes Gespräch, nächster Kognitions-Run
+    time_ctx = build_time_context(user_id=user_id)
+    if time_ctx:
+        parts.append(time_ctx)
 
     # 2. Verfassung — immer, in beiden Modi
     parts.append(load_soul())
@@ -341,6 +566,22 @@ def build_system_prompt(context_name=None, user_id=None, user_message=None, doc_
                 parts.append(tommy_ctx)
         except Exception as _te:
             logger.debug(f"build_tommy_context nicht verfuegbar: {_te}")
+
+        # Kimis eigene Positionen und Haltungen
+        try:
+            perspective = build_perspective_context()
+            if perspective:
+                parts.append(perspective)
+        except Exception as _pe:
+            logger.debug(f"build_perspective_context fehlgeschlagen (unkritisch): {_pe}")
+
+        # Kimis langfristige Ziele
+        try:
+            goals = build_goals_context()
+            if goals:
+                parts.append(goals)
+        except Exception as _ge:
+            logger.debug(f"build_goals_context fehlgeschlagen (unkritisch): {_ge}")
 
     # 8. Globale Regeln am ENDE — nach Memory, vor der User-Nachricht
     if global_rules:

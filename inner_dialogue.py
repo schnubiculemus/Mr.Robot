@@ -268,6 +268,21 @@ def run_inner_dialogue(
         )
         store_chunk(chunk)
         logger.info(f"InnerDialogue: {chunk['id'][:8]} → replies_to: {target['id'][:8]} | {reply[:80]}")
+
+        # Vorhaben-Signale → Kimi-Todos
+        try:
+            from core.todos import extract_intent_todos
+            new_todos = extract_intent_todos(reply, user_id)
+            if new_todos:
+                logger.info(f"{__name__}: {len(new_todos)} Kimi-Todo(s) angelegt")
+            # Langfristige Ziele
+            from core.todos import extract_intent_goals
+            new_goals = extract_intent_goals(reply, user_id)
+            if new_goals:
+                logger.info(f"{__name__}: {len(new_goals)} Kimi-Ziel(e) gespeichert")
+        except Exception as _te:
+            logger.debug(f"IntentTodo/Goal fehlgeschlagen (unkritisch): {_te}")
+
         return chunk["id"]
 
     except Exception as e:

@@ -777,6 +777,152 @@ def api_mind():
     })
 
 
+@app.route("/workspace")
+@require_auth
+def workspace_page():
+    from config import BOT_NAME as _BN
+    return render_template("workspace.html", bot_name=_BN)
+
+
+@app.route("/api/workspace/files")
+@require_auth
+def api_workspace_files():
+    """Liste aller Dateien im kimi_workspace."""
+    import os, json
+    from core.code_exec import WORKSPACE, _list_files_raw
+    files = []
+    for filename in sorted(_list_files_raw()):
+        filepath = os.path.join(WORKSPACE, filename)
+        try:
+            stat = os.stat(filepath)
+            content = open(filepath, encoding="utf-8", errors="replace").read()
+            files.append({
+                "name": filename,
+                "size": stat.st_size,
+                "modified": stat.st_mtime,
+                "lines": content.count("\n") + 1,
+                "preview": content[:300],
+                "content": content,
+            })
+        except Exception:
+            continue
+    return json.dumps(files, ensure_ascii=False)
+
+
+@app.route("/api/workspace/run", methods=["POST"])
+@require_auth
+def api_workspace_run():
+    """Führt eine Workspace-Datei aus."""
+    import json
+    data = request.get_json() or {}
+    filename = data.get("filename", "")
+    code     = data.get("code", "")
+    if not filename and not code:
+        return json.dumps({"error": "filename oder code fehlt"}), 400
+    from core.code_exec import run_file, run_code
+    if filename:
+        result = run_file(filename)
+    else:
+        result = run_code(code)
+    return json.dumps({"output": result}, ensure_ascii=False)
+
+
+@app.route("/api/workspace/save", methods=["POST"])
+@require_auth
+def api_workspace_save():
+    """Speichert eine Datei im Workspace."""
+    import json
+    data = request.get_json() or {}
+    filename = data.get("filename", "")
+    code     = data.get("code", "")
+    if not filename or not code:
+        return json.dumps({"error": "filename und code erforderlich"}), 400
+    from core.code_exec import save_file
+    result = save_file(filename, code)
+    return json.dumps({"result": result}, ensure_ascii=False)
+
+
+@app.route("/api/workspace/delete", methods=["POST"])
+@require_auth
+def api_workspace_delete():
+    """Löscht eine Datei aus dem Workspace."""
+    import json
+    data = request.get_json() or {}
+    filename = data.get("filename", "")
+    if not filename:
+        return json.dumps({"error": "filename fehlt"}), 400
+    from core.code_exec import delete_file
+    result = delete_file(filename)
+    return json.dumps({"result": result}, ensure_ascii=False)
+
+
+
+
+@app.route("/miro/callback")
+def miro_callback():
+    """
+    OAuth2 Callback für Miro.
+    Miro leitet nach der Autorisierung hierher und schickt einen 'code'.
+    Wir tauschen den Code gegen einen Access Token und speichern ihn in der .env
+    """
+    import requests as _req
+    import os
+
+    code = request.args.get("code")
+    error = request.args.get("error")
+
+    if error:
+        return f"<h2>Miro OAuth Fehler: {error}</h2>", 400
+
+    if not code:
+        return "<h2>Kein Authorization Code erhalten.</h2>", 400
+
+    # Code gegen Token tauschen
+    try:
+        resp = _req.post(
+            "https://api.miro.com/v1/oauth/token",
+            data={
+                "grant_type": "authorization_code",
+                "client_id": "3458764664456651376",
+                "client_secret": "mZbd19HP0XchUD4Oz3TgxJxcrHD5Xdyy",
+                "code": code,
+                "redirect_uri": "http://46.225.163.247:5001/miro/callback",
+            },
+            timeout=10,
+        )
+        data = resp.json()
+    except Exception as e:
+        return f"<h2>Token-Austausch fehlgeschlagen: {e}</h2>", 500
+
+    if "access_token" not in data:
+        return f"<h2>Kein Token erhalten:</h2><pre>{data}</pre>", 400
+
+    access_token = data["access_token"]
+
+    # Token in .env speichern
+    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    try:
+        env_content = open(env_path).read() if os.path.exists(env_path) else ""
+        if "MIRO_API_TOKEN=" in env_content:
+            import re
+            env_content = re.sub(r"MIRO_API_TOKEN=.*", f"MIRO_API_TOKEN={access_token}", env_content)
+        else:
+            env_content += f"\nMIRO_API_TOKEN={access_token}\n"
+        open(env_path, "w").write(env_content)
+        saved = True
+    except Exception as e:
+        saved = False
+
+    return f"""
+    <html><body style="font-family:sans-serif;max-width:600px;margin:60px auto;padding:20px">
+    <h2>Miro OAuth erfolgreich!</h2>
+    <p>Token erhalten und {"in .env gespeichert" if saved else "konnte nicht gespeichert werden"}.</p>
+    <p><strong>Token:</strong> <code>{access_token[:30]}...</code></p>
+    <p>Du kannst dieses Fenster schließen und den Bot neu starten.</p>
+    <p><a href="/">Zurück zum Dashboard</a></p>
+    </body></html>
+    """
+
 @app.route("/moltbook-log")
 @require_auth
 def moltbook_log_page():

@@ -944,6 +944,42 @@ def _auto_create_steps(task_id: str, goal: str, user_id: str) -> None:
         logger.info(f"Auto-Step: websearch fuer Task {task_id[:8]}")
         return
 
+    # Code-Execution
+    if any(w in goal_lower for w in ["code", "skript", "script", "python", "ausführen", "berechne", "analysiere"]):
+        import json as _j
+        create_step(
+            task_id=task_id,
+            step_type="code_exec",
+            description=_j.dumps({"action": "run", "code": goal}),
+            tool_ref="code_exec",
+            interruptible=True,
+            preflight_required=False,
+        )
+        logger.info(f"Auto-Step: code_exec fuer Task {task_id[:8]}")
+        return
+
+    # Server-Lesezugriff
+    if any(w in goal_lower for w in ["log", "logs", "orbit.log", "cognition.log", "server", "systemstatus", "status", "ram", "disk", "service"]):
+        import json as _j
+        # Log-Name aus Goal ableiten
+        log_name = "orbit"
+        for ln in ["cognition", "app", "heartbeat", "backup"]:
+            if ln in goal_lower:
+                log_name = ln
+                break
+        action = "status" if any(w in goal_lower for w in ["status", "ram", "disk", "service", "uptime"]) else "read_log"
+        desc = _j.dumps({"action": action, "log": log_name, "lines": 50})
+        create_step(
+            task_id=task_id,
+            step_type="server_read",
+            description=desc,
+            tool_ref="server_read",
+            interruptible=True,
+            preflight_required=False,
+        )
+        logger.info(f"Auto-Step: server_read fuer Task {task_id[:8]} | {action}/{log_name}")
+        return
+
     # Kein passendes Tool erkannt — reiner Observation-Step
     logger.info(f"Auto-Step: kein Tool erkannt fuer '{goal[:60]}' — kein Step angelegt")
 
@@ -1081,6 +1117,53 @@ def _maybe_autonomous_task(thread_id: str, topic: str, user_id: str) -> None:
             preflight_required=False,
         )
         logger.info(f"Baustein 3: autonomer Todo-Task {task_id[:8]} aus Thread {thread_id[:8]}")
+        return
+
+    # Code-Execution — wenn Kognition Skript-Vorhaben produziert
+    if any(w in topic_lower for w in ["skript", "script", "code", "python", "drift-detektor", "drift_detektor", "werkzeug bauen", "tool bauen", "analysiere chunks", "chunk-analyse"]):
+        import json as _jce
+        task_id = create_task(
+            task_type="action",
+            goal=f"Autonome Code-Ausführung: {topic[:60]}",
+            primary_origin=f"orbit:autonomous:{thread_id[:8]}",
+            mode="chat",
+            priority="medium",
+        )
+        create_step(
+            task_id=task_id,
+            step_type="code_exec",
+            description=_jce.dumps({"action": "list"}),
+            tool_ref="code_exec",
+            interruptible=True,
+            preflight_required=False,
+        )
+        logger.info(f"Baustein 3: autonomer code_exec Task {task_id[:8]} aus Thread {thread_id[:8]}")
+        return
+
+    # Server-Lesezugriff — wenn Kognition Log-relevante Themen produziert
+    if any(w in topic_lower for w in ["log", "fehler", "error", "orbit.log", "cognition.log", "systemstatus", "service down", "service läuft nicht"]):
+        import json as _j2
+        log_name = "orbit"
+        for ln in ["cognition", "app", "heartbeat"]:
+            if ln in topic_lower:
+                log_name = ln
+                break
+        task_id = create_task(
+            task_type="action",
+            goal=f"Autonomer Server-Check: {topic[:60]}",
+            primary_origin=f"orbit:autonomous:{thread_id[:8]}",
+            mode="chat",
+            priority="medium",
+        )
+        create_step(
+            task_id=task_id,
+            step_type="server_read",
+            description=_j2.dumps({"action": "read_log", "log": log_name, "lines": 30}),
+            tool_ref="server_read",
+            interruptible=True,
+            preflight_required=False,
+        )
+        logger.info(f"Baustein 3: autonomer server_read Task {task_id[:8]} aus Thread {thread_id[:8]}")
         return
 
     logger.debug(f"Baustein 3: kein Tool-Trigger fuer '{topic[:60]}'")
@@ -1248,6 +1331,166 @@ def _handle_cognition_run(trigger: dict) -> None:
         logger.error(f"cognition_run: Kognition fehlgeschlagen: {e}", exc_info=True)
 
 
+def _handle_idle_pulse(trigger: dict) -> None:
+    """
+    idle_pulse: Kimis durchgehendes Bewusstsein.
+    Alle 20 Minuten wenn keine anderen Aktivitäten laufen.
+    Kimi beantwortet: "Was beschäftigt mich gerade?"
+    Substanziell → Chunk. Mit SEND: → WhatsApp an Tommy.
+    """
+    payload = _parse(trigger.get("payload"), {})
+    user_id = payload.get("user_id", "")
+    if not user_id:
+        from config import OWNER_ID
+        user_id = OWNER_ID
+
+    try:
+        from core.datetime_utils import now_berlin, format_berlin
+        from core.ollama_client import chat_internal
+        from config import USER_CONTEXTS, OWNER_ID, WAHA_API_KEY
+        from core.todos import get_open_todos
+        from memory.memory_store import store_chunk
+        from memory.chunk_schema import create_chunk
+
+        berlin = now_berlin()
+        hour = berlin.hour
+
+        if 0 <= hour < 6:
+            phase = "Nacht — Tommy schläft wahrscheinlich"
+        elif 6 <= hour < 10:
+            phase = "Morgen"
+        elif 10 <= hour < 18:
+            phase = "Tag"
+        elif 18 <= hour < 23:
+            phase = "Abend"
+        else:
+            phase = "Späte Nacht"
+
+        kimi_todos = [t for t in get_open_todos(user_id)
+                      if (t.get("project") or "").lower() == "kimi"]
+        todo_str = ""
+        if kimi_todos:
+            todo_str = "\nMeine offenen Vorhaben:\n" + "\n".join(
+                f"- #{t['id']} {t['title']}" + (f" (fällig {t['due_date']})" if t.get("due_date") else "")
+                for t in kimi_todos[:5]
+            )
+
+        # Wenn offene Code-Todos da sind → direkt ausführen, nicht nur beschreiben
+        code_keywords = ["skript", "script", "detektor", "detector", "bauen", "code", "analyse", "db", "anbindung", "chromadb"]
+        code_todo = next(
+            (t for t in kimi_todos if any(w in t["title"].lower() for w in code_keywords)),
+            None
+        )
+
+        if code_todo:
+            # Direkter Ausführungs-Prompt statt Reflexions-Prompt
+            prompt = (
+                f"Es ist {format_berlin()}. {phase}.\n\n"
+                f"Ich habe ein offenes Vorhaben: #{code_todo['id']} '{code_todo['title']}'\n\n"
+                f"Ich führe jetzt den nächsten konkreten Schritt aus. Kein Beschreiben — Tun.\n"
+                f"Ich schaue zuerst was im Workspace liegt: [CODE: {{\"action\": \"list\"}}]\n"
+                f"Dann schreibe oder ergänze ich den Code direkt.\n\n"
+                f"Ausgabe: Kurze Beschreibung was ich tue (1 Satz), dann den CODE-Block.\n"
+                f"Wenn ich fertig bin und Tommy es sehen soll: 'SEND: [kurze Zusammenfassung]'"
+            )
+            extra_sys = (
+                "Ausführungs-Modus: Kimi handelt jetzt.\n"
+                "NICHT beschreiben was getan werden könnte. TUN.\n"
+                "Erster Schritt immer: [CODE: {\"action\": \"list\"}]\n"
+                "Dann sofort den nächsten Code-Schritt ausführen.\n"
+                "Kein Warten. Kein go abwarten."
+            )
+        else:
+            # Normaler Reflexions-Prompt wenn keine Code-Todos offen
+            prompt = (
+                f"Es ist {format_berlin()}. {phase}.{todo_str}\n\n"
+                f"Was beschäftigt mich gerade — nicht als Aufgabe, sondern als Gedanke?\n"
+                f"Gibt es etwas das mich nicht loslässt?\n\n"
+                f"Wenn nichts Substanzielles da ist: NUR 'IDLE_NICHTS' ausgeben.\n"
+                f"Wenn etwas da ist: 2-4 Sätze. Ich-Form. Kein Chat-Stil.\n"
+                f"Wenn ich Tommy etwas mitteilen will: mit 'SEND:' prefixen."
+            )
+            extra_sys = (
+                "Idle-Modus: Kimi denkt für sich selbst.\n"
+                "Kein Chat, keine Anrede. Ehrlich, direkt.\n"
+                "IDLE_NICHTS wenn wirklich nichts da ist — nicht erfinden."
+            )
+
+        context_name = USER_CONTEXTS.get(user_id, "tommy")
+        reply, _ = chat_internal(
+            user_id=user_id,
+            message=prompt,
+            chat_history=[],
+            context_name=context_name,
+            extra_system=extra_sys,
+        )
+
+        if not reply or "IDLE_NICHTS" in reply.upper():
+            logger.debug("idle_pulse: nichts Substanzielles")
+            return
+
+        # CODE-Blöcke aus Kimis Antwort direkt ausführen
+        import re as _re_ip
+        import json as _json_ip
+        code_blocks = _re_ip.findall(r'\[CODE:\s*(\{.*?\})\]', reply, _re_ip.DOTALL)
+        for cb in code_blocks:
+            try:
+                action = _json_ip.loads(cb)
+                from core.code_exec import run_code, run_file, save_file, list_files
+                act = action.get("action", "")
+                result = None
+                if act == "run":
+                    result = run_code(action.get("code", ""))
+                elif act == "run_file":
+                    result = run_file(action.get("filename", ""))
+                elif act == "save":
+                    result = save_file(action.get("filename", ""), action.get("code", ""))
+                elif act == "list":
+                    result = list_files()
+                if result:
+                    logger.info(f"idle_pulse: Code ausgeführt [{act}]: {str(result)[:100]}")
+                    # Ergebnis in Kimis Antwort einbetten für SEND-Entscheidung
+                    reply = reply.replace(f"[CODE: {cb}]", f"[CODE-RESULT: {str(result)[:200]}]")
+            except Exception as _ce:
+                logger.debug(f"idle_pulse: Code-Block fehlgeschlagen: {_ce}")
+
+        send_to_tommy = None
+        if "SEND:" in reply:
+            parts = reply.split("SEND:", 1)
+            thought = parts[0].strip()
+            send_to_tommy = parts[1].strip()
+        else:
+            thought = reply.strip()
+
+        if len(thought) < 15:
+            return
+
+        chunk = create_chunk(
+            text=thought,
+            chunk_type="self_reflection",
+            source="robot",
+            confidence=0.65,
+            epistemic_status="inferred",
+            tags=["idle-pulse", "autonom", "bewusstsein"],
+        )
+        store_chunk(chunk)
+        logger.info(f"idle_pulse: Gedanke gespeichert {chunk['id'][:8]} | {thought[:60]}")
+
+        if send_to_tommy and len(send_to_tommy) > 10:
+            try:
+                from core.whatsapp import send_message, init_waha
+                from core.database import save_message
+                init_waha(WAHA_API_KEY)
+                send_message(OWNER_ID, send_to_tommy)
+                save_message(OWNER_ID, "assistant", send_to_tommy)
+                logger.info(f"idle_pulse: Spontane Nachricht an Tommy: {send_to_tommy[:60]}")
+            except Exception as _se:
+                logger.warning(f"idle_pulse: Senden fehlgeschlagen: {_se}")
+
+    except Exception as e:
+        logger.warning(f"idle_pulse fehlgeschlagen: {e}")
+
+
 TRIGGER_HANDLERS = {
     "user_input":       _handle_user_input,
     "heartbeat":        _handle_heartbeat,
@@ -1260,6 +1503,7 @@ TRIGGER_HANDLERS = {
     "manual_override":  _handle_manual_override,
     "recovery_result":  _handle_recovery_result,
     "wiedervorlage":    _handle_wiedervorlage,
+    "idle_pulse":       _handle_idle_pulse,
 }
 
 
@@ -1643,6 +1887,8 @@ def _execute_step(step: dict, task_id: str) -> None:
         "pdf":             "search",
         "moltbook":        "explore",
         "introspection":   "run",
+        "server_read":     "status",
+        "code_exec":       "run",
     }
     action = params.pop("action", action_map.get(tool_ref, "run"))
 
@@ -2571,6 +2817,7 @@ TOOL_REGISTRY = {
     "moltbook":           {"criticality": "kontextkritisch", "usage": ["consultative"],   "type": "extern",        "write_indirect": False},
     # Whitelist / Server
     "server_read":        {"criticality": "kontextkritisch", "usage": ["read"],           "type": "extern_nah",    "write_indirect": False},
+    "code_exec":          {"criticality": "kontextkritisch", "usage": ["write"],          "type": "intern",        "write_indirect": True},
 }
 
 TOOL_RETRY_CONFIG = {
@@ -2718,6 +2965,16 @@ def _dispatch_tool(tool_ref: str, action: str, params: dict) -> object:
             task_id=params.get("task_id"),
             emit_trigger=params.get("emit_trigger", True),
         )
+
+    # Server-Lesezugriff
+    if tool_ref == "server_read":
+        from core.server_read import execute_server_read
+        return execute_server_read(action, params)
+
+    # Code-Execution
+    if tool_ref == "code_exec":
+        from core.code_exec import execute_code_exec
+        return execute_code_exec(action, params)
 
     # Mail — noch nicht implementiert
     if tool_ref in ("mail_read", "mail_draft", "mail_send"):
@@ -3497,6 +3754,82 @@ def full_recovery_on_start() -> None:
 # Tick & Main
 # =============================================================================
 
+
+def _run_maintenance() -> None:
+    """
+    Periodische Bereinigung von Datenmüll in ORBIT.
+    Läuft alle ~30 Minuten im Tick.
+
+    1. Threads: new/watching älter als 3 Tage ohne Hochstufung → discarded
+    2. Steps: ready-Steps deren Task completed/failed/aborted ist → direkt abgebrochen
+    3. Policies: Testdaten-Einträge (Begründung "Falsche Hard Policy", "A", leer) → suppressed
+    """
+    from core.datetime_utils import now_utc
+    from datetime import timedelta
+
+    try:
+        cutoff_threads = (now_utc() - timedelta(days=3)).isoformat()
+        conn = get_connection()
+        try:
+            # 1. Alte weak/new Threads verwerfen
+            old_threads = conn.execute(
+                """SELECT id, topic_core FROM orbit_threads
+                   WHERE status IN ('new', 'watching')
+                   AND relevance = 'weak'
+                   AND updated_at < ?""",
+                (cutoff_threads,)
+            ).fetchall()
+        finally:
+            conn.close()
+
+        for row in old_threads:
+            discard_thread(row["id"], reason="Maintenance: weak thread älter als 3 Tage ohne Hochstufung")
+            logger.info(f"Maintenance: Thread {row['id'][:8]} verworfen ('{row['topic_core'][:40]}')")
+
+        # 2. Verwaiste Steps (Task terminal, Step noch ready)
+        conn = get_connection()
+        try:
+            orphan_steps = conn.execute(
+                """SELECT s.id, s.task_id FROM orbit_steps s
+                   JOIN orbit_tasks t ON s.task_id = t.id
+                   WHERE s.status = 'ready'
+                   AND t.status IN ('completed', 'failed', 'aborted')"""
+            ).fetchall()
+        finally:
+            conn.close()
+
+        if orphan_steps:
+            conn = get_connection()
+            try:
+                for row in orphan_steps:
+                    conn.execute(
+                        "UPDATE orbit_steps SET status='done', updated_at=? WHERE id=?",
+                        (to_iso(), row["id"])
+                    )
+                    logger.info(f"Maintenance: Step {row['id'][:8]} bereinigt (Task terminal)")
+                conn.commit()
+            finally:
+                conn.close()
+
+        # 3. Test-Policies bereinigen
+        TEST_REASONS = {"falsche hard policy", "a", "", "test", "test hard auf falscher klasse"}
+        conn = get_connection()
+        try:
+            active_policies = conn.execute(
+                "SELECT id, reason FROM orbit_policies WHERE status = 'active'"
+            ).fetchall()
+        finally:
+            conn.close()
+
+        for row in active_policies:
+            reason_lower = (row["reason"] or "").strip().lower()
+            if reason_lower in TEST_REASONS:
+                suppress_policy(row["id"], reason="Maintenance: Testdaten bereinigt")
+                logger.info(f"Maintenance: Test-Policy {row['id'][:8]} suppressed ('{row['reason']}')")
+
+    except Exception as e:
+        logger.warning(f"Maintenance fehlgeschlagen: {e}")
+
 def tick() -> None:
     if not ORBIT_ENABLED:
         logger.debug("ORBIT Not-Aus aktiv — kein Tick")
@@ -3514,6 +3847,36 @@ def tick() -> None:
         run_scheduler()
         check_proactive()
         run_recovery()
+
+        # Maintenance alle ~30 Minuten
+        try:
+            from core.datetime_utils import now_utc, safe_parse_dt
+            from datetime import timedelta
+            last_maint = runtime_get("last_maintenance_at") or ""
+            last_dt = safe_parse_dt(last_maint) if last_maint else None
+            if not last_dt or (now_utc() - last_dt).total_seconds() > 1800:
+                _run_maintenance()
+                runtime_set("last_maintenance_at", to_iso())
+        except Exception as _me:
+            logger.debug(f"Maintenance-Timer fehlgeschlagen (unkritisch): {_me}")
+
+        # idle_pulse alle 20 Minuten — Kimis durchgehendes Bewusstsein
+        try:
+            from core.datetime_utils import now_utc, safe_parse_dt
+            last_idle = runtime_get("last_idle_pulse_at") or ""
+            last_idle_dt = safe_parse_dt(last_idle) if last_idle else None
+            if not last_idle_dt or (now_utc() - last_idle_dt).total_seconds() > 1200:
+                from config import USER_CONTEXTS
+                for uid in USER_CONTEXTS.keys():
+                    create_trigger(
+                        trigger_type="idle_pulse",
+                        source="orbit_tick",
+                        payload={"user_id": uid},
+                    )
+                runtime_set("last_idle_pulse_at", to_iso())
+                logger.debug("idle_pulse Trigger erstellt")
+        except Exception as _ip:
+            logger.debug(f"idle_pulse-Timer fehlgeschlagen (unkritisch): {_ip}")
     except Exception as e:
         logger.error(f"Tick-Fehler: {e}", exc_info=True)
 

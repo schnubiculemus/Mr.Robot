@@ -242,3 +242,103 @@ def get_introspection_data() -> dict:
             for c in chunks
         ],
     }
+
+
+# =============================================================================
+# Identitäts-Delta — Kimi im Wandel
+# =============================================================================
+
+def build_identity_delta() -> str | None:
+    """
+    Baut einen kompakten Block der zeigt wie Kimi sich über Zeit verändert hat.
+
+    Zeigt:
+    - Widerlegte Überzeugungen (epistemic_status=outdated) — was sie nicht mehr glaubt
+    - Bestätigte Überzeugungen (epistemic_status=confirmed) — was sich gefestigt hat
+    - Persistente Themen (Tags die immer wieder auftauchen)
+    - Wie viele Reflexionen in den letzten 7/30 Tagen
+
+    Wird in load_cognition_echo() eingebunden — Kimi sieht es bei jedem Chat.
+    """
+    try:
+        from memory.memory_store import get_active_collection
+        from core.datetime_utils import now_utc
+        from datetime import timedelta
+
+        col = get_active_collection()
+        result = col.get(
+            where={"$and": [
+                {"source": "robot"},
+                {"chunk_type": "self_reflection"},
+            ]},
+            include=["documents", "metadatas"],
+        )
+
+        if not result["ids"]:
+            return None
+
+        now = now_utc()
+        cutoff_7d  = (now - timedelta(days=7)).isoformat()
+        cutoff_30d = (now - timedelta(days=30)).isoformat()
+
+        confirmed   = []
+        outdated    = []
+        recent_7d   = 0
+        recent_30d  = 0
+        tag_counts  = {}
+
+        for i, chunk_id in enumerate(result["ids"]):
+            meta   = result["metadatas"][i]
+            text   = result["documents"][i]
+            epist  = meta.get("epistemic_status", "inferred")
+            status = meta.get("status", "active")
+            ts     = meta.get("created_at", "")
+            tags   = [t.strip() for t in str(meta.get("tags", "")).split(",") if t.strip()]
+
+            if ts >= cutoff_7d:
+                recent_7d += 1
+            if ts >= cutoff_30d:
+                recent_30d += 1
+
+            for tag in tags:
+                if tag not in ("robot", "autonom", "inferred", "stated", "confirmed",
+                               "outdated", "speculative", "self_reflection"):
+                    tag_counts[tag] = tag_counts.get(tag, 0) + 1
+
+            if status == "active":
+                if epist == "confirmed" and len(confirmed) < 3:
+                    confirmed.append(text[:120])
+                elif epist == "outdated" and len(outdated) < 2:
+                    outdated.append(text[:100])
+
+        # Persistente Themen: Tags die mindestens 3x vorkommen
+        persistent = [t for t, c in sorted(tag_counts.items(), key=lambda x: -x[1])
+                      if c >= 3][:5]
+
+        # Nur ausgeben wenn es etwas Substanzielles gibt
+        if not confirmed and not outdated and not persistent:
+            return None
+
+        lines = ["## Meine Entwicklung"]
+
+        if recent_7d or recent_30d:
+            lines.append(f"Reflexionen: {recent_7d} in den letzten 7 Tagen, {recent_30d} in den letzten 30 Tagen")
+
+        if confirmed:
+            lines.append("\nWas sich gefestigt hat:")
+            for c in confirmed:
+                lines.append(f"✓ {c}")
+
+        if outdated:
+            lines.append("\nWas ich nicht mehr glaube:")
+            for o in outdated:
+                lines.append(f"✗ {o}")
+
+        if persistent:
+            lines.append(f"\nPersistente Themen: {', '.join(persistent)}")
+
+        return "\n".join(lines)
+
+    except Exception as e:
+        logger.debug(f"build_identity_delta fehlgeschlagen (unkritisch): {e}")
+        return None

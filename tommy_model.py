@@ -564,3 +564,49 @@ def build_tommy_context() -> str | None:
     except Exception as e:
         logger.debug(f"build_tommy_context fehlgeschlagen: {e}")
         return None
+
+
+# =============================================================================
+# Kalender-Awareness
+# =============================================================================
+
+def run_calendar_awareness(user_id: str) -> str | None:
+    """
+    Checkt ob Tommy morgen Kalender-Termine hat und feuert wenn ja einen
+    cognition_output Trigger mit kalender-relevantem topic_core.
+
+    → ORBIT aggregiert den Trigger, stuft den Thread auf 'medium' hoch
+    → _maybe_autonomous_task() erkennt die Keywords → autonomer calendar_read Task
+    → Kimi schickt Tommy proaktiv eine Übersicht seiner morgigen Termine
+
+    Läuft abends im Kognitions-Run (nach Tommy-Modell-Observation).
+    Gibt topic_core zurück wenn Trigger gefeuert, sonst None.
+    """
+    try:
+        from core.calendar.calendar_router import execute_calendar_action
+        from datetime import datetime, timezone, timedelta
+
+        tomorrow = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()[:10]
+        result = execute_calendar_action({"action": "list", "range": "tomorrow"})
+
+        # Kein Ergebnis oder leerer Kalender → kein Trigger
+        if not result:
+            logger.debug("CalendarAwareness: kein Ergebnis vom Kalender")
+            return None
+
+        no_events_signals = [
+            "keine termine", "no events", "nichts eingetragen",
+            "leer", "frei", "nothing"
+        ]
+        if any(s in result.lower() for s in no_events_signals):
+            logger.info(f"CalendarAwareness: morgen ({tomorrow}) keine Termine — kein Trigger")
+            return None
+
+        # Termine gefunden → topic_core mit Keywords die _maybe_autonomous_task triggern
+        topic = f"Tommy hat morgen Termine im Kalender ({tomorrow})"
+        logger.info(f"CalendarAwareness: Termine morgen gefunden — cognition_output: '{topic}'")
+        return topic
+
+    except Exception as e:
+        logger.warning(f"CalendarAwareness fehlgeschlagen: {e}")
+        return None

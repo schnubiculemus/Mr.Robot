@@ -122,6 +122,198 @@ def _cognition_output(user_id: str, source: str, topic: str, relevance: str = "w
 
 
 # =============================================================================
+# Briefing
+# =============================================================================
+
+def _run_briefing(user_id: str, briefing_type: str, now) -> None:
+    """
+    Strukturiertes Morgen- oder Abend-Briefing.
+
+    Ablauf:
+    1. Kalender für heute + morgen abrufen (direkt via calendar_router)
+    2. Offene Todos abrufen (direkt via todos.py)
+    3. Kimi-eigene Todos (project='kimi', due_date=heute) einbeziehen
+    4. Kimi formuliert aus echten Daten ein kompaktes Briefing
+    5. Kimi-Todos nach dem Senden abhaken
+    6. Eintrag in orbit_proactive_messages
+
+    Kein Freitext-Prompt ohne Daten — Kimi bekommt immer konkrete Grundlage.
+    """
+    from config import OWNER_ID, WAHA_API_KEY
+    from core.database import get_connection, save_message
+    from core.whatsapp import send_message, init_waha
+    from core.ollama_client import chat_internal
+    from core.datetime_utils import now_utc, to_iso
+    import uuid, json
+
+    init_waha(WAHA_API_KEY)
+
+    # ── Already-sent-Check ────────────────────────────────────────────────────
+    today_str = now_utc().isoformat()[:10]
+    conn = get_connection()
+    try:
+        already = conn.execute(
+            "SELECT COUNT(*) FROM orbit_proactive_messages"
+            " WHERE message_type = ? AND created_at LIKE ? AND release_state = 'sent'",
+            (briefing_type, today_str + "%")
+        ).fetchone()[0]
+    finally:
+        conn.close()
+
+    if already:
+        logger.info(f"Briefing: {briefing_type} heute bereits gesendet, skip")
+        return
+
+    is_morning = briefing_type == "morning_briefing"
+    label = "Morgen-Briefing" if is_morning else "Abend-Briefing"
+
+    # ── Morgens: orbit.log der letzten Nacht lesen ───────────────────────────
+    log_context = ""
+    if is_morning:
+        try:
+            from core.server_read import read_log
+            raw_log = read_log("orbit", lines=40)
+            if raw_log and "nicht gefunden" not in raw_log and "nicht verfügbar" not in raw_log:
+                # Nur relevante Zeilen: Fehler, Kognition, gesendete Nachrichten
+                import re as _re_log
+                relevant = []
+                for line in raw_log.split("\n"):
+                    if any(k in line for k in ["ERROR", "WARNING", "Briefing gesendet", "Kognition", "DiaryNote", "Autonome Reflexion", "Chunk gespeichert", "fehlgeschlagen"]):
+                        relevant.append(line.strip())
+                if relevant:
+                    log_context = "Relevante Ereignisse letzte Nacht (orbit.log):\n" + "\n".join(relevant[-15:])
+            logger.info(f"Briefing: orbit.log gelesen ({len(log_context)} Zeichen)")
+        except Exception as e:
+            logger.debug(f"Briefing: Log-Lesen fehlgeschlagen (unkritisch): {e}")
+
+    # ── Kalender abrufen ──────────────────────────────────────────────────────
+    cal_text = ""
+    try:
+        from core.calendar.calendar_router import execute_calendar_action
+        # Morgens: heute + morgen; abends: morgen
+        if is_morning:
+            heute = execute_calendar_action({"action": "list", "range": "today"})
+            morgen = execute_calendar_action({"action": "list", "range": "tomorrow"})
+            cal_text = f"Heute: {heute}\n\nMorgen: {morgen}"
+        else:
+            morgen = execute_calendar_action({"action": "list", "range": "tomorrow"})
+            cal_text = f"Morgen: {morgen}"
+        logger.info(f"Briefing: Kalender abgerufen ({len(cal_text)} Zeichen)")
+    except Exception as e:
+        cal_text = "(Kalender nicht verfügbar)"
+        logger.warning(f"Briefing: Kalender fehlgeschlagen: {e}")
+
+    # ── Todos abrufen ─────────────────────────────────────────────────────────
+    todo_text = ""
+    kimi_todos = []
+    try:
+        from core.todos import get_open_todos, get_overdue_todos, get_due_today, complete_todo
+
+        overdue = get_overdue_todos(user_id)
+        due_today = get_due_today(user_id)
+        all_open = get_open_todos(user_id)
+
+        # Kimi-eigene Todos (project='kimi') herausfiltern und merken zum Abhaken
+        kimi_todos = [t for t in all_open if (t.get("project") or "").lower() == "kimi"]
+
+        lines = []
+        if overdue:
+            lines.append("Überfällig: " + ", ".join(
+                f"#{t['id']} {t['title']} (seit {t['due_date']})" for t in overdue[:3]
+            ))
+        if due_today:
+            lines.append("Heute fällig: " + ", ".join(
+                f"#{t['id']} {t['title']}" for t in due_today[:3]
+            ))
+        if kimi_todos:
+            lines.append("Kimi-Vorhaben heute: " + ", ".join(
+                f"#{t['id']} {t['title']}" for t in kimi_todos[:3]
+            ))
+        # Hochprio-Todos die noch keinen festen Tag haben
+        high_prio = [t for t in all_open
+                     if t.get("priority") == "hoch" and not t.get("due_date")
+                     and t not in overdue and t not in due_today]
+        if high_prio:
+            lines.append("Hoch-Prio offen: " + ", ".join(
+                f"#{t['id']} {t['title']}" for t in high_prio[:3]
+            ))
+
+        todo_text = "\n".join(lines) if lines else "Keine dringenden Todos."
+        logger.info(f"Briefing: Todos abgerufen ({len(all_open)} offen, {len(kimi_todos)} Kimi)")
+    except Exception as e:
+        todo_text = "(Todos nicht verfügbar)"
+        logger.warning(f"Briefing: Todos fehlgeschlagen: {e}")
+
+    # ── Kimi formuliert Briefing aus echten Daten ─────────────────────────────
+    doc_context = f"=== Kalender ===\n{cal_text}\n\n=== Todos ===\n{todo_text}"
+    if log_context:
+        doc_context += f"\n\n=== System (letzte Nacht) ===\n{log_context}"
+
+    prompt = (
+        f"Ich schicke Tommy jetzt sein {label}. "
+        f"Ich habe die Kalender- und Todo-Daten vor mir. "
+        + (f"Ich habe auch einen Blick in den orbit.log geworfen — wenn dort etwas Auffälliges steht, erwähne ich es kurz. " if log_context else "")
+        + f"Ich fasse in 2-4 kurzen Sätzen zusammen was heute relevant ist — "
+        f"Termine, fällige Aufgaben, eigene Vorhaben. "
+        f"Wenn wirklich nichts relevant ist: NUR 'KEIN_BRIEFING' ausgeben. "
+        f"Kein Markdown, kein Intro, kein 'Guten Morgen' — direkt zum Punkt. "
+        f"Fließtext, max. 4 Sätze."
+    )
+
+    try:
+        context_name = USER_CONTEXTS.get(user_id, "Tommy")
+        reply, _ = chat_internal(
+            user_id=user_id,
+            message=prompt,
+            chat_history=[],
+            context_name=context_name,
+            doc_context=doc_context,
+        )
+    except Exception as e:
+        logger.warning(f"Briefing: chat_internal fehlgeschlagen: {e}")
+        return
+
+    if not reply or "KEIN_BRIEFING" in reply.upper():
+        logger.info(f"Briefing: {briefing_type} — kein relevanter Inhalt, nicht gesendet")
+        return
+
+    content = reply.strip()
+    if len(content) > 2000:
+        content = content[:1997] + "..."
+
+    # ── Senden ───────────────────────────────────────────────────────────────
+    try:
+        send_message(OWNER_ID, content)
+        save_message(OWNER_ID, "assistant", content)
+        logger.info(f"Briefing gesendet: {briefing_type} | {content[:80]}")
+    except Exception as e:
+        logger.warning(f"Briefing: send_message fehlgeschlagen: {e}")
+        return
+
+    # Kimi-Todos werden NICHT automatisch abgehakt — Kimi erledigt sie selbst.
+    # Das Briefing erwähnt sie nur damit Kimi sie kennt und angehen kann.
+
+    # ── orbit_proactive_messages Eintrag ──────────────────────────────────────
+    try:
+        mid = str(uuid.uuid4())
+        conn = get_connection()
+        try:
+            conn.execute(
+                "INSERT INTO orbit_proactive_messages"
+                " (id, message_type, release_state, primary_origin,"
+                " reason, channel_target, created_at, updated_at)"
+                " VALUES (?, ?, 'sent', ?, ?, ?, ?, ?)",
+                (mid, briefing_type, "orbit_cognition",
+                 content[:200], OWNER_ID, to_iso(), to_iso())
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.warning(f"Briefing: proactive_messages Eintrag fehlgeschlagen: {e}")
+
+
+# =============================================================================
 # Kognitions-Run
 # =============================================================================
 
@@ -240,6 +432,21 @@ def run_kognition(user_id: str, context_name: str):
             logger.info(f"Autonome Reflexion: {chunk_id[:8]}")
             _cognition_output(user_id, "autonomous_reflection",
                               "Autonome Reflexion über offene Fragen", "medium")
+
+            # Starke Reflexion → spontane Tagebuch-Notiz (nicht nur abends)
+            try:
+                from memory.memory_store import get_chunk_by_id
+                ref_chunk = get_chunk_by_id(chunk_id)
+                if ref_chunk:
+                    chunk_text = ref_chunk.get("text", "")
+                    # Nur bei PROACTIVE oder langer Reflexion (substanziell genug)
+                    if len(chunk_text) > 120:
+                        from diary import run_diary_note
+                        note_id = run_diary_note(user_id, chunk_text)
+                        if note_id:
+                            logger.info(f"DiaryNote aus Autonomer Reflexion: {note_id[:8]}")
+            except Exception as _dn:
+                logger.debug(f"DiaryNote-Trigger fehlgeschlagen (unkritisch): {_dn}")
     except Exception as e:
         logger.warning(f"Autonome Reflexion fehlgeschlagen: {e}")
 
@@ -279,8 +486,21 @@ def run_kognition(user_id: str, context_name: str):
     except Exception as e:
         logger.warning(f"Tommy-Modell fehlgeschlagen: {e}")
 
+    # ── Kalender-Awareness (abends 18-23h) ───────────────────────────────────
+    # Checkt ob Tommy morgen Termine hat → cognition_output mit Kalender-Keywords
+    # → ORBIT stuft Thread auf 'medium' → _maybe_autonomous_task → autonomer Task
+    try:
+        is_evening_cal = 18 <= berlin.hour < 23
+        if is_evening_cal:
+            from tommy_model import run_calendar_awareness
+            cal_topic = run_calendar_awareness(user_id)
+            if cal_topic:
+                _cognition_output(user_id, "calendar_awareness", cal_topic, "weak")
+                logger.info(f"CalendarAwareness: Trigger gefeuert — '{cal_topic}'")
+    except Exception as e:
+        logger.warning(f"Kalender-Awareness fehlgeschlagen: {e}")
+
     # ── Briefing (Morgen 7-10h, Abend 20-22h) ───────────────────────────────
-    # Ollama laeuft hier sowieso — daher Briefings hier generieren, nicht im ORBIT-Tick
     try:
         is_morning_b = 7 <= berlin.hour < 10
         is_evening_b = 20 <= berlin.hour < 22
@@ -291,64 +511,7 @@ def run_kognition(user_id: str, context_name: str):
             briefing_type = "evening_briefing"
 
         if briefing_type:
-            today_str = now_utc().isoformat()[:10]
-            from core.database import get_connection as _gc2
-            conn_b = _gc2()
-            try:
-                already_sent = conn_b.execute(
-                    "SELECT COUNT(*) FROM orbit_proactive_messages" +
-                    " WHERE message_type = ? AND created_at LIKE ? AND release_state = 'sent'",
-                    (briefing_type, today_str + "%")
-                ).fetchone()[0]
-            finally:
-                conn_b.close()
-
-            if already_sent:
-                logger.info(f"Briefing: {briefing_type} heute bereits gesendet, skip")
-            else:
-                from core.ollama_client import chat as _ollama_chat
-                from core.database import get_chat_history as _get_history, save_message as _save_msg
-                from config import OWNER_ID as _OWNER_ID
-
-                context_name_b = USER_CONTEXTS.get(user_id, "Tommy")
-                is_morning_flag = briefing_type == "morning_briefing"
-                prompt_b = (
-                    "Erstelle ein kurzes " +
-                    ("Morgen-Briefing" if is_morning_flag else "Abend-Briefing") +
-                    ". Schaue in dein Gedaechtnis nach offenen Themen, Terminen " +
-                    "oder relevanten Entwicklungen. " +
-                    "Wenn es nichts Relevantes gibt: KEIN_BRIEFING. " +
-                    "Sonst: maximal 3 kurze Punkte, kein Markdown, Fliesstext."
-                )
-                history_b = _get_history(user_id, limit=6)
-                reply_b, _ = _ollama_chat(user_id, prompt_b, history_b, context_name_b)
-
-                if reply_b and "KEIN_BRIEFING" not in reply_b.upper():
-                    content_b = reply_b.strip()
-                    from core.whatsapp import send_message as _send
-                    _send(_OWNER_ID, content_b)
-                    _save_msg(_OWNER_ID, "assistant", content_b)
-
-                    import uuid as _uuid2
-                    mid_b = str(_uuid2.uuid4())
-                    from core.database import get_connection as _gc3
-                    conn_b2 = _gc3()
-                    try:
-                        conn_b2.execute(
-                            "INSERT INTO orbit_proactive_messages" +
-                            " (id, message_type, release_state, primary_origin," +
-                            " reason, channel_target, created_at, updated_at)" +
-                            " VALUES (?, ?, 'sent', ?, ?, ?, ?, ?)",
-                            (mid_b, briefing_type, "orbit_cognition",
-                             content_b[:200], _OWNER_ID, to_iso(), to_iso())
-                        )
-                        conn_b2.commit()
-                    finally:
-                        conn_b2.close()
-
-                    logger.info(f"Briefing gesendet: {briefing_type} | {content_b[:60]}")
-                else:
-                    logger.info(f"Briefing: kein Inhalt fuer {briefing_type}")
+            _run_briefing(user_id, briefing_type, now)
     except Exception as e:
         logger.warning(f"Briefing fehlgeschlagen: {e}")
 

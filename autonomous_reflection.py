@@ -581,6 +581,50 @@ def run_autonomous_reflection(
         klassifikation, gedanke, supersedes = _parse_output(reply)
         result_id = _save_result(klassifikation, gedanke, supersedes, target, user_id)
 
+        # Vorhaben-Signale → Kimi-Todos + langfristige Ziele
+        if gedanke and klassifikation not in ("DISCARD",):
+            try:
+                from core.todos import extract_intent_todos, extract_intent_goals
+                new_todos = extract_intent_todos(gedanke, user_id)
+                if new_todos:
+                    logger.info(f"AutonomousReflection: {len(new_todos)} Kimi-Todo(s) angelegt")
+                new_goals = extract_intent_goals(gedanke, user_id)
+                if new_goals:
+                    logger.info(f"AutonomousReflection: {len(new_goals)} Kimi-Ziel(e) gespeichert")
+            except Exception as _te:
+                logger.debug(f"AutonomousReflection: IntentTodo/Goal fehlgeschlagen (unkritisch): {_te}")
+
+        # goal_tracker — Kimis aktive Zielverfolgung
+        try:
+            from core.goal_tracker import run_goal_tracker
+            activated = run_goal_tracker(user_id)
+            if activated:
+                logger.info(f"AutonomousReflection: goal_tracker {activated} Ziel(e) reaktiviert")
+        except Exception as _gt:
+            logger.debug(f"AutonomousReflection: goal_tracker fehlgeschlagen (unkritisch): {_gt}")
+
+        # PROACTIVE + Skript-Vorhaben → Code-Entwurf im Workspace ablegen
+        if gedanke and klassifikation == "PROACTIVE":
+            try:
+                code_keywords = ["skript", "script", "python", "detector", "detektor", "analyse", "tool", "werkzeug"]
+                if any(w in gedanke.lower() for w in code_keywords):
+                    from core.code_exec import save_file
+                    from core.datetime_utils import now_berlin
+                    ts = now_berlin().strftime("%Y%m%d_%H%M")
+                    # Dateiname aus erstem Schlüsselwort ableiten
+                    import re as _re_ce
+                    slug = _re_ce.sub(r"[^a-z0-9]", "_", gedanke.lower()[:40]).strip("_")
+                    filename = f"idea_{ts}_{slug[:20]}.py"
+                    stub = (
+                        f"# Idee aus autonomer Reflexion — {now_berlin().strftime('%Y-%m-%d %H:%M')}\n"
+                        f"# {gedanke[:200]}\n\n"
+                        f"# TODO: implementieren\n"
+                    )
+                    result = save_file(filename, stub)
+                    logger.info(f"AutonomousReflection: Code-Idee abgelegt: {filename} | {result}")
+            except Exception as _ce:
+                logger.debug(f"AutonomousReflection: Code-Idee fehlgeschlagen (unkritisch): {_ce}")
+
     except Exception as e:
         logger.error(f"AutonomousReflection: Nachdenken fehlgeschlagen: {e}")
 

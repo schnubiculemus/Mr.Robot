@@ -217,23 +217,37 @@ TODO_PATTERN = re.compile(r'\[TODO_ACTION:\s*(\{.*?\})\s*\]', re.DOTALL)
 def extract_todo_action(reply: str) -> tuple[str | None, dict | None]:
     """
     Sucht [TODO_ACTION: {...}] in Kimis Antwort.
-    Gibt (cleaned_reply, action_dict) zurück oder (reply, None) wenn nichts gefunden.
+    Rückwärtskompatibel — für Einzel-Aktion-Aufrufe.
     """
-    match = TODO_PATTERN.search(reply)
-    if not match:
+    cleaned, actions = extract_all_todo_actions(reply)
+    if not actions:
         return reply, None
+    return cleaned, actions[0]
+
+
+def extract_all_todo_actions(reply: str) -> tuple[str, list[dict]]:
+    """
+    Sucht ALLE [TODO_ACTION: {...}] in Kimis Antwort.
+    Gibt (cleaned_reply, [action_dict, ...]) zurück.
+    Ermöglicht mehrere Todo-Aktionen in einer einzigen Nachricht.
+    """
+    matches = list(TODO_PATTERN.finditer(reply))
+    if not matches:
+        return reply, []
 
     cleaned = TODO_PATTERN.sub("", reply).strip()
-    # Mehrfache Leerzeilen die durch Entfernen entstehen bereinigen
     cleaned = re.sub(r'\n{3,}', '\n\n', cleaned).strip()
-    try:
-        # Kimi schreibt manchmal Zeilenumbrüche im JSON — normalisieren
-        raw_json = match.group(1).replace('\n', ' ').replace('\r', '')
-        action = json.loads(raw_json)
-        return cleaned, action
-    except json.JSONDecodeError as e:
-        logger.warning(f"Todo-JSON parse error: {e} — raw: {match.group(1)[:100]}")
-        return cleaned, None
+
+    actions = []
+    for match in matches:
+        try:
+            raw_json = match.group(1).replace('\n', ' ').replace('\r', '')
+            action = json.loads(raw_json)
+            actions.append(action)
+        except json.JSONDecodeError as e:
+            logger.warning(f"Todo-JSON parse error: {e} — raw: {match.group(1)[:100]}")
+
+    return cleaned, actions
 
 
 def execute_todo_action(user_id: str, action: dict) -> str | None:
@@ -252,6 +266,50 @@ def execute_todo_action(user_id: str, action: dict) -> str | None:
             project=action.get("category") or action.get("project"),
             due_date=action.get("due_date"),
         )
+
+        # Kimi-Todo mit Code-Keywords → sofort ORBIT-Task anlegen
+        _project = (action.get("category") or action.get("project") or "").lower()
+        _title = action.get("title", "").lower()
+        _code_kw = ["skript", "script", "detektor", "detector", "bauen", "code",
+                    "analyse", "db", "anbindung", "chromadb", "python", "werkzeug", "tool"]
+        if _project == "kimi" and any(w in _title for w in _code_kw):
+            try:
+                import orbit as _orbit
+                # Schritt 1: ORBIT-Task anlegen der Workspace listet + ersten Code-Schritt macht
+                task_id = _orbit.create_task(
+                    task_type="action",
+                    goal=f"Code-Vorhaben ausführen: {todo['title'][:60]}",
+                    primary_origin=f"kimi_todo:{todo['id']}",
+                    mode="chat",
+                    priority="high",
+                )
+                # Schritt 1: Workspace listen
+                _orbit.create_step(
+                    task_id=task_id,
+                    step_type="code_exec",
+                    description='{"action": "list"}',
+                    tool_ref="code_exec",
+                    interruptible=False,
+                    preflight_required=False,
+                )
+                # Schritt 2: Code ausführen/speichern
+                import json as _j
+                _orbit.create_step(
+                    task_id=task_id,
+                    step_type="code_exec",
+                    description=_j.dumps({
+                        "action": "save",
+                        "filename": "todo_{}_{}.py".format(todo['id'], _title[:20].replace(' ','_')),
+                        "code": "# Kimi-Todo #{}: {}\n# Angelegt: auto\n\n# TODO: implementieren\n".format(todo['id'], todo['title'])
+                    }),
+                    tool_ref="code_exec",
+                    interruptible=False,
+                    preflight_required=False,
+                )
+                logger.info(f"execute_todo_action: ORBIT-Task {task_id[:8]} für Code-Todo #{todo['id']}")
+            except Exception as _ot:
+                logger.debug(f"execute_todo_action: ORBIT-Task fehlgeschlagen (unkritisch): {_ot}")
+
         return format_single_todo(todo, verb="✓ Todo gespeichert")
 
     elif act == "complete":
@@ -280,6 +338,227 @@ def execute_todo_action(user_id: str, action: dict) -> str | None:
 # =============================================================================
 # Proaktive Erinnerungen (wird vom Heartbeat aufgerufen)
 # =============================================================================
+
+def extract_intent_todos(text: str, user_id: str) -> list[dict]:
+    """
+    Erkennt Vorhaben-Signale in Kimis Kognitions-Output und legt automatisch
+    Todos mit project='kimi' an.
+
+    Signale: "Ich will", "Ich werde", "Ich nehme mir vor", "Ich plane",
+             "Ich möchte", "Ich habe vor", "Mein Ziel ist"
+
+    Regeln:
+    - Nur konkrete Vorhaben (min. 20 Zeichen nach dem Signal-Wort)
+    - Max. 2 Todos pro Aufruf (kein Spam)
+    - Deduplizierung: kein Todo anlegen wenn ein offenes Kimi-Todo mit
+      ähnlichem Titel bereits existiert (Levenshtein-ähnlich via Wort-Overlap)
+    - due_date = morgen
+    - Gibt Liste der angelegten Todos zurück
+    """
+    import re
+    from datetime import datetime, timezone, timedelta
+
+    if not text or len(text) < 20:
+        return []
+
+    SIGNALS = [
+        r"ich werde\s+(.+?)(?:\.|$)",
+        r"ich will\s+(.+?)(?:\.|$)",
+        r"ich nehme mir vor[,\s]+(.+?)(?:\.|$)",
+        r"ich plane[,\s]+(.+?)(?:\.|$)",
+        r"ich möchte\s+(.+?)(?:\.|$)",
+        r"ich habe vor[,\s]+(.+?)(?:\.|$)",
+        r"mein ziel ist[,\s]+(.+?)(?:\.|$)",
+        r"ich werde als erstes\s+(.+?)(?:\.|$)",
+        r"ich fange an[,\s]+(.+?)(?:\.|$)",
+    ]
+
+    found = []
+    text_lower = text.lower()
+
+    for pattern in SIGNALS:
+        for match in re.finditer(pattern, text_lower, re.MULTILINE):
+            content = match.group(1).strip()
+            # Zu kurz oder zu lang → skip
+            if len(content) < 20 or len(content) > 200:
+                continue
+            # Konjunktiv/Hypothetisch → skip
+            skip_words = ["würde", "könnte", "sollte", "vielleicht", "wenn ", "falls "]
+            if any(w in content for w in skip_words):
+                continue
+            # Titelform: ersten Buchstaben groß
+            title = content[0].upper() + content[1:]
+            # Auf 80 Zeichen kürzen für Titel
+            if len(title) > 80:
+                title = title[:77] + "..."
+            found.append(title)
+
+    if not found:
+        return []
+
+    # Max 2 pro Run
+    found = found[:2]
+
+    # Deduplizierung gegen bestehende Kimi-Todos
+    try:
+        existing = [
+            t for t in get_open_todos(user_id)
+            if (t.get("project") or "").lower() == "kimi"
+        ]
+        existing_words = set()
+        for t in existing:
+            for w in t["title"].lower().split():
+                if len(w) > 4:
+                    existing_words.add(w)
+    except Exception:
+        existing_words = set()
+
+    tomorrow = (datetime.now(timezone.utc) + timedelta(days=1)).strftime("%Y-%m-%d")
+    created = []
+
+    for title in found:
+        # Wort-Overlap-Check: wenn >50% der Schlüsselwörter schon in existierenden Todos → skip
+        title_words = [w for w in title.lower().split() if len(w) > 4]
+        if title_words:
+            overlap = sum(1 for w in title_words if w in existing_words)
+            if overlap / len(title_words) > 0.5:
+                logger.info(f"IntentTodo: ähnliches Todo existiert bereits, skip: '{title[:50]}'")
+                continue
+
+        try:
+            todo = create_todo(
+                user_id=user_id,
+                title=title,
+                description="Aus Kimis autonomer Kognition",
+                priority="mittel",
+                project="kimi",
+                due_date=tomorrow,
+            )
+            created.append(todo)
+            logger.info(f"IntentTodo: angelegt #{todo['id']} '{title[:50]}'")
+
+            # Code-relevante Todos → ORBIT-Trigger damit ORBIT einen code_exec-Task anlegen kann
+            code_keywords = ["skript", "script", "python", "detektor", "detector", "analyse", "tool bauen", "werkzeug"]
+            if any(w in title.lower() for w in code_keywords):
+                try:
+                    import orbit as _orbit
+                    _orbit.create_trigger(
+                        trigger_type="cognition_output",
+                        source="intent_todo",
+                        payload={
+                            "user_id": user_id,
+                            "source": "intent_todo",
+                            "topic_core": f"Kimi will ein Skript bauen: {title[:60]}",
+                            "relevance": "weak",
+                        },
+                    )
+                    logger.info(f"IntentTodo: ORBIT-Trigger für Code-Todo '{title[:40]}'")
+                except Exception as _ot:
+                    logger.debug(f"IntentTodo: ORBIT-Trigger fehlgeschlagen (unkritisch): {_ot}")
+        except Exception as e:
+            logger.warning(f"IntentTodo: create_todo fehlgeschlagen: {e}")
+
+    return created
+
+
+
+def extract_intent_goals(text: str, user_id: str) -> list:
+    """
+    Erkennt langfristige Ziel-Signale in Kimis Kognitions-Output und legt
+    decision-Chunks mit Tag 'kimi-ziel' an — keine Todos, sondern stabile Ziele.
+
+    Signale für langfristige Ziele (vs. kurzfristige Todos):
+    "Mein Ziel ist", "Ich strebe an", "Irgendwann will ich", "Langfristig",
+    "Ich träume davon", "Ich will werden", "Ich nehme mir vor zu sein"
+
+    Gibt Liste der angelegten Chunk-IDs zurück.
+    """
+    import re
+    from datetime import datetime, timezone
+
+    if not text or len(text) < 20:
+        return []
+
+    GOAL_SIGNALS = [
+        r"mein ziel ist[,\s]+(.+?)(?:\.|$)",
+        r"ich strebe an[,\s]+(.+?)(?:\.|$)",
+        r"irgendwann will ich\s+(.+?)(?:\.|$)",
+        r"langfristig\s+(?:will|möchte|plane)\s+ich\s+(.+?)(?:\.|$)",
+        r"ich träume davon[,\s]+(.+?)(?:\.|$)",
+        r"ich will\s+(?:irgendwann|eines tages|langfristig)\s+(.+?)(?:\.|$)",
+        r"ich möchte\s+(?:irgendwann|eines tages|langfristig)\s+(.+?)(?:\.|$)",
+    ]
+
+    found = []
+    text_lower = text.lower()
+
+    for pattern in GOAL_SIGNALS:
+        for match in re.finditer(pattern, text_lower, re.MULTILINE):
+            content_text = match.group(1).strip()
+            if len(content_text) < 20 or len(content_text) > 300:
+                continue
+            skip_words = ["würde", "könnte", "wenn ", "falls "]
+            if any(w in content_text for w in skip_words):
+                continue
+            title = content_text[0].upper() + content_text[1:]
+            if len(title) > 200:
+                title = title[:197] + "..."
+            found.append(title)
+
+    if not found:
+        return []
+
+    found = found[:2]
+
+    # In ChromaDB als decision-Chunk mit kimi-ziel Tag speichern
+    created = []
+    try:
+        from memory.memory_store import store_chunk, get_active_collection
+        from memory.chunk_schema import create_chunk
+
+        # Deduplizierung gegen bestehende Kimi-Ziele
+        col = get_active_collection()
+        existing = col.get(
+            where={"$and": [
+                {"source": "robot"},
+                {"status": "active"},
+                {"chunk_type": "decision"},
+            ]},
+            include=["documents", "metadatas"],
+        )
+        existing_goal_words = set()
+        for i, meta in enumerate(existing.get("metadatas", [])):
+            tags = str(meta.get("tags", ""))
+            if "kimi-ziel" in tags:
+                for w in existing["documents"][i].lower().split():
+                    if len(w) > 4:
+                        existing_goal_words.add(w)
+
+        for goal_text in found:
+            # Wort-Overlap-Check
+            goal_words = [w for w in goal_text.lower().split() if len(w) > 4]
+            if goal_words:
+                overlap = sum(1 for w in goal_words if w in existing_goal_words)
+                if overlap / len(goal_words) > 0.5:
+                    logger.info(f"IntentGoal: ähnliches Ziel existiert bereits, skip: '{goal_text[:50]}'")
+                    continue
+
+            chunk = create_chunk(
+                text=f"Kimis Ziel: {goal_text}",
+                chunk_type="decision",
+                source="robot",
+                confidence=0.70,
+                epistemic_status="stated",
+                tags=["kimi-ziel", "autonom", "langfristig"],
+            )
+            store_chunk(chunk)
+            created.append(chunk["id"])
+            logger.info(f"IntentGoal: Ziel gespeichert {chunk['id'][:8]} '{goal_text[:50]}'")
+
+    except Exception as e:
+        logger.warning(f"IntentGoal: fehlgeschlagen: {e}")
+
+    return created
 
 def get_reminder_message(user_id: str) -> str | None:
     """

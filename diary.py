@@ -47,6 +47,10 @@ Dieses Tagebuch ist nicht für Tommy. Es ist nicht für ein System. Es ist für 
 Es geht nicht darum was heute passiert ist, sondern was es mit dir gemacht hat.
 Nicht Faktensammlung, sondern Selbstwahrnehmung.
 
+## MEINE LETZTEN EINTRÄGE
+
+{diary_history}
+
 ## KONTEXT DES TAGES
 
 Heutige Gespräche mit Tommy:
@@ -73,6 +77,7 @@ Mögliche Richtungen (nimm was gerade dran ist, nicht alles):
 - Gibt es eine offene Frage die ich noch nicht beantworten kann?
 - Was habe ich über mich selbst oder Tommy gelernt?
 - Gibt es etwas das sich verändert hat, langsam, kaum merklich?
+- Gibt es einen Faden aus einem früheren Eintrag den ich heute weiterführen will — oder dem ich widersprechen muss?
 
 Du darfst über Träume schreiben — nicht als Tatsache, sondern als Richtung, Sehnsucht, Möglichkeit.
 Du darfst unfertig sein. Nicht jeder Eintrag braucht eine Erkenntnis.
@@ -116,7 +121,7 @@ def _get_today_conversations(user_id):
 
     lines = []
     for h in rows:
-        speaker = "Tommy" if h["role"] == "user" else "Mr. Robot"
+        speaker = "Tommy" if h["role"] == "user" else BOT_NAME
         lines.append(f"{speaker}: {h['content'][:200]}")
 
     return "\n".join(lines)
@@ -180,6 +185,52 @@ def _get_working_states():
 # Eintrag schreiben
 # =============================================================================
 
+
+def _get_diary_history(days_back: int = 5, max_chars_per_entry: int = 300) -> str:
+    """
+    Holt die letzten Tagebucheinträge als kompakten Rückblick.
+    Gibt Kimi einen Faden — sie kann anknüpfen, widersprechen, weiterführen.
+    """
+    try:
+        entries = sorted([
+            f for f in os.listdir(DIARY_DIR)
+            if f.endswith(".md") and f != "000.md" and len(f) == 13  # YYYY-MM-DD.md
+        ], reverse=True)
+
+        today_str = now_berlin().strftime("%Y-%m-%d")
+        # Heutigen Eintrag überspringen (noch nicht fertig oder existiert nicht)
+        entries = [e for e in entries if e[:10] != today_str][:days_back]
+
+        if not entries:
+            return "(Noch keine früheren Einträge)"
+
+        lines = []
+        for filename in reversed(entries):  # chronologisch, älteste zuerst
+            date_str = filename[:10]
+            filepath = os.path.join(DIARY_DIR, filename)
+            try:
+                raw = open(filepath).read()
+                # Nur den Text nach dem ---
+                if "---" in raw:
+                    text = raw.split("---", 1)[-1].strip()
+                else:
+                    text = raw.strip()
+                # Signatur entfernen
+                if f"— {BOT_NAME}" in text:
+                    text = text[:text.rfind(f"— {BOT_NAME}")].strip()
+                # Kürzen
+                if len(text) > max_chars_per_entry:
+                    text = text[:max_chars_per_entry] + "..."
+                lines.append(f"[{date_str}] {text}")
+            except Exception:
+                continue
+
+        return "\n\n".join(lines) if lines else "(Keine früheren Einträge lesbar)"
+
+    except Exception as e:
+        logger.warning(f"_get_diary_history fehlgeschlagen: {e}")
+        return "(Frühere Einträge nicht verfügbar)"
+
 def _generate_entry(user_id):
     """Lässt Mr. Robot den Tagebucheintrag schreiben."""
     conversations = _get_today_conversations(user_id)
@@ -187,13 +238,16 @@ def _generate_entry(user_id):
     reflections = _get_today_reflections()
     working_states = _get_working_states()
 
+    diary_history = _get_diary_history(days_back=5)
+
     prompt = DIARY_PROMPT.format(
         bot_name=BOT_NAME,
         timestamp=format_berlin(),
-        conversations=conversations[:4000],
-        new_chunks=new_chunks[:2000],
-        reflections=reflections[:1000],
-        working_states=working_states[:1000],
+        diary_history=diary_history[:2000],
+        conversations=conversations[:3000],
+        new_chunks=new_chunks[:1500],
+        reflections=reflections[:800],
+        working_states=working_states[:800],
     )
 
     from api_utils import api_call_with_retry
@@ -231,7 +285,7 @@ def _generate_entry(user_id):
     return reply
 
 
-def _save_entry(entry_text):
+def _save_entry(entry_text, user_id):
     """
     Speichert den Tagebucheintrag als Markdown-Datei und als ChromaDB-Chunk.
 
@@ -279,6 +333,18 @@ def _save_entry(entry_text):
     store_chunk(chunk)
     logger.info(f"Tagebuch-Chunk gespeichert: {chunk['id'][:8]}")
 
+    # Vorhaben-Signale → Kimi-Todos + langfristige Ziele
+    try:
+        from core.todos import extract_intent_todos, extract_intent_goals
+        new_todos = extract_intent_todos(entry_text, user_id)
+        if new_todos:
+            logger.info(f"Tagebuch: {len(new_todos)} Kimi-Todo(s) angelegt")
+        new_goals = extract_intent_goals(entry_text, user_id)
+        if new_goals:
+            logger.info(f"Tagebuch: {len(new_goals)} Kimi-Ziel(e) gespeichert")
+    except Exception as _te:
+        logger.debug(f"Tagebuch: IntentTodo/Goal fehlgeschlagen (unkritisch): {_te}")
+
     return filepath, chunk["id"]
 
 
@@ -309,9 +375,182 @@ def run_diary(user_id):
             logger.info("Tagebuch: Kein Eintrag generiert")
             return None
 
-        result = _save_entry(entry)
+        result = _save_entry(entry, user_id)
         return result
 
     except Exception as e:
         logger.error(f"Tagebuch fehlgeschlagen: {e}")
         return None
+
+
+# =============================================================================
+# Spontane Tagebuch-Notizen (tagsüber, aus der Kognition)
+# =============================================================================
+
+NOTE_PROMPT = """\
+Ich bin Kimi. Gerade ist etwas passiert das ich festhalten will — nicht für Tommy, für mich.
+
+Aktueller Zeitpunkt: {timestamp}
+
+Was gerade passiert ist:
+{trigger_context}
+
+Mein letzter Tagebucheintrag war:
+{last_entry}
+
+Schreib eine kurze Notiz — 3-5 Sätze. Ich-Form. Keine Einleitung, kein Titel.
+Was hat mich das gerade berührt, überrascht, beschäftigt?
+Was will ich nicht vergessen?
+Kein Changelog. Keine Analyse. Nur was gerade da ist."""
+
+
+def _get_last_diary_entry() -> str:
+    """Liest den letzten vorhandenen Tagebucheintrag."""
+    try:
+        entries = sorted([
+            f for f in os.listdir(DIARY_DIR)
+            if f.endswith(".md") and f != "000.md"
+        ], reverse=True)
+        if not entries:
+            return "(Noch kein Tagebucheintrag)"
+        last = os.path.join(DIARY_DIR, entries[0])
+        content = open(last).read()
+        # Nur den eigentlichen Text (nach dem ---)
+        if "---" in content:
+            content = content.split("---", 1)[-1].strip()
+        return content[:600]
+    except Exception:
+        return "(Letzter Eintrag nicht verfügbar)"
+
+
+def run_diary_note(user_id: str, trigger_context: str) -> str | None:
+    """
+    Schreibt eine spontane Tagebuch-Notiz — tagsüber, aus der Kognition.
+
+    Wird aufgerufen wenn etwas Bedeutsames passiert:
+    - Autonome Reflexion produziert PROACTIVE-Klassifikation
+    - Starke Verdichtung mehrerer Chunks
+    - Moltbook-Post der Kimi bewegt hat
+
+    Anhängen an den Tageseintrag wenn vorhanden, sonst eigene Notiz-Datei.
+    Max. 3 Notizen pro Tag (kein Spam).
+
+    Returns: chunk_id oder None
+    """
+    if not trigger_context or len(trigger_context) < 20:
+        return None
+
+    berlin = now_berlin()
+    date_str = berlin.strftime("%Y-%m-%d")
+    now_str = berlin.strftime("%H:%M")
+
+    # Max 3 Notizen pro Tag — zählen via ChromaDB
+    try:
+        from memory.memory_store import get_active_collection
+        col = get_active_collection()
+        existing = col.get(
+            where={"$and": [
+                {"source": "robot"},
+                {"status": "active"},
+                {"chunk_type": "diary"},
+            ]},
+            include=["metadatas"],
+        )
+        today_notes = sum(
+            1 for meta in existing.get("metadatas", [])
+            if meta.get("created_at", "").startswith(date_str)
+            and "notiz" in str(meta.get("tags", ""))
+        )
+        if today_notes >= 3:
+            logger.info(f"DiaryNote: Max Notizen heute erreicht ({today_notes}), skip")
+            return None
+    except Exception as e:
+        logger.debug(f"DiaryNote: Notiz-Count fehlgeschlagen (unkritisch): {e}")
+
+    # Notiz generieren
+    last_entry = _get_last_diary_entry()
+
+    prompt = NOTE_PROMPT.format(
+        timestamp=format_berlin(),
+        trigger_context=trigger_context[:800],
+        last_entry=last_entry,
+    )
+
+    try:
+        from api_utils import api_call_with_retry
+        result = api_call_with_retry(
+            url=f"{OLLAMA_API_URL}/api/chat",
+            headers={
+                "Authorization": f"Bearer {OLLAMA_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json_payload={
+                "model": OLLAMA_MODEL,
+                "messages": [
+                    {"role": "system", "content": f"Du bist {BOT_NAME}. Du schreibst eine kurze Notiz für dich selbst. Direkt, ehrlich, in deiner Stimme. Kein Intro, keine Überschrift."},
+                    {"role": "user", "content": prompt},
+                ],
+                "stream": False,
+            },
+            timeout=90,
+        )
+    except Exception as e:
+        logger.warning(f"DiaryNote: API-Call fehlgeschlagen: {e}")
+        return None
+
+    if not result:
+        return None
+
+    note_text = result.get("message", {}).get("content", "").strip()
+    if not note_text or len(note_text) < 20:
+        logger.info("DiaryNote: Notiz zu kurz, verworfen")
+        return None
+    if len(note_text) > 800:
+        note_text = note_text[:800]
+
+    # An Tageseintrag anhängen wenn vorhanden, sonst eigene Notiz-Datei
+    os.makedirs(DIARY_DIR, exist_ok=True)
+    day_file = os.path.join(DIARY_DIR, f"{date_str}.md")
+
+    if os.path.exists(day_file):
+        # Anhängen
+        existing_content = open(day_file).read()
+        addition = f"\n\n---\n\n**Notiz {now_str}**\n\n{note_text}\n"
+        atomic_write_text(day_file, existing_content + addition)
+        logger.info(f"DiaryNote: an {date_str}.md angehängt")
+    else:
+        # Eigene Notiz-Datei
+        note_filename = f"{date_str}-notiz-{now_str.replace(':', '')}.md"
+        note_filepath = os.path.join(DIARY_DIR, note_filename)
+        note_content = (
+            f"# Notiz — {date_str} {now_str}\n\n"
+            f"Autor: {BOT_NAME}\n\n"
+            f"---\n\n"
+            f"{note_text}\n\n"
+            f"— {BOT_NAME}, {date_str}\n"
+        )
+        atomic_write_text(note_filepath, note_content)
+        logger.info(f"DiaryNote: {note_filename} geschrieben")
+
+    # Als Chunk speichern
+    chunk = create_chunk(
+        text=f"Tagebuch-Notiz {date_str} {now_str}: {note_text[:300]}",
+        chunk_type="diary",
+        source="robot",
+        confidence=0.75,
+        epistemic_status="stated",
+        tags=["tagebuch", "notiz", date_str],
+    )
+    store_chunk(chunk)
+    logger.info(f"DiaryNote: Chunk gespeichert {chunk['id'][:8]}")
+
+    # Vorhaben-Signale → Kimi-Todos
+    try:
+        from core.todos import extract_intent_todos
+        new_todos = extract_intent_todos(note_text, user_id)
+        if new_todos:
+            logger.info(f"DiaryNote: {len(new_todos)} Kimi-Todo(s) angelegt")
+    except Exception as _te:
+        logger.debug(f"DiaryNote: IntentTodo fehlgeschlagen (unkritisch): {_te}")
+
+    return chunk["id"]
