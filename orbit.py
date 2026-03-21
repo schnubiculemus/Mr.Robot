@@ -1029,9 +1029,109 @@ def _handle_time_window(trigger: dict) -> None:
 
 
 def _handle_tool_result(trigger: dict) -> None:
+    """
+    Verarbeitet ein Tool-Ergebnis aus einem ORBIT-Step.
+    Drei Schritte:
+    1. Ergebnis als Observation speichern
+    2. Kimi intern befragen was als nächstes zu tun ist
+    3. Bei weiterem Handlungsbedarf neuen Trigger erzeugen
+    """
     payload = _parse(trigger.get("payload"), {})
     tool = payload.get("tool", "unknown")
-    logger.debug(f"tool_result von {tool}")
+    task_id = payload.get("task_id")
+    step_id = payload.get("step_id")
+    result = payload.get("result", "")
+    success = payload.get("success", True)
+    user_id = payload.get("user_id", OWNER_ID)
+
+    logger.debug(f"tool_result von {tool} | task={task_id[:8] if task_id else '?'} | ok={success}")
+
+    if not task_id:
+        return
+
+    task = get_task(task_id)
+    if not task:
+        return
+
+    # 1. Observation speichern
+    try:
+        from core.todo_service import record_observation
+        record_observation(
+            owner_id=user_id,
+            content=str(result)[:500] if result else f"{tool} fehlgeschlagen",
+            obs_type="tool_result" if success else "error",
+            task_id=task_id,
+            step_id=step_id,
+            todo_id=int(task["linked_todo_id"]) if task.get("linked_todo_id") else None,
+            proposal_id=int(task["proposal_id"]) if task.get("proposal_id") else None,
+        )
+    except Exception as _oe:
+        logger.debug(f"_handle_tool_result: Observation fehlgeschlagen: {_oe}")
+
+    # 2. Offene Steps prüfen — wenn noch Steps ausstehen, nichts weiter tun
+    steps = get_steps(task_id=task_id)
+    open_steps = [s for s in steps if s["status"] in ("pending", "running")]
+    if open_steps:
+        logger.debug(f"_handle_tool_result: {len(open_steps)} offene Steps — warte")
+        return
+
+    # 3. Alle Steps terminal — Kimi intern befragen was als nächstes zu tun ist
+    # Nur wenn Task noch nicht terminal
+    if task.get("status") in ("completed", "failed", "aborted"):
+        return
+
+    try:
+        from core.ollama_client import chat_internal
+        from config import USER_CONTEXTS
+
+        # Zusammenfassung aller Step-Ergebnisse
+        step_summaries = []
+        for s in steps:
+            summary = s.get("result_summary") or s.get("description", "")[:80]
+            status = s.get("status", "?")
+            step_summaries.append(f"- {s.get('tool_ref','?')}: {status} — {summary[:100]}")
+
+        task_goal = task.get("goal", "")[:100]
+        steps_text = chr(10).join(step_summaries)
+        reflection_prompt = (
+            "Ich habe gerade einen Task abgeschlossen: " + task_goal + chr(10) + chr(10)
+            + "Step-Ergebnisse:" + chr(10) + steps_text + chr(10) + chr(10)
+            + "Was ist das Ergebnis? Wurde das Ziel erreicht? "
+            + "Wenn nicht - was fehlt noch? "
+            + "Antworte in 2-3 Saetzen, kein Markdown."
+        )
+
+        reply, _ = chat_internal(
+            user_id=user_id,
+            message=reflection_prompt,
+            chat_history=[],
+            extra_system="Kurze interne Reflexion nach Task-Abschluss. Kein Chat-Modus.",
+        )
+
+        if reply and len(reply.strip()) > 10:
+            # Reflexion als Observation speichern
+            from core.todo_service import record_observation
+            record_observation(
+                owner_id=user_id,
+                content=reply.strip()[:500],
+                obs_type="reflection",
+                task_id=task_id,
+                todo_id=int(task["linked_todo_id"]) if task.get("linked_todo_id") else None,
+            )
+            logger.info(f"_handle_tool_result: Kimi-Reflexion gespeichert für Task {task_id[:8]}")
+
+            # process_kimi_output — falls Kimi neue Aktionen formuliert hat
+            from core.kimi_output import process_kimi_output
+            process_kimi_output(
+                source="tool_result",
+                user_id=user_id,
+                raw_text=reply,
+                visibility="internal",
+                context={"task_id": task_id},
+            )
+
+    except Exception as _re:
+        logger.debug(f"_handle_tool_result: Kimi-Reflexion fehlgeschlagen (unkritisch): {_re}")
 
 
 
@@ -1630,7 +1730,8 @@ def task_transition(task_id: str, new_status: str, reason: str = None,
             if new_status == "completed" and task_obj and task_obj.get("linked_todo_id"):
                 from core.todo_service import complete_todo
                 complete_todo(int(task_obj["linked_todo_id"]),
-                             summary=f"Task {task_id[:8]} abgeschlossen")
+                             summary=f"Task {task_id[:8]} abgeschlossen",
+                             task_id=task_id)
                 logger.info(f"task_transition: Todo #{task_obj['linked_todo_id']} automatisch erledigt")
 
             # Bei failed/aborted → Todo auf blocked
@@ -2819,7 +2920,9 @@ TOOL_REGISTRY = {
     # Moltbook
     "moltbook":           {"criticality": "kontextkritisch", "usage": ["consultative"],   "type": "extern",        "write_indirect": False},
     # Whitelist / Server
-
+    # Code-Execution (Kimi Workspace)
+    "code_exec":          {"criticality": "kontextkritisch", "usage": ["write"],          "type": "intern",        "write_indirect": True},
+    "server_read":        {"criticality": "kontextkritisch", "usage": ["read"],           "type": "intern",        "write_indirect": False},
 }
 
 TOOL_RETRY_CONFIG = {
@@ -2969,8 +3072,48 @@ def _dispatch_tool(tool_ref: str, action: str, params: dict) -> object:
         )
 
     # Server-Lesezugriff
+    if tool_ref == "server_read":
+        from core.server_read import read_file
+        return read_file(params.get("path", ""))
 
-    # Code-Execution
+    # Code-Execution (Kimi Workspace)
+    if tool_ref == "code_exec":
+        action_type = params.get("action", action)
+        workspace = os.path.join(PROJECT_DIR, "kimi_workspace")
+        os.makedirs(workspace, exist_ok=True)
+
+        if action_type == "list":
+            files = os.listdir(workspace)
+            joined = "\n".join(files) if files else "(leer)"
+            return {"success": True, "result": joined, "files": files}
+
+        elif action_type == "read":
+            fname = params.get("filename", "")
+            path = os.path.join(workspace, os.path.basename(fname))
+            if not os.path.exists(path):
+                return {"success": False, "error": f"Datei nicht gefunden: {fname}"}
+            with open(path, "r", encoding="utf-8") as f:
+                return {"success": True, "result": f.read()[:5000]}
+
+        elif action_type == "save":
+            fname = params.get("filename", "output.txt")
+            code = params.get("code", params.get("content", ""))
+            path = os.path.join(workspace, os.path.basename(fname))
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(code)
+            return {"success": True, "result": f"Datei gespeichert: {fname}"}
+
+        elif action_type == "delete":
+            fname = params.get("filename", "")
+            path = os.path.join(workspace, os.path.basename(fname))
+            if os.path.exists(path):
+                os.remove(path)
+                return {"success": True, "result": f"Datei gelöscht: {fname}"}
+            return {"success": False, "error": f"Datei nicht gefunden: {fname}"}
+
+        else:
+            return {"success": False, "error": f"Unbekannte code_exec action: {action_type}"}
+
     # Mail — noch nicht implementiert
     if tool_ref in ("mail_read", "mail_draft", "mail_send"):
         raise NotImplementedError(f"Mail-Tool '{tool_ref}' noch nicht implementiert")

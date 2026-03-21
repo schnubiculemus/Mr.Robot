@@ -243,33 +243,63 @@ def _execute_single(action: Action, user_id: str, context: dict | None) -> Actio
 
 
 def _run_todo(action: Action, user_id: str, context: dict | None) -> ActionResult:
-    from core.todos import execute_todo_action
+    from core.todo_service import create_todo, complete_todo, block_todo
     payload = action.payload
     act = payload.get("action", "create")
 
-    result_text = execute_todo_action(user_id, payload)
-
-    # Verifikation: bei create prüfen ob ID in der Antwort
     if act == "create":
-        if result_text and "#" in result_text:
-            # ID aus Antwort extrahieren
-            m = re.search(r'#(\d+)', result_text)
-            todo_id = int(m.group(1)) if m else None
+        # Verknüpfungen aus context holen falls vorhanden
+        proposal_id = (context or {}).get("proposal_id")
+        goal_id = (context or {}).get("goal_id")
+        origin_type = (context or {}).get("origin_type", action.source)
+        origin_ref = (context or {}).get("origin_ref")
+
+        todo = create_todo(
+            owner_id=user_id,
+            title=payload.get("title", "Unbenanntes Todo"),
+            description=payload.get("description"),
+            priority=payload.get("priority", payload.get("prioritaet", "mittel")),
+            project=payload.get("category", payload.get("project")),
+            due_date=payload.get("due_date"),
+            origin_type=origin_type,
+            origin_ref=origin_ref,
+            proposal_id=proposal_id,
+            goal_id=goal_id,
+        )
+        if todo:
             return ActionResult(
                 ok=True,
                 type=action.type,
                 object_type="todo",
-                object_id=todo_id,
-                message=result_text,
+                object_id=todo["id"],
+                message=f"✓ Todo gespeichert: {todo.get('title','')[:50]} (#{todo['id']})",
                 dashboard_visible=True,
             )
         else:
-            return ActionResult(ok=False, type=action.type, error=f"Todo-Anlage fehlgeschlagen: {result_text}")
+            return ActionResult(ok=False, type=action.type,
+                               error="Todo-Anlage fehlgeschlagen")
+
     elif act == "complete":
-        ok = result_text is not None and "abgehakt" in (result_text or "").lower()
+        todo_id = payload.get("id")
+        if not todo_id:
+            return ActionResult(ok=False, type=action.type, error="Keine Todo-ID für complete")
+        ok = complete_todo(int(todo_id), summary="Von Kimi abgehakt")
         return ActionResult(ok=ok, type=action.type, object_type="todo",
-                           object_id=payload.get("id"), message=result_text)
+                           object_id=todo_id,
+                           message="✓ Todo abgehakt" if ok else None,
+                           error=None if ok else "complete_todo fehlgeschlagen")
+
+    elif act == "block":
+        todo_id = payload.get("id")
+        if not todo_id:
+            return ActionResult(ok=False, type=action.type, error="Keine Todo-ID für block")
+        ok = block_todo(int(todo_id), reason=payload.get("reason", "blockiert"))
+        return ActionResult(ok=ok, type=action.type, object_type="todo", object_id=todo_id)
+
     else:
+        # Fallback für unbekannte Todo-Aktionen
+        from core.todos import execute_todo_action
+        result_text = execute_todo_action(user_id, payload)
         return ActionResult(ok=result_text is not None, type=action.type,
                            object_type="todo", message=result_text)
 
@@ -379,12 +409,8 @@ def link_related_objects(results: list[ActionResult], context: dict | None = Non
             conn = get_connection()
             try:
                 conn.execute(
-                    "UPDATE kimi_proposals SET approved_todo_id=? WHERE id=?",
+                    "UPDATE kimi_proposals SET approved_todo_id=? WHERE id=? AND approved_todo_id IS NULL",
                     (todo_id, proposal_id)
-                )
-                conn.execute(
-                    "UPDATE todos SET description = description || ' [proposal:' || ? || ']' WHERE id=? AND description NOT LIKE '%[proposal:%'",
-                    (str(proposal_id), todo_id)
                 )
                 conn.commit()
             finally:

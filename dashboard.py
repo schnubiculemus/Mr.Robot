@@ -256,16 +256,18 @@ def api_todos():
 @app.route("/api/todos", methods=["POST"])
 @require_auth
 def api_todos_create():
-    from core.todos import create_todo
+    from core.todo_service import create_todo
     user_id = list(USER_CONTEXTS.keys())[0]
     data = request.json or {}
     todo = create_todo(
-        user_id=user_id,
+        owner_id=user_id,
         title=data.get("title", ""),
         description=data.get("description"),
         priority=data.get("priority", "mittel"),
         project=data.get("project"),
         due_date=data.get("due_date"),
+        origin_type=data.get("origin_type", "manual"),
+        origin_ref=data.get("origin_ref"),
     )
     return jsonify(todo), 201
 
@@ -273,12 +275,14 @@ def api_todos_create():
 @app.route("/api/todos/<int:todo_id>", methods=["PATCH"])
 @require_auth
 def api_todos_update(todo_id):
-    from core.todos import get_todo, complete_todo
+    from core.todo_service import complete_todo as svc_complete_todo
+    from core.todos import get_todo
     from core.database import get_connection
     data = request.json or {}
     action = data.get("action")
     if action == "complete":
-        todo = complete_todo(todo_id)
+        ok = svc_complete_todo(todo_id, summary="Manuell im Dashboard erledigt")
+        todo = get_todo(todo_id)
         return jsonify(todo)
     todo = get_todo(todo_id)
     if not todo:

@@ -64,7 +64,17 @@ def get_proposals(status: str = "pending", owner_id: str = None) -> list:
     try:
         conn = get_connection()
         try:
-            if status and status != "all":
+            if owner_id and status and status != "all":
+                rows = conn.execute(
+                    "SELECT * FROM kimi_proposals WHERE status=? AND owner_id=? ORDER BY created_at DESC",
+                    (status, owner_id)
+                ).fetchall()
+            elif owner_id:
+                rows = conn.execute(
+                    "SELECT * FROM kimi_proposals WHERE owner_id=? ORDER BY created_at DESC",
+                    (owner_id,)
+                ).fetchall()
+            elif status and status != "all":
                 rows = conn.execute(
                     "SELECT * FROM kimi_proposals WHERE status=? ORDER BY created_at DESC",
                     (status,)

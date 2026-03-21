@@ -76,7 +76,7 @@ def start_todo(todo_id: int, task_id: str) -> bool:
         return False
 
 
-def complete_todo(todo_id: int, summary: str = None) -> bool:
+def complete_todo(todo_id: int, summary: str = None, task_id: str = None) -> bool:
     """
     Schließt Todo ab und erzeugt Completion-Event.
     Wenn Todo aus Proposal stammt → Proposal auf implemented.
@@ -107,7 +107,7 @@ def complete_todo(todo_id: int, summary: str = None) -> bool:
             # Proposal auf implemented wenn verknüpft
             if todo.get("proposal_id"):
                 from core.proposal_service import mark_implemented
-                mark_implemented(todo["proposal_id"])
+                mark_implemented(todo["proposal_id"], task_id=task_id)
 
             # Goal-Fortschritt
             if todo.get("goal_id"):

@@ -286,18 +286,12 @@ def execute_todo_action(user_id: str, action: dict) -> str | None:
                     proposal_id=todo.get('proposal_id'),
                     goal_id=todo.get('goal_id'),
                 )
-                # Todo bekommt linked_task_id
+                # Todo auf in_progress + linked_task_id via Service
                 try:
-                    from core.database import get_connection as _gc
-                    _conn = _gc()
-                    _conn.execute(
-                        "UPDATE todos SET linked_task_id=? WHERE id=?",
-                        (task_id, todo['id'])
-                    )
-                    _conn.commit()
-                    _conn.close()
-                except Exception:
-                    pass
+                    from core.todo_service import start_todo
+                    start_todo(todo['id'], task_id)
+                except Exception as _st:
+                    logger.debug(f"start_todo fehlgeschlagen (unkritisch): {_st}")
                 # Schritt 1: Workspace listen
                 _orbit.create_step(
                     task_id=task_id,
@@ -525,50 +519,36 @@ def extract_intent_goals(text: str, user_id: str) -> list:
 
     found = found[:2]
 
-    # In ChromaDB als decision-Chunk mit kimi-ziel Tag speichern
+    # Goals als operative SQLite-Wahrheit via goal_service — nicht Chroma
     created = []
     try:
-        from memory.memory_store import store_chunk, get_active_collection
-        from memory.chunk_schema import create_chunk
+        from core.goal_service import create_goal, get_active_goals
 
-        # Deduplizierung gegen bestehende Kimi-Ziele
-        col = get_active_collection()
-        existing = col.get(
-            where={"$and": [
-                {"source": "robot"},
-                {"status": "active"},
-                {"chunk_type": "decision"},
-            ]},
-            include=["documents", "metadatas"],
-        )
-        existing_goal_words = set()
-        for i, meta in enumerate(existing.get("metadatas", [])):
-            tags = str(meta.get("tags", ""))
-            if "kimi-ziel" in tags:
-                for w in existing["documents"][i].lower().split():
-                    if len(w) > 4:
-                        existing_goal_words.add(w)
+        # Deduplizierung gegen bestehende aktive Goals
+        existing = get_active_goals(user_id)
+        existing_words = set()
+        for g in existing:
+            for w in g.get("title", "").lower().split():
+                if len(w) > 4:
+                    existing_words.add(w)
 
         for goal_text in found:
             # Wort-Overlap-Check
             goal_words = [w for w in goal_text.lower().split() if len(w) > 4]
             if goal_words:
-                overlap = sum(1 for w in goal_words if w in existing_goal_words)
+                overlap = sum(1 for w in goal_words if w in existing_words)
                 if overlap / len(goal_words) > 0.5:
                     logger.info(f"IntentGoal: ähnliches Ziel existiert bereits, skip: '{goal_text[:50]}'")
                     continue
 
-            chunk = create_chunk(
-                text=f"Kimis Ziel: {goal_text}",
-                chunk_type="decision",
-                source="robot",
-                confidence=0.70,
-                epistemic_status="stated",
-                tags=["kimi-ziel", "autonom", "langfristig"],
+            goal = create_goal(
+                owner_id=user_id,
+                title=goal_text,
+                source_type="intent_recognition",
             )
-            store_chunk(chunk)
-            created.append(chunk["id"])
-            logger.info(f"IntentGoal: Ziel gespeichert {chunk['id'][:8]} '{goal_text[:50]}'")
+            if goal:
+                created.append(goal["id"])
+                logger.info(f"IntentGoal: Ziel gespeichert #{goal['id']} '{goal_text[:50]}'")
 
     except Exception as e:
         logger.warning(f"IntentGoal: fehlgeschlagen: {e}")
