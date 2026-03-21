@@ -1303,9 +1303,12 @@ def _handle_tool_result(trigger: dict) -> None:
         detail = decision.split(":", 1)[1].strip() if ":" in decision else ""
 
         if decision_key == "continue":
+            # Zurück auf active damit Scheduler den neuen Step aufnimmt
+            update_task(task_id, status="active")
             _e_append_next_step(task_id, detail or normalized["summary"], user_id, loop_count)
 
         elif decision_key == "replan":
+            update_task(task_id, status="active")
             _e_append_next_step(task_id, detail or "anderen Ansatz versuchen", user_id, loop_count)
 
         elif decision_key == "block":
@@ -2001,14 +2004,15 @@ def merge_threads(source_id: str, target_id: str, reason: str = None) -> bool:
 # =============================================================================
 
 TASK_TRANSITIONS = {
-    "new":       {"planned", "active", "aborted"},
-    "planned":   {"active", "paused", "aborted"},
-    "active":    {"waiting", "paused", "completed", "failed", "aborted"},
-    "waiting":   {"active", "paused", "aborted"},
-    "paused":    {"active", "aborted"},
-    "completed": set(),
-    "failed":    set(),
-    "aborted":   set(),
+    "new":              {"planned", "active", "aborted"},
+    "planned":          {"active", "paused", "aborted"},
+    "active":           {"waiting", "waiting_feedback", "paused", "completed", "failed", "aborted"},
+    "waiting":          {"active", "paused", "aborted"},
+    "waiting_feedback": {"active", "completed", "failed", "aborted"},  # F: nach Kognitionszyklus
+    "paused":           {"active", "aborted"},
+    "completed":        set(),
+    "failed":           set(),
+    "aborted":          set(),
 }
 
 PRIORITY_WEIGHT = {"critical": 4, "high": 3, "medium": 2, "low": 1}
@@ -2374,12 +2378,36 @@ def _execute_step(step: dict, task_id: str) -> None:
             logger.debug(f"Step Observation fehlgeschlagen (unkritisch): {_oe}")
 
         # E: Ergebnis nur bei chat-Modus sofort senden
-        # internal-Modus -> Observation gespeichert, Release via _handle_tool_result
         if task and task.get("mode") == "chat":
             _deliver_step_result(task, step, result)
         elif task and task.get("mode") == "internal":
             logger.debug(f"E: Step {step_id[:8]} done (internal -- kein sofortiger Send)")
         logger.info(f"Step {step_id[:8]} done: {tool_ref}.{action}")
+
+        # F: tool_result Trigger feuern -- startet _handle_tool_result Kognitionszyklus
+        if task and task.get("mode") == "internal":
+            try:
+                _user_id = OWNER_ID
+                origin = task.get("primary_origin", "")
+                if origin.startswith("user:"):
+                    _user_id = origin[5:]
+                # Task auf waiting_feedback setzen -- verhindert Scheduler-Auto-Complete
+                update_task(task_id, status="waiting_feedback")
+                create_trigger(
+                    trigger_type="tool_result",
+                    source=f"step:{step_id[:8]}",
+                    payload={
+                        "task_id": task_id,
+                        "step_id": step_id,
+                        "tool": tool_ref,
+                        "success": True,
+                        "result": result.get("result", result_summary),
+                        "user_id": _user_id,
+                    },
+                )
+                logger.debug(f"F: tool_result Trigger erzeugt fuer Step {step_id[:8]}")
+            except Exception as _ft:
+                logger.debug(f"F: tool_result Trigger fehlgeschlagen (unkritisch): {_ft}")
     else:
         err = result.get("error", "unbekannt")[:80]
         step_transition(step_id, "failed", reason=err)
@@ -2400,6 +2428,29 @@ def _execute_step(step: dict, task_id: str) -> None:
             pass
 
         logger.warning(f"Step {step_id[:8]} failed: {tool_ref}.{action} -- {err}")
+
+        # F: tool_result Trigger auch bei Fehler -- Kognition entscheidet ob block/replan
+        if task and task.get("mode") == "internal":
+            try:
+                _user_id = OWNER_ID
+                origin = task.get("primary_origin", "")
+                if origin.startswith("user:"):
+                    _user_id = origin[5:]
+                update_task(task_id, status="waiting_feedback")
+                create_trigger(
+                    trigger_type="tool_result",
+                    source=f"step:{step_id[:8]}",
+                    payload={
+                        "task_id": task_id,
+                        "step_id": step_id,
+                        "tool": tool_ref,
+                        "success": False,
+                        "result": err,
+                        "user_id": _user_id,
+                    },
+                )
+            except Exception as _ft:
+                logger.debug(f"F: tool_result Trigger (fail) fehlgeschlagen: {_ft}")
 
 
 def _deliver_step_result(task: dict, step: dict, result: dict) -> None:
@@ -2518,6 +2569,11 @@ def run_scheduler() -> None:
         task_id = task["id"]
         status = task["status"]
 
+        # F: waiting_feedback = F-Kognitionszyklus läuft noch -- nicht anfassen
+        if status == "waiting_feedback":
+            logger.debug(f"Scheduler: Task {task_id[:8]} wartet auf F-Feedback -- skip")
+            continue
+
         if status not in ("active", "planned", "new"):
             continue
 
@@ -2526,9 +2582,15 @@ def run_scheduler() -> None:
 
         next_step = get_next_step_for_task(task_id)
         if not next_step:
-            task_transition(task_id, "completed", reason="Alle Steps abgeschlossen")
-            set_task_hot(task_id, False)
-            logger.info(f"Task {task_id[:8]} abgeschlossen -- keine weiteren Steps")
+            # F: Wenn internal mode -- nicht sofort completed, sondern F-Trigger abwarten
+            if task.get("mode") == "internal":
+                logger.debug(f"Task {task_id[:8]} keine weiteren Steps (internal) -- F entscheidet")
+                # Sicherheitsnetz: wenn Task schon waiting_feedback ist, nichts tun
+                # Wenn nicht, dann kurz warten -- F wird via Trigger aktiviert
+            else:
+                task_transition(task_id, "completed", reason="Alle Steps abgeschlossen")
+                set_task_hot(task_id, False)
+                logger.info(f"Task {task_id[:8]} abgeschlossen -- keine weiteren Steps")
             continue
 
         if next_step["status"] == "ready":
