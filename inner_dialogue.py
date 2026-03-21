@@ -235,11 +235,14 @@ def run_inner_dialogue(
     try:
         from core.ollama_client import chat_internal
 
+        # retrieval_query: bewusste Basis für inneren Dialog — Thema des Dialogs
+        _id_query = (topic[:150] if topic else prompt[:150]).strip()
         reply, _ = chat_internal(
             user_id=user_id,
             message=prompt,
             chat_history=[],
             extra_system=extra_system,
+            retrieval_query=_id_query,
         )
 
         if not reply:

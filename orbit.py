@@ -1101,11 +1101,14 @@ def _handle_tool_result(trigger: dict) -> None:
             + "Antworte in 2-3 Saetzen, kein Markdown."
         )
 
-        reply, _ = chat_internal(
+        # retrieval_query aus Task-Ziel — bewusste Retrieval-Basis
+        task_retrieval_query = task.get("goal", "")[:200] or reflection_prompt[:200]
+        reply, _tm = chat_internal(
             user_id=user_id,
             message=reflection_prompt,
             chat_history=[],
             extra_system="Kurze interne Reflexion nach Task-Abschluss. Kein Chat-Modus.",
+            retrieval_query=task_retrieval_query,
         )
 
         if reply and len(reply.strip()) > 10:
@@ -1426,12 +1429,15 @@ def _handle_idle_pulse(trigger: dict) -> None:
         )
 
         context_name = USER_CONTEXTS.get(user_id, "tommy")
-        reply, _ = chat_internal(
+        # retrieval_query: bewusste Basis für idle_pulse — Tageszeit + offene Gedanken
+        idle_retrieval_query = f"aktueller Moment {payload.get('time_of_day', '')} offene Gedanken Ziele Vorhaben"
+        reply, _tm = chat_internal(
             user_id=user_id,
             message=prompt,
             chat_history=[],
             context_name=context_name,
             extra_system=extra_sys,
+            retrieval_query=idle_retrieval_query,
         )
 
         if not reply or "IDLE_NICHTS" in reply.upper():

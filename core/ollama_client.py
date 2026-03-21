@@ -529,22 +529,19 @@ def build_system_prompt(context_name=None, user_id=None, user_message=None, doc_
     if global_rules:
         global_rule_ids = {c["id"] for c in global_rules}
 
-    # 7. Memory-Chunks — prefetched wenn möglich, sonst live fetchen
-    if not doc_context:
+    # 7. Memory-Chunks — NUR prefetched_chunks, kein heimliches Retrieval
+    # Retrieval wird immer vom Aufrufer gemacht (chat() oder chat_internal())
+    # build_system_prompt() formatiert nur — es entscheidet nicht selbst was relevant ist
+    if not doc_context and prefetched_chunks is not None:
         try:
-            if prefetched_chunks is not None:
-                chunks = prefetched_chunks
-            elif user_message:
-                chunks = score_and_select(user_message)
-            else:
-                chunks = []
+            chunks = prefetched_chunks
             if global_rule_ids:
                 chunks = [c for c in chunks if c["id"] not in global_rule_ids]
             memory_prompt = build_memory_prompt(chunks)
             if memory_prompt:
                 parts.append(memory_prompt)
         except Exception as e:
-            logger.warning(f"Memory-Retrieval fehlgeschlagen: {e}")
+            logger.warning(f"Memory-Prompt-Bau fehlgeschlagen: {e}")
 
     # 7.5 Kognitions-Echo + Tommy-Kontext — nur chat-Modus
     # Beide nach Memory, vor globalen Regeln.
@@ -729,15 +726,39 @@ def chat(user_id, message, chat_history, context_name=None, doc_context=None):
     return response_text, turn_meta
 
 
-def chat_internal(user_id, message, chat_history=None, context_name=None, doc_context=None, extra_system=None):
+def chat_internal(user_id, message, chat_history=None, context_name=None, doc_context=None,
+                  extra_system=None, retrieval_query=None, prefetched_chunks=None):
     """
-    Interner Kimi-Call für Heartbeat, Moltbook, Diary, MIRROR.
+    Interner Kimi-Call für Heartbeat, Moltbook, Diary, MIRROR, ORBIT.
+
+    Schritt D: Retrieval explizit, einmal, vor dem Prompt-Bau.
+    prefetched_chunks übernimmt wenn bereits geholt.
+    retrieval_query überschreibt message als Retrieval-Basis (für interne Themen).
 
     Returns:
         str — Kimi-Antwort
-        dict — turn_meta mit chunks + global_rules
+        dict — turn_meta mit chunks + global_rules (dieselbe Basis wie Prompt)
     """
     chat_history = chat_history or []
+    retrieved_chunks = []
+    active_global_rules = []
+
+    # Retrieval — einmal, bewusst
+    if prefetched_chunks is not None:
+        # Bereits von außen geholt — direkt verwenden
+        retrieved_chunks = prefetched_chunks
+    elif not doc_context:
+        query = retrieval_query or message
+        if query:
+            try:
+                retrieved_chunks = score_and_select(query)
+            except Exception as e:
+                logger.warning(f"chat_internal: Retrieval fehlgeschlagen: {e}")
+
+    try:
+        active_global_rules = _load_global_rules()
+    except Exception:
+        pass
 
     system_prompt = build_system_prompt(
         context_name=context_name,
@@ -746,6 +767,7 @@ def chat_internal(user_id, message, chat_history=None, context_name=None, doc_co
         doc_context=doc_context,
         mode="internal",
         extra_system=extra_system,
+        prefetched_chunks=retrieved_chunks,
     )
 
     messages = [{"role": "system", "content": system_prompt}]
@@ -757,4 +779,8 @@ def chat_internal(user_id, message, chat_history=None, context_name=None, doc_co
         return "", {}
 
     response_text = result.get("message", {}).get("content", "").strip()
-    return response_text, {}
+    turn_meta = {
+        "chunks": retrieved_chunks,
+        "global_rules": active_global_rules,
+    }
+    return response_text, turn_meta

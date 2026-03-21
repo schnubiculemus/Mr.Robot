@@ -560,11 +560,14 @@ def run_autonomous_reflection(
                 )
                 if session_context:
                     _contradiction_extra += "\n\n" + session_context
+                # retrieval_query: bewusst aus den verglichenen Chunk-Texten
+                _r_query = (chunk_a.get("text","")[:100] + " " + prompt[:100]).strip()
                 reply, _ = chat_internal(
                     user_id=user_id,
                     message=prompt,
                     chat_history=[],
                     extra_system=_contradiction_extra,
+                    retrieval_query=_r_query,
                 )
 
                 if reply and len(reply) > 15:
@@ -641,11 +644,14 @@ def run_autonomous_reflection(
         )
         if session_context:
             _reflection_extra += "\n\n" + session_context
+        # retrieval_query: aus dem aktuellen Reflexions-Chunk
+        _ref_query = (source_chunk.get("text","")[:150] if source_chunk else prompt[:150]).strip()
         reply, _ = chat_internal(
             user_id=user_id,
             message=prompt,
             chat_history=[],
             extra_system=_reflection_extra,
+            retrieval_query=_ref_query,
         )
 
         if not reply or len(reply) < 15:
@@ -724,6 +730,7 @@ def run_autonomous_reflection(
                     "Ich destilliere mehrere eigene Gedanken zu einer Erkenntnis.\n"
                     "Nur wenn wirklich Substanz entsteht. Folge dem Format exakt."
                 ),
+                retrieval_query=thoughts_text[:200],
             )
 
             if condense_reply and len(condense_reply) > 15:
