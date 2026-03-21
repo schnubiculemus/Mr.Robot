@@ -1203,7 +1203,8 @@ def _handle_tool_result(trigger: dict) -> None:
     step_id = payload.get("step_id")
     result = payload.get("result", "")
     success = payload.get("success", True)
-    user_id = payload.get("user_id", OWNER_ID)
+    from config import OWNER_ID as _OWNER_ID
+    user_id = payload.get("user_id", _OWNER_ID)
 
     logger.debug(f"tool_result von {tool} | task={task_id[:8] if task_id else '?'} | ok={success}")
 

@@ -254,6 +254,11 @@ def _run_todo(action: Action, user_id: str, context: dict | None) -> ActionResul
         origin_type = (context or {}).get("origin_type", action.source)
         origin_ref = (context or {}).get("origin_ref")
 
+        # execution_mode und release_mode aus payload lesen
+        exec_mode = payload.get("execution_mode", "none")
+        rel_mode = payload.get("release_mode", "manual")
+        tmpl = payload.get("task_template")
+
         todo = create_todo(
             owner_id=user_id,
             title=payload.get("title", "Unbenanntes Todo"),
@@ -265,8 +270,52 @@ def _run_todo(action: Action, user_id: str, context: dict | None) -> ActionResul
             origin_ref=origin_ref,
             proposal_id=proposal_id,
             goal_id=goal_id,
+            execution_mode=exec_mode,
+            release_mode=rel_mode,
+            task_template=tmpl,
         )
         if todo:
+            # ORBIT-Task nur wenn execution_mode es explizit verlangt
+            exec_mode_stored = todo.get("execution_mode", "none")
+            if exec_mode_stored in ("orbit_internal", "orbit_chat"):
+                try:
+                    import orbit as _orbit
+                    orbit_mode = "internal" if exec_mode_stored == "orbit_internal" else "chat"
+                    task_id = _orbit.create_task(
+                        task_type="action",
+                        goal=f"{todo['title'][:60]}",
+                        primary_origin=f"kimi_todo:{todo['id']}",
+                        mode=orbit_mode,
+                        release_mode=todo.get("release_mode", "manual"),
+                        priority="high",
+                        linked_todo_id=todo["id"],
+                        proposal_id=todo.get("proposal_id"),
+                        goal_id=todo.get("goal_id"),
+                    )
+                    from core.todo_service import start_todo
+                    start_todo(todo["id"], task_id)
+                    # Ersten Step je nach task_template
+                    tmpl_stored = todo.get("task_template", "general")
+                    if tmpl_stored == "analysis":
+                        step_desc = '{"action": "list", "project": "kimi"}'
+                        step_tool = "todos_read"
+                    else:
+                        step_desc = '{"action": "list"}'
+                        step_tool = "code_exec"
+                    _orbit.create_step(
+                        task_id=task_id,
+                        step_type=step_tool,
+                        description=step_desc,
+                        tool_ref=step_tool,
+                        interruptible=False,
+                        preflight_required=False,
+                    )
+                    _orbit.set_task_hot(task_id, True)
+                    logger.info(f"_run_todo: ORBIT-Task {task_id[:8]} "
+                               f"(mode={orbit_mode}) fuer Todo #{todo['id']}")
+                except Exception as _ot:
+                    logger.warning(f"_run_todo: ORBIT-Task fehlgeschlagen: {_ot}")
+
             return ActionResult(
                 ok=True,
                 type=action.type,

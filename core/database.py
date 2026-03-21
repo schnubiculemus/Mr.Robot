@@ -824,6 +824,17 @@ def init_kimi_b_schema(conn=None):
     except Exception:
         pass
 
+    # todos — execution_mode, release_mode, task_template
+    for _col, _type in [
+        ("execution_mode", "TEXT"),
+        ("release_mode",   "TEXT"),
+        ("task_template",  "TEXT"),
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE todos ADD COLUMN {_col} {_type}")
+        except Exception:
+            pass  # Spalte existiert bereits
+
     # Observations — Ergebnisse von Steps und Wahrnehmungen
     conn.execute("""
         CREATE TABLE IF NOT EXISTS kimi_observations (

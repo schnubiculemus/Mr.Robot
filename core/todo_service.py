@@ -15,10 +15,15 @@ def create_todo(owner_id: str, title: str, description: str = None,
                 priority: str = "keine", project: str = None,
                 due_date: str = None, origin_type: str = None,
                 origin_ref: str = None, proposal_id: int = None,
-                goal_id: int = None) -> dict | None:
+                goal_id: int = None,
+                execution_mode: str = "none",
+                release_mode: str = "manual",
+                task_template: str = None) -> dict | None:
     """
-    Legt ein Todo an — direktes Insert mit allen Verknüpfungsfeldern in einem Schritt.
-    Kein zweistufiges Legacy-Create + Update mehr.
+    Legt ein Todo an — direktes Insert mit allen Feldern.
+    execution_mode: none | orbit_internal | orbit_chat
+    release_mode:   manual | auto_if_done | summarize
+    task_template:  code_work | analysis | general | None
     """
     try:
         from core.todos import PRIORITIES, get_todo
@@ -31,14 +36,17 @@ def create_todo(owner_id: str, title: str, description: str = None,
                 """INSERT INTO todos
                    (user_id, title, description, priority, project, due_date,
                     status, created_at, origin_type, origin_ref, proposal_id,
-                    goal_id, status_updated_at)
-                   VALUES (?,?,?,?,?,?,'open',?,?,?,?,?,?)""",
+                    goal_id, status_updated_at,
+                    execution_mode, release_mode, task_template)
+                   VALUES (?,?,?,?,?,?,'open',?,?,?,?,?,?,?,?,?)""",
                 (owner_id, title.strip(), description, priority, project, due_date,
-                 now, origin_type, origin_ref, proposal_id, goal_id, now)
+                 now, origin_type, origin_ref, proposal_id, goal_id, now,
+                 execution_mode, release_mode, task_template)
             )
             conn.commit()
             todo_id = cur.lastrowid
-            logger.info(f"Todo erstellt: #{todo_id} '{title[:50]}' (Prio: {priority})")
+            logger.info(f"Todo erstellt: #{todo_id} '{title[:50]}' "
+                       f"(exec: {execution_mode}, release: {release_mode})")
             return get_todo(todo_id)
         finally:
             conn.close()
