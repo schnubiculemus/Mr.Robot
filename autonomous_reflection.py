@@ -342,55 +342,57 @@ def _parse_output(reply: str) -> tuple[str, str, list[str], str | None]:
     return klassifikation, gedanke, supersedes, ziel
 
 
-def _save_goal(ziel: str, user_id: str) -> str | None:
-    """Speichert ein explizit gesetztes Ziel als decision-Chunk mit kimi-ziel Tag."""
+def _save_goal(ziel: str, user_id: str) -> int | None:
+    """
+    Speichert ein explizit gesetztes Ziel als operative SQLite-Entität via goal_service.
+    Kein Chroma-Chunk mehr als operative Wahrheit.
+    Optional: semantischen Reflexions-Chunk in Chroma speichern (nur zur Suche).
+    """
     try:
-        from memory.memory_store import store_chunk, get_active_collection
-        from memory.chunk_schema import create_chunk
+        from core.goal_service import create_goal, get_active_goals
 
-        # Deduplizierung
-        col = get_active_collection()
-        existing = col.get(
-            where={"$and": [{"source": "robot"}, {"chunk_type": "decision"}]},
-            include=["documents", "metadatas"],
-        )
+        # Deduplizierung gegen bestehende SQLite-Goals
+        existing = get_active_goals(user_id)
         ziel_words = set(w.lower() for w in ziel.split() if len(w) > 4)
-        for i, doc in enumerate(existing.get("documents") or []):
-            tags = str((existing.get("metadatas") or [{}])[i].get("tags", ""))
-            if "kimi-ziel" not in tags:
-                continue
-            doc_words = set(w.lower() for w in doc.split() if len(w) > 4)
-            if ziel_words and len(ziel_words & doc_words) / len(ziel_words) > 0.6:
-                logger.info(f"_save_goal: ähnliches Ziel existiert bereits, skip: '{ziel[:50]}'")
+        for g in existing:
+            g_words = set(w.lower() for w in g.get("title", "").split() if len(w) > 4)
+            if ziel_words and g_words and len(ziel_words & g_words) / len(ziel_words) > 0.6:
+                logger.info(f"_save_goal: ähnliches Ziel existiert bereits (#{g['id']}), skip: '{ziel[:50]}'")
                 return None
 
-        chunk = create_chunk(
-            text=f"Kimis Ziel: {ziel}",
-            chunk_type="decision",
-            source="robot",
-            confidence=0.80,
-            epistemic_status="stated",
-            tags=["kimi-ziel", "autonom", "explizit"],
+        # Goal in SQLite anlegen
+        goal = create_goal(
+            owner_id=user_id,
+            title=ziel[:200],
+            description="Aus autonomer Reflexion — explizit gesetztes Ziel",
+            priority="mittel",
+            source_type="autonomous_reflection",
         )
-        store_chunk(chunk)
-        # Sofort ein kimi-Todo anlegen
+        if not goal:
+            return None
+
+        # Todo anlegen via todo_service mit goal_id Verknüpfung
         try:
-            from core.todos import create_todo
+            from core.todo_service import create_todo
             from core.datetime_utils import now_berlin
             from datetime import timedelta
             tomorrow = (now_berlin() + timedelta(days=1)).strftime("%Y-%m-%d")
             create_todo(
-                user_id=user_id,
+                owner_id=user_id,
                 title=ziel[:80],
                 description="Aus autonomer Reflexion — explizit gesetztes Ziel",
                 priority="mittel",
                 project="kimi",
                 due_date=tomorrow,
+                origin_type="goal",
+                origin_ref=str(goal["id"]),
+                goal_id=goal["id"],
             )
-        except Exception:
-            pass
-        logger.info(f"_save_goal: Ziel gespeichert {chunk['id'][:8]} — '{ziel[:60]}'")
-        return chunk["id"]
+        except Exception as _te:
+            logger.debug(f"_save_goal: Todo-Anlage fehlgeschlagen (unkritisch): {_te}")
+
+        logger.info(f"_save_goal: Goal #{goal['id']} gespeichert — '{ziel[:60]}'")
+        return goal["id"]
     except Exception as e:
         logger.warning(f"_save_goal fehlgeschlagen: {e}")
         return None

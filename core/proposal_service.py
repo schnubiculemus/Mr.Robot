@@ -93,72 +93,78 @@ def get_proposals(status: str = "pending", owner_id: str = None) -> list:
 
 def approve_proposal(proposal_id: int, owner_id: str) -> dict | None:
     """
-    Genehmigt einen Proposal — in einer Transaktion:
-    1. Proposal lesen + Status prüfen
-    2. Todo anlegen
-    3. Proposal updaten (approved_todo_id + status)
-    4. Completion-Event
-    Idempotent: wenn approved_todo_id schon gesetzt → kein neues Todo.
+    Genehmigt einen Proposal — kompensierend abgesichert:
+    1. Proposal lesen + Status prüfen (Idempotenz)
+    2. Todo anlegen via todo_service
+    3. Proposal + Completion-Event in einer DB-Transaktion updaten
+    4. Bei Fehler in Schritt 3: Todo wieder löschen (Kompensation)
     """
     try:
         from core.todo_service import create_todo
+        from core.todos import delete_todo
         from datetime import datetime, timezone, timedelta
         now = to_iso()
         due = (datetime.now(timezone.utc) + timedelta(days=3)).strftime("%Y-%m-%d")
 
-        conn = get_connection()
+        # Proposal lesen
+        proposal = get_proposal(proposal_id)
+        if not proposal:
+            logger.warning(f"approve_proposal: Proposal #{proposal_id} nicht gefunden")
+            return None
+
+        # Idempotenz: schon approved?
+        if proposal.get("approved_todo_id"):
+            logger.info(f"approve_proposal: Proposal #{proposal_id} bereits approved")
+            return proposal
+
+        # Todo anlegen
+        todo = create_todo(
+            owner_id=owner_id,
+            title=f"[Approved] {proposal['title']}",
+            description=f"Aus Proposal #{proposal_id}: {proposal.get('description','')[:300]}",
+            priority="mittel",
+            project="kimi",
+            due_date=due,
+            origin_type="proposal",
+            origin_ref=str(proposal_id),
+            proposal_id=proposal_id,
+            goal_id=proposal.get("goal_id"),
+        )
+        if not todo:
+            logger.warning(f"approve_proposal: Todo-Anlage fehlgeschlagen")
+            return None
+
+        # Proposal + Completion in einer Transaktion
         try:
-            proposal = conn.execute(
-                "SELECT * FROM kimi_proposals WHERE id=?", (proposal_id,)
-            ).fetchone()
-            if not proposal:
-                logger.warning(f"approve_proposal: Proposal #{proposal_id} nicht gefunden")
-                return None
-            proposal = dict(proposal)
+            conn = get_connection()
+            try:
+                conn.execute(
+                    """UPDATE kimi_proposals
+                       SET status='approved', approved_at=?, approved_todo_id=?, updated_at=?
+                       WHERE id=?""",
+                    (now, todo["id"], now, proposal_id)
+                )
+                conn.execute(
+                    """INSERT INTO kimi_completions
+                       (owner_id, for_object_type, for_object_id, reason, summary, created_at)
+                       VALUES (?,?,?,?,?,?)""",
+                    (owner_id, "proposal", str(proposal_id),
+                     "approved", f"Todo #{todo['id']} angelegt", now)
+                )
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception as _db_err:
+            # Kompensation: Todo wieder löschen da Proposal-Update fehlschlug
+            logger.warning(f"approve_proposal: DB-Update fehlgeschlagen, kompensiere: {_db_err}")
+            try:
+                delete_todo(todo["id"])
+            except Exception:
+                pass
+            return None
 
-            # Idempotenz: schon approved?
-            if proposal.get("approved_todo_id"):
-                logger.info(f"approve_proposal: Proposal #{proposal_id} bereits approved")
-                return proposal
-
-            # Todo anlegen
-            todo = create_todo(
-                owner_id=owner_id,
-                title=f"[Approved] {proposal['title']}",
-                description=f"Aus Proposal #{proposal_id}: {proposal.get('description','')[:300]}",
-                priority="mittel",
-                project="kimi",
-                due_date=due,
-                origin_type="proposal",
-                origin_ref=str(proposal_id),
-                proposal_id=proposal_id,
-                goal_id=proposal.get("goal_id"),
-            )
-            if not todo:
-                logger.warning(f"approve_proposal: Todo-Anlage fehlgeschlagen")
-                return None
-
-            # Proposal updaten
-            conn.execute(
-                """UPDATE kimi_proposals
-                   SET status='approved', approved_at=?, approved_todo_id=?, updated_at=?
-                   WHERE id=?""",
-                (now, todo["id"], now, proposal_id)
-            )
-
-            # Completion-Event
-            conn.execute(
-                """INSERT INTO kimi_completions
-                   (owner_id, for_object_type, for_object_id, reason, summary, created_at)
-                   VALUES (?,?,?,?,?,?)""",
-                (owner_id, "proposal", str(proposal_id),
-                 "approved", f"Todo #{todo['id']} angelegt", now)
-            )
-            conn.commit()
-            logger.info(f"Proposal #{proposal_id} approved → Todo #{todo['id']}")
-            return get_proposal(proposal_id)
-        finally:
-            conn.close()
+        logger.info(f"Proposal #{proposal_id} approved → Todo #{todo['id']}")
+        return get_proposal(proposal_id)
     except Exception as e:
         logger.warning(f"approve_proposal fehlgeschlagen: {e}")
         return None
