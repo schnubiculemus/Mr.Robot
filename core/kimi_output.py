@@ -427,6 +427,79 @@ def _log_to_db(source: str, user_id: str, actions: list[Action], results: list[A
 # Haupt-Einstiegspunkt
 # =============================================================================
 
+def _extract_proposals_via_llm(text: str, user_id: str) -> list[dict]:
+    """
+    Zweiter strukturierter Extraction-Call:
+    Kimi selbst extrahiert aus ihrem eigenen Text einen Proposal-JSON.
+    Nur wenn kein expliziter Block vorhanden war.
+    Confidence=0.8 — robuster als Regex, schlechter als expliziter Block.
+    """
+    if not text or len(text) < 15:
+        return []
+
+    # Schnell-Check: enthält der Text überhaupt Wunsch-Signale?
+    import re as _re
+    wish_signals = [
+        "wünsch", "hätte gerne", "würde ich", "fehlt mir",
+        "ich will", "ich brauche", "wäre gut", "proposal", "vorschlag",
+        "eigenen ordner", "schreibzugriff", "workspace", "git"
+    ]
+    text_lower = text.lower()
+    if not any(s in text_lower for s in wish_signals):
+        return []
+
+    try:
+        from core.ollama_client import chat_internal
+        from config import USER_CONTEXTS, OWNER_ID
+
+        extraction_prompt = (
+            f"Hier ist eine Antwort von mir auf eine Wunsch-Frage:\n\n"
+            f"{text}\n\n"
+            f"Extrahiere daraus genau einen konkreten, baubaren Wunsch als JSON.\n"
+            f"Format (NUR dieses JSON, nichts anderes):\n"
+            f'{{"title": "kurzer Titel", "description": "was genau", '
+            f'"effort": "klein|mittel|groß", "reason": "warum"}}'
+            f"\n\nWenn kein konkreter baubarer Wunsch erkennbar ist: antworte mit dem Wort LEER."
+        )
+
+        reply, _ = chat_internal(
+            user_id=user_id or OWNER_ID,
+            message=extraction_prompt,
+            chat_history=[],
+            context_name=USER_CONTEXTS.get(user_id or OWNER_ID, "tommy"),
+            extra_system=(
+                "Du bist ein strukturierter JSON-Extraktor. "
+                "Antworte NUR mit dem JSON-Objekt oder dem Wort LEER. "
+                "Kein erklärender Text, keine Backticks, kein Markdown."
+            ),
+        )
+
+        if not reply or "LEER" in reply.upper():
+            return []
+
+        # JSON aus Antwort extrahieren
+        reply = reply.strip()
+        # Backticks entfernen falls trotzdem dabei
+        reply = _re.sub(r"^```(?:json)?\n?", "", reply).strip()
+        reply = _re.sub(r"\n?```$", "", reply).strip()
+
+        import json as _json
+        proposal = _json.loads(reply)
+
+        # Validierung
+        if not proposal.get("title") or len(proposal["title"]) < 5:
+            return []
+        if proposal.get("effort", "").lower() not in ("klein", "mittel", "groß", "gross"):
+            proposal["effort"] = "mittel"
+
+        logger.info(f"_extract_proposals_via_llm: Proposal extrahiert: '{proposal['title'][:50]}'")
+        return [proposal]
+
+    except Exception as e:
+        logger.debug(f"_extract_proposals_via_llm fehlgeschlagen (unkritisch): {e}")
+        return []
+
+
 def process_kimi_output(
     *,
     source: str,
@@ -456,6 +529,26 @@ def process_kimi_output(
 
     # Phase B: Ausführung
     results = execute_actions(actions, user_id, source, context)
+
+    # Phase B.5: LLM-Extraction wenn kein expliziter Proposal-Block vorhanden
+    # Kimi extrahiert strukturiert aus ihrem eigenen Text — robuster als Regex
+    proposal_results = [r for r in results if r.ok and r.object_type == "proposal"]
+    if not proposal_results and visibility == "public":
+        try:
+            llm_proposals = _extract_proposals_via_llm(raw_text, user_id)
+            if llm_proposals:
+                llm_actions = [
+                    Action(type="proposal.create", payload=p, source=f"{source}:llm_extraction",
+                           raw_fragment=None, confidence=0.8)
+                    for p in llm_proposals
+                ]
+                llm_results = execute_actions(llm_actions, user_id, source, context)
+                results.extend(llm_results)
+                for r in llm_results:
+                    if r.ok:
+                        logger.info(f"process_kimi_output: LLM-Proposal gespeichert #{r.object_id}")
+        except Exception as _llm_e:
+            logger.debug(f"process_kimi_output: LLM-Extraction fehlgeschlagen (unkritisch): {_llm_e}")
 
     # Phase C: Verifikation + Rückgabe
     public_appendix = build_public_appendix(results, visibility)

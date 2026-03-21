@@ -280,9 +280,24 @@ def execute_todo_action(user_id: str, action: dict) -> str | None:
                     task_type="action",
                     goal=f"Code-Vorhaben ausführen: {todo['title'][:60]}",
                     primary_origin=f"kimi_todo:{todo['id']}",
-                    mode="chat",
+                    mode="internal",
                     priority="high",
+                    linked_todo_id=todo['id'],
+                    proposal_id=todo.get('proposal_id'),
+                    goal_id=todo.get('goal_id'),
                 )
+                # Todo bekommt linked_task_id
+                try:
+                    from core.database import get_connection as _gc
+                    _conn = _gc()
+                    _conn.execute(
+                        "UPDATE todos SET linked_task_id=? WHERE id=?",
+                        (task_id, todo['id'])
+                    )
+                    _conn.commit()
+                    _conn.close()
+                except Exception:
+                    pass
                 # Schritt 1: Workspace listen
                 _orbit.create_step(
                     task_id=task_id,

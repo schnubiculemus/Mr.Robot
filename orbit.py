@@ -274,8 +274,11 @@ def update_thread(thread_id: str, **kwargs) -> None:
 
 def create_task(task_type: str, goal: str, primary_origin: str,
                 mode: str = "background", priority: str = "medium",
-                source_thread_id: str = None) -> str:
-    """Legt einen neuen ORBIT-Task an."""
+                source_thread_id: str = None,
+                linked_todo_id: int = None,
+                goal_id: int = None,
+                proposal_id: int = None) -> str:
+    """Legt einen neuen ORBIT-Task an mit optionalen Verknüpfungen."""
     tid = new_id()
     now = to_iso()
     conn = get_connection()
@@ -283,10 +286,12 @@ def create_task(task_type: str, goal: str, primary_origin: str,
         conn.execute(
             """INSERT INTO orbit_tasks
                (id, task_type, goal, status, mode, priority, primary_origin,
-                source_thread_id, created_at, updated_at)
-               VALUES (?, ?, ?, 'new', ?, ?, ?, ?, ?, ?)""",
+                source_thread_id, linked_todo_id, goal_id, proposal_id,
+                created_at, updated_at)
+               VALUES (?, ?, ?, 'new', ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (tid, task_type, goal, mode, priority, primary_origin,
-             source_thread_id, now, now)
+             source_thread_id, linked_todo_id, goal_id, proposal_id,
+             now, now)
         )
         conn.commit()
     finally:
@@ -1374,6 +1379,17 @@ def _handle_idle_pulse(trigger: dict) -> None:
             store_chunk(chunk)
             logger.info(f"idle_pulse: Gedanke gespeichert {chunk['id'][:8]} | {thought[:60]}")
 
+            # Observation für substanzielle Gedanken
+            try:
+                from core.todo_service import record_observation
+                record_observation(
+                    owner_id=user_id,
+                    content=thought[:500],
+                    obs_type="reflection",
+                )
+            except Exception:
+                pass
+
         if send_to_tommy and len(send_to_tommy) > 10:
             try:
                 from core.whatsapp import send_message, init_waha
@@ -1580,6 +1596,51 @@ def task_transition(task_id: str, new_status: str, reason: str = None,
           reason or f"{current} → {new_status}")
     logger.info(f"Task {task_id[:8]}: {current} → {new_status}" +
                 (f" | {reason}" if reason else ""))
+
+    # Status-Fortschreibung + Completion Events
+    if new_status in ("completed", "failed", "aborted"):
+        try:
+            task_obj = get_task(task_id)
+            owner_id = ""
+            if task_obj:
+                origin = task_obj.get("primary_origin", "")
+                if origin.startswith("user:"):
+                    owner_id = origin[5:]
+                else:
+                    from config import OWNER_ID
+                    owner_id = OWNER_ID
+
+            # Completion Event für Task
+            conn = get_connection()
+            try:
+                from core.datetime_utils import to_iso as _to_iso
+                conn.execute(
+                    """INSERT INTO kimi_completions
+                       (owner_id, for_object_type, for_object_id, reason, summary, created_at)
+                       VALUES (?,?,?,?,?,?)""",
+                    (owner_id, "task", task_id,
+                     new_status, reason or f"Task {new_status}",
+                     _to_iso())
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+            # Todo-Fortschreibung nur bei completed
+            if new_status == "completed" and task_obj and task_obj.get("linked_todo_id"):
+                from core.todo_service import complete_todo
+                complete_todo(int(task_obj["linked_todo_id"]),
+                             summary=f"Task {task_id[:8]} abgeschlossen")
+                logger.info(f"task_transition: Todo #{task_obj['linked_todo_id']} automatisch erledigt")
+
+            # Bei failed/aborted → Todo auf blocked
+            elif new_status in ("failed", "aborted") and task_obj and task_obj.get("linked_todo_id"):
+                from core.todo_service import block_todo
+                block_todo(int(task_obj["linked_todo_id"]), reason=f"Task {new_status}")
+
+        except Exception as _tf:
+            logger.debug(f"task_transition: Fortschreibung fehlgeschlagen (unkritisch): {_tf}")
+
     return True
 
 
@@ -1809,6 +1870,36 @@ def _execute_step(step: dict, task_id: str) -> None:
 
     if result["success"]:
         step_transition(step_id, "done", reason=f"Tool {tool_ref} erfolgreich")
+
+        # result_summary in Step schreiben
+        result_summary = str(result.get("result", ""))[:300] if result.get("result") else f"{tool_ref}.{action} erfolgreich"
+        try:
+            update_step(step_id, result_summary=result_summary)
+        except Exception:
+            pass
+
+        # Observation erzeugen
+        try:
+            from core.todo_service import record_observation
+            from config import OWNER_ID
+            owner = OWNER_ID
+            if task:
+                origin = task.get("primary_origin", "")
+                if origin.startswith("user:"):
+                    owner = origin[5:]
+            record_observation(
+                owner_id=owner,
+                content=result_summary,
+                obs_type="tool_result",
+                task_id=task_id,
+                step_id=step_id,
+                todo_id=int(task["linked_todo_id"]) if task and task.get("linked_todo_id") else None,
+                proposal_id=int(task["proposal_id"]) if task and task.get("proposal_id") else None,
+                goal_id=int(task["goal_id"]) if task and task.get("goal_id") else None,
+            )
+        except Exception as _oe:
+            logger.debug(f"Step Observation fehlgeschlagen (unkritisch): {_oe}")
+
         # Ergebnis als proaktive Nachricht wenn Task im chat-Modus
         if task and task.get("mode") == "chat":
             _deliver_step_result(task, step, result)
@@ -1816,6 +1907,22 @@ def _execute_step(step: dict, task_id: str) -> None:
     else:
         err = result.get("error", "unbekannt")[:80]
         step_transition(step_id, "failed", reason=err)
+
+        # Fehler-Observation
+        try:
+            from core.todo_service import record_observation
+            from config import OWNER_ID
+            record_observation(
+                owner_id=OWNER_ID,
+                content=f"Step fehlgeschlagen: {tool_ref}.{action} — {err}",
+                obs_type="error",
+                task_id=task_id,
+                step_id=step_id,
+                todo_id=int(task["linked_todo_id"]) if task and task.get("linked_todo_id") else None,
+            )
+        except Exception:
+            pass
+
         logger.warning(f"Step {step_id[:8]} failed: {tool_ref}.{action} — {err}")
 
 

@@ -1753,16 +1753,18 @@ def api_proposal_action(proposal_id):
     action = data.get("action")
     from config import OWNER_ID
     try:
-        from core.proposals import approve_proposal, reject_proposal, defer_proposal
+        from core.proposal_service import approve_proposal, reject_proposal, defer_proposal
         if action == "approve":
-            ok = approve_proposal(proposal_id, OWNER_ID)
+            result = approve_proposal(proposal_id, OWNER_ID)
+            return jsonify({"ok": result is not None, "proposal": result})
         elif action == "reject":
             ok = reject_proposal(proposal_id)
+            return jsonify({"ok": ok})
         elif action == "defer":
             ok = defer_proposal(proposal_id)
+            return jsonify({"ok": ok})
         else:
             return jsonify({"error": "Unbekannte Aktion"}), 400
-        return jsonify({"ok": ok})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

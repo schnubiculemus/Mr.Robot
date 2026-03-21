@@ -726,34 +726,144 @@ def get_consolidator_stats():
 # Soul Proposals
 # =============================================================================
 
-def init_kimi_proposals_table(conn=None):
-    """Erstellt die kimi_proposals Tabelle (operative Wahrheit für Proposals)."""
+def init_kimi_b_schema(conn=None):
+    """
+    Erstellt das vollständige B-Schema:
+    Goals, Proposals, verknüpfte Todos, Observations, Completion-Events.
+    Operative Wahrheit in SQLite — semantisches Gedächtnis in ChromaDB.
+    """
     _own_conn = conn is None
     if _own_conn:
         conn = get_connection()
+
+    # Goals — langfristige Ziele
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS kimi_goals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            description TEXT,
+            status TEXT NOT NULL DEFAULT 'active',
+            priority TEXT NOT NULL DEFAULT 'mittel',
+            progress INTEGER NOT NULL DEFAULT 0,
+            source_type TEXT,
+            source_ref TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            last_progress_at TEXT,
+            completed_at TEXT
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_kimi_goals_owner ON kimi_goals(owner_id, status)")
+
+    # Proposals — konkrete Verbesserungsvorschläge
     conn.execute("""
         CREATE TABLE IF NOT EXISTS kimi_proposals (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id TEXT NOT NULL,
+            owner_id TEXT NOT NULL,
+            goal_id INTEGER,
             title TEXT NOT NULL,
             description TEXT,
             reason TEXT,
             effort TEXT NOT NULL DEFAULT 'mittel',
             status TEXT NOT NULL DEFAULT 'pending',
-            source_module TEXT NOT NULL DEFAULT 'chat',
+            source_type TEXT NOT NULL DEFAULT 'chat',
+            source_ref TEXT,
+            confidence REAL NOT NULL DEFAULT 1.0,
             created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
             approved_at TEXT,
             rejected_at TEXT,
+            implemented_at TEXT,
             approved_todo_id INTEGER,
             approved_task_id TEXT,
-            last_error TEXT
+            last_error TEXT,
+            FOREIGN KEY (goal_id) REFERENCES kimi_goals(id)
         )
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_kimi_proposals_status ON kimi_proposals(status)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_kimi_proposals_user ON kimi_proposals(user_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_kimi_proposals_owner ON kimi_proposals(owner_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_kimi_proposals_goal ON kimi_proposals(goal_id)")
+
+    # Todos — neue Spalten für Verknüpfungen
+    # SQLite: ALTER TABLE ADD COLUMN ist idempotent via try/except
+    new_todo_cols = [
+        ("goal_id", "INTEGER"),
+        ("proposal_id", "INTEGER"),
+        ("origin_type", "TEXT"),
+        ("origin_ref", "TEXT"),
+        ("linked_task_id", "TEXT"),
+        ("status_updated_at", "TEXT"),
+    ]
+    for col, col_type in new_todo_cols:
+        try:
+            conn.execute(f"ALTER TABLE todos ADD COLUMN {col} {col_type}")
+        except Exception:
+            pass  # Spalte existiert bereits
+
+    # orbit_tasks — neue Verknüpfungsspalten
+    new_task_cols = [
+        ("linked_todo_id", "INTEGER"),
+        ("goal_id", "INTEGER"),
+        ("proposal_id", "INTEGER"),
+    ]
+    for col, col_type in new_task_cols:
+        try:
+            conn.execute(f"ALTER TABLE orbit_tasks ADD COLUMN {col} {col_type}")
+        except Exception:
+            pass
+
+    # orbit_steps — result_summary
+    try:
+        conn.execute("ALTER TABLE orbit_steps ADD COLUMN result_summary TEXT")
+    except Exception:
+        pass
+
+    # Observations — Ergebnisse von Steps und Wahrnehmungen
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS kimi_observations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_id TEXT NOT NULL,
+            goal_id INTEGER,
+            proposal_id INTEGER,
+            todo_id INTEGER,
+            task_id TEXT,
+            step_id TEXT,
+            type TEXT NOT NULL DEFAULT 'tool_result',
+            content TEXT NOT NULL,
+            payload_json TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (goal_id) REFERENCES kimi_goals(id),
+            FOREIGN KEY (proposal_id) REFERENCES kimi_proposals(id)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_kimi_obs_task ON kimi_observations(task_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_kimi_obs_todo ON kimi_observations(todo_id)")
+
+    # Completion Events — Abschlussereignisse
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS kimi_completions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_id TEXT NOT NULL,
+            for_object_type TEXT NOT NULL,
+            for_object_id TEXT NOT NULL,
+            reason TEXT,
+            summary TEXT,
+            source_type TEXT,
+            source_ref TEXT,
+            created_at TEXT NOT NULL
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_kimi_completions_obj ON kimi_completions(for_object_type, for_object_id)")
+
     if _own_conn:
         conn.commit()
         conn.close()
+
+
+def init_kimi_proposals_table(conn=None):
+    """Rückwärtskompatibel — ruft init_kimi_b_schema auf."""
+    init_kimi_b_schema(conn)
 
 
 def init_kimi_output_log_table(conn=None):
