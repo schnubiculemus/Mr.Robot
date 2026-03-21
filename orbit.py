@@ -1203,8 +1203,7 @@ def _handle_tool_result(trigger: dict) -> None:
     step_id = payload.get("step_id")
     result = payload.get("result", "")
     success = payload.get("success", True)
-    from config import OWNER_ID as _OWNER_ID
-    user_id = payload.get("user_id", _OWNER_ID)
+    user_id = payload.get("user_id", OWNER_ID)
 
     logger.debug(f"tool_result von {tool} | task={task_id[:8] if task_id else '?'} | ok={success}")
 
@@ -1742,6 +1741,24 @@ def _handle_idle_pulse(trigger: dict) -> None:
         else:
             phase = "Späte Nacht"
 
+        # Planner -- wenn keine internen Tasks laufen
+        from core.database import get_connection as _gc
+        _conn = _gc()
+        try:
+            _running = _conn.execute(
+                "SELECT COUNT(*) as n FROM orbit_tasks WHERE mode='internal' AND status NOT IN ('completed','failed','aborted')"
+            ).fetchone()["n"]
+        finally:
+            _conn.close()
+        if _running == 0:
+            try:
+                from core.planner import run_planner
+                _plan = run_planner(user_id)
+                if _plan.get("started_tasks"):
+                    logger.info(f"idle_pulse: Planner startete {len(_plan['started_tasks'])} Tasks")
+            except Exception as _pe:
+                logger.debug(f"idle_pulse: Planner fehlgeschlagen (unkritisch): {_pe}")
+
         # Offene Kimi-Todos anzeigen
         kimi_todos = [t for t in get_open_todos(user_id)
                       if (t.get("project") or "").lower() == "kimi"]
@@ -1853,6 +1870,35 @@ def _handle_idle_pulse(trigger: dict) -> None:
 
     except Exception as e:
         logger.warning(f"idle_pulse fehlgeschlagen: {e}")
+
+
+def _maybe_run_planner(user_id: str) -> None:
+    """
+    Startet den Planner wenn kein interner Task laeuft.
+    Aufgerufen aus idle_pulse und nach Task-Abschluss.
+    """
+    try:
+        from core.database import get_connection
+        conn = get_connection()
+        try:
+            running = conn.execute(
+                """SELECT COUNT(*) as n FROM orbit_tasks
+                   WHERE mode='internal'
+                   AND status NOT IN ('completed','failed','aborted')"""
+            ).fetchone()["n"]
+        finally:
+            conn.close()
+
+        if running >= 2:
+            logger.debug(f"Planner: {running} interne Tasks aktiv -- skip")
+            return
+
+        from core.planner import run_planner
+        result = run_planner(user_id)
+        if result.get("started_tasks"):
+            logger.info(f"Planner: {len(result['started_tasks'])} Tasks gestartet")
+    except Exception as e:
+        logger.debug(f"_maybe_run_planner fehlgeschlagen (unkritisch): {e}")
 
 
 TRIGGER_HANDLERS = {

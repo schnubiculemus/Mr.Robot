@@ -268,6 +268,9 @@ def api_todos_create():
         due_date=data.get("due_date"),
         origin_type=data.get("origin_type", "manual"),
         origin_ref=data.get("origin_ref"),
+        execution_mode=data.get("execution_mode", "none"),
+        release_mode=data.get("release_mode", "manual"),
+        task_template=data.get("task_template"),
     )
     return jsonify(todo), 201
 
@@ -288,7 +291,7 @@ def api_todos_update(todo_id):
     if not todo:
         return jsonify({"error": "nicht gefunden"}), 404
     conn = get_connection()
-    allowed = {"title", "description", "priority", "project", "due_date", "status"}
+    allowed = {"title", "description", "priority", "project", "due_date", "status", "execution_mode", "release_mode", "task_template"}
     updates = {k: v for k, v in data.items() if k in allowed}
     if updates:
         sets = ", ".join(f"{k}=?" for k in updates)

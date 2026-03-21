@@ -276,58 +276,8 @@ def execute_todo_action(user_id: str, action: dict) -> str | None:
             due_date=action.get("due_date"),
         )
 
-        # Kimi-Todo mit Code-Keywords → sofort ORBIT-Task anlegen
-        _project = (action.get("category") or action.get("project") or "").lower()
-        _title = action.get("title", "").lower()
-        _code_kw = ["skript", "script", "detektor", "detector", "bauen", "code",
-                    "analyse", "db", "anbindung", "chromadb", "python", "werkzeug", "tool"]
-        if _project == "kimi" and any(w in _title for w in _code_kw):
-            try:
-                import orbit as _orbit
-                # Schritt 1: ORBIT-Task anlegen der Workspace listet + ersten Code-Schritt macht
-                task_id = _orbit.create_task(
-                    task_type="action",
-                    goal=f"Code-Vorhaben ausführen: {todo['title'][:60]}",
-                    primary_origin=f"kimi_todo:{todo['id']}",
-                    mode="internal",
-                    priority="high",
-                    linked_todo_id=todo['id'],
-                    proposal_id=todo.get('proposal_id'),
-                    goal_id=todo.get('goal_id'),
-                )
-                # Todo auf in_progress + linked_task_id via Service
-                try:
-                    from core.todo_service import start_todo
-                    start_todo(todo['id'], task_id)
-                except Exception as _st:
-                    logger.debug(f"start_todo fehlgeschlagen (unkritisch): {_st}")
-                # Schritt 1: Workspace listen
-                _orbit.create_step(
-                    task_id=task_id,
-                    step_type="code_exec",
-                    description='{"action": "list"}',
-                    tool_ref="code_exec",
-                    interruptible=False,
-                    preflight_required=False,
-                )
-                # Schritt 2: Code ausführen/speichern
-                import json as _j
-                _orbit.create_step(
-                    task_id=task_id,
-                    step_type="code_exec",
-                    description=_j.dumps({
-                        "action": "save",
-                        "filename": "todo_{}_{}.py".format(todo['id'], _title[:20].replace(' ','_')),
-                        "code": "# Kimi-Todo #{}: {}\n# Angelegt: auto\n\n# TODO: implementieren\n".format(todo['id'], todo['title'])
-                    }),
-                    tool_ref="code_exec",
-                    interruptible=False,
-                    preflight_required=False,
-                )
-                logger.info(f"execute_todo_action: ORBIT-Task {task_id[:8]} für Code-Todo #{todo['id']}")
-            except Exception as _ot:
-                logger.debug(f"execute_todo_action: ORBIT-Task fehlgeschlagen (unkritisch): {_ot}")
-
+        # ORBIT-Task wird jetzt über execution_mode in todo_service gesteuert
+        # Keyword-Heuristik entfernt (siehe core/kimi_output.py _run_todo)
         return format_single_todo(todo, verb="✓ Todo gespeichert")
 
     elif act == "complete":
