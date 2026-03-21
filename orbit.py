@@ -52,6 +52,17 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # =============================================================================
+# E — Privater Arbeitsmodus Konstanten
+# =============================================================================
+E_MAX_LOOPS_DEFAULT = 5  # Schleifenschutz: max. interne Folgezyklen pro Task
+
+_DEFAULT_RELEASE_MODE = {
+    "internal":    "summarize",    # autonome Kimi-Arbeit → Zusammenfassung am Ende
+    "chat":        "auto_if_done", # Chat-Arbeit → sofort bei Abschluss
+    "background":  "manual",       # Hintergrund → nur auf Anfrage
+}
+
+# =============================================================================
 # Konfiguration
 # =============================================================================
 
@@ -272,15 +283,6 @@ def update_thread(thread_id: str, **kwargs) -> None:
 # Tasks (orbit_tasks)
 # =============================================================================
 
-# E: Standard release_mode je nach Modus
-_DEFAULT_RELEASE_MODE = {
-    "internal":    "summarize",    # autonome Arbeit → Zusammenfassung am Ende
-    "chat":        "auto_if_done", # Chat-Arbeit → sofort bei Abschluss
-    "background":  "manual",       # Hintergrund → nur auf Anfrage
-}
-E_MAX_LOOPS_DEFAULT = 5  # Schleifenschutz: max. interne Folgeschritte
-
-
 def create_task(task_type: str, goal: str, primary_origin: str,
                 mode: str = "background", priority: str = "medium",
                 source_thread_id: str = None,
@@ -294,7 +296,6 @@ def create_task(task_type: str, goal: str, primary_origin: str,
     """
     tid = new_id()
     now = to_iso()
-    # release_mode aus Modus ableiten wenn nicht explizit gesetzt
     if release_mode is None:
         release_mode = _DEFAULT_RELEASE_MODE.get(mode, "manual")
     if max_loops is None:
@@ -1050,11 +1051,14 @@ def _handle_time_window(trigger: dict) -> None:
 
 def _handle_tool_result(trigger: dict) -> None:
     """
-    Verarbeitet ein Tool-Ergebnis aus einem ORBIT-Step.
-    Drei Schritte:
-    1. Ergebnis als Observation speichern
-    2. Kimi intern befragen was als nächstes zu tun ist
-    3. Bei weiterem Handlungsbedarf neuen Trigger erzeugen
+    E: Verarbeitet ein Tool-Ergebnis aus einem ORBIT-Step.
+
+    Phasen:
+    1. Observation speichern (immer)
+    2. Offene Steps prüfen — wenn noch Steps laufen, warten
+    3. Alle Steps terminal:
+       a. Wenn Task noch läuft → Reflexion + Folgezyklus-Entscheidung
+       b. Wenn Task bereits completed/failed (z.B. via task_transition) → Release-Pfad
     """
     payload = _parse(trigger.get("payload"), {})
     tool = payload.get("tool", "unknown")
@@ -1073,7 +1077,10 @@ def _handle_tool_result(trigger: dict) -> None:
     if not task:
         return
 
-    # 1. Observation speichern
+    task_mode = task.get("mode", "background")
+    release_mode = task.get("release_mode", "manual")
+
+    # 1. Observation speichern — immer, unabhängig von Task-Status
     try:
         from core.todo_service import record_observation
         record_observation(
@@ -1088,62 +1095,88 @@ def _handle_tool_result(trigger: dict) -> None:
     except Exception as _oe:
         logger.debug(f"_handle_tool_result: Observation fehlgeschlagen: {_oe}")
 
-    # 2. Offene Steps prüfen — wenn noch Steps ausstehen, nichts weiter tun
+    # 2. Offene Steps prüfen
     steps = get_steps(task_id=task_id)
-    open_steps = [s for s in steps if s["status"] in ("pending", "running")]
+    open_steps = [s for s in steps if s["status"] in ("pending", "running", "ready")]
     if open_steps:
         logger.debug(f"_handle_tool_result: {len(open_steps)} offene Steps — warte")
         return
 
-    # 3. Alle Steps terminal — Kimi intern befragen was als nächstes zu tun ist
-    # Nur wenn Task noch nicht terminal
-    if task.get("status") in ("completed", "failed", "aborted"):
+    # 3. Alle Steps terminal — Reflexion und Release-Entscheidung
+    task_status = task.get("status", "")
+    is_terminal = task_status in ("completed", "failed", "aborted")
+
+    # Schleifenschutz prüfen
+    loop_count = int(task.get("loop_count") or 0)
+    max_loops = int(task.get("max_loops") or E_MAX_LOOPS_DEFAULT)
+    if loop_count >= max_loops:
+        logger.warning(f"E: Task {task_id[:8]} hat max_loops ({max_loops}) erreicht — stoppe")
+        update_task(task_id, release_state="suppressed")
         return
 
+    # Reflexion aufbauen
     try:
         from core.ollama_client import chat_internal
-        from config import USER_CONTEXTS
 
-        # Zusammenfassung aller Step-Ergebnisse
         step_summaries = []
         for s in steps:
             summary = s.get("result_summary") or s.get("description", "")[:80]
-            status = s.get("status", "?")
-            step_summaries.append(f"- {s.get('tool_ref','?')}: {status} — {summary[:100]}")
+            step_summaries.append(f"- {s.get('tool_ref','?')}: {s.get('status','?')} — {summary[:100]}")
 
         task_goal = task.get("goal", "")[:100]
         steps_text = chr(10).join(step_summaries)
-        reflection_prompt = (
-            "Ich habe gerade einen Task abgeschlossen: " + task_goal + chr(10) + chr(10)
-            + "Step-Ergebnisse:" + chr(10) + steps_text + chr(10) + chr(10)
-            + "Was ist das Ergebnis? Wurde das Ziel erreicht? "
-            + "Wenn nicht - was fehlt noch? "
-            + "Antworte in 2-3 Saetzen, kein Markdown."
-        )
 
-        # retrieval_query aus Task-Ziel — bewusste Retrieval-Basis
-        task_retrieval_query = task.get("goal", "")[:200] or reflection_prompt[:200]
+        if is_terminal:
+            # Task bereits abgeschlossen (via task_transition) → Release-Reflexion
+            reflection_prompt = (
+                "Mein Task ist abgeschlossen: " + task_goal + chr(10) + chr(10)
+                + "Was ich getan habe:" + chr(10) + steps_text + chr(10) + chr(10)
+                + "Fasse das Ergebnis in 2-3 Saetzen zusammen. Kein Markdown."
+            )
+            extra_sys = "Release-Reflexion: Zusammenfassung abgeschlossener interner Arbeit."
+        else:
+            # Task noch aktiv → Entscheide ob weiterarbeiten oder abschliessen
+            reflection_prompt = (
+                "Ich arbeite intern an: " + task_goal + chr(10) + chr(10)
+                + "Bisherige Schritte:" + chr(10) + steps_text + chr(10) + chr(10)
+                + "Ist das Ziel erreicht? Wenn ja: antworte mit ERLEDIGT. "
+                + "Wenn nicht und ich noch einen konkreten naechsten Schritt brauche: "
+                + "beschreibe ihn in einem Satz. Kein Markdown."
+            )
+            extra_sys = "Interner Arbeitszyklus. Entscheide: ERLEDIGT oder naechster Schritt."
+
+        task_retrieval_query = task_goal or reflection_prompt[:150]
         reply, _tm = chat_internal(
             user_id=user_id,
             message=reflection_prompt,
             chat_history=[],
-            extra_system="Kurze interne Reflexion nach Task-Abschluss. Kein Chat-Modus.",
+            extra_system=extra_sys,
             retrieval_query=task_retrieval_query,
         )
 
-        if reply and len(reply.strip()) > 10:
-            # Reflexion als Observation speichern
+        if not reply or len(reply.strip()) < 5:
+            logger.debug(f"_handle_tool_result: leere Reflexion für Task {task_id[:8]}")
+            if is_terminal:
+                _e_finalize_release(task, "", user_id)
+            return
+
+        reply = reply.strip()
+
+        # Reflexion als Observation speichern
+        try:
             from core.todo_service import record_observation
             record_observation(
                 owner_id=user_id,
-                content=reply.strip()[:500],
+                content=reply[:500],
                 obs_type="reflection",
                 task_id=task_id,
                 todo_id=int(task["linked_todo_id"]) if task.get("linked_todo_id") else None,
             )
-            logger.info(f"_handle_tool_result: Kimi-Reflexion gespeichert für Task {task_id[:8]}")
+        except Exception:
+            pass
 
-            # process_kimi_output — falls Kimi neue Aktionen formuliert hat
+        # process_kimi_output für Proposals/Todos aus der Reflexion
+        try:
             from core.kimi_output import process_kimi_output
             process_kimi_output(
                 source="tool_result",
@@ -1152,58 +1185,113 @@ def _handle_tool_result(trigger: dict) -> None:
                 visibility="internal",
                 context={"task_id": task_id},
             )
+        except Exception:
+            pass
 
-            # E: Release-Logik je nach release_mode
-            _e_handle_release(task, reply, user_id)
+        if is_terminal:
+            # Task fertig → Release
+            _e_finalize_release(task, reply, user_id)
+        else:
+            # Task läuft noch → Folgezyklus entscheiden
+            if "ERLEDIGT" in reply.upper():
+                # Kimi sagt fertig → Task abschliessen
+                task_transition(task_id, "completed",
+                               reason="Kimi: Ziel erreicht (interne Bewertung)")
+                # task_transition erzeugt selbst tool_result-Trigger für Release
+            else:
+                # Kimi will weiterarbeiten → neuen Step anlegen
+                _e_append_next_step(task_id, reply, user_id, loop_count)
 
     except Exception as _re:
-        logger.debug(f"_handle_tool_result: Kimi-Reflexion fehlgeschlagen (unkritisch): {_re}")
+        logger.warning(f"_handle_tool_result: Reflexion fehlgeschlagen: {_re}")
+        if is_terminal:
+            _e_finalize_release(task, "", user_id)
 
 
-
-def _e_handle_release(task: dict, reflection: str, user_id: str) -> None:
+def _e_finalize_release(task: dict, reflection: str, user_id: str) -> None:
     """
-    E: Release-Entscheidung nach internem Arbeitszyklus.
-    Wird nach Kimi-Reflexion aufgerufen wenn alle Steps terminal sind.
-
-    release_mode:
-      manual       → nichts senden, release_state=ready_for_release
-      auto_if_done → bei abgeschlossenem Task kurze Nachricht senden
-      summarize    → kompakte Zusammenfassung senden
+    E: Finaler Release-Pfad nach Task-Abschluss.
+    Entscheidet je nach release_mode was mit dem Ergebnis passiert.
     """
     task_id = task["id"]
     release_mode = task.get("release_mode") or "manual"
-    task_status = task.get("status", "")
+    release_state = task.get("release_state") or "not_released"
 
-    # Schleifenschutz prüfen
-    loop_count = int(task.get("loop_count") or 0)
-    max_loops = int(task.get("max_loops") or E_MAX_LOOPS_DEFAULT)
-    if loop_count >= max_loops:
-        logger.warning(f"E: Task {task_id[:8]} hat max_loops ({max_loops}) erreicht — kein weiterer Release")
-        update_task(task_id, release_state="suppressed")
+    # Bereits released oder suppressed → nichts tun
+    if release_state in ("released", "suppressed"):
         return
 
     if release_mode == "manual":
         update_task(task_id, release_state="ready_for_release")
         logger.info(f"E: Task {task_id[:8]} → ready_for_release (manual)")
-        return
 
-    if release_mode == "auto_if_done":
-        if task_status == "completed":
-            _e_send_summary(task, reflection, user_id, style="brief")
-        else:
-            update_task(task_id, release_state="ready_for_release")
-        return
+    elif release_mode == "auto_if_done":
+        _e_send_summary(task, reflection, user_id, style="brief")
 
-    if release_mode == "summarize":
+    elif release_mode == "summarize":
         _e_send_summary(task, reflection, user_id, style="summarize")
-        return
+
+    else:
+        update_task(task_id, release_state="ready_for_release")
+
+
+def _e_append_next_step(task_id: str, next_step_hint: str, user_id: str, loop_count: int) -> None:
+    """
+    E: Hängt einen neuen Step an den laufenden Task — Folgezyklus.
+    Kimi hat beschrieben was als nächstes zu tun ist.
+    Schleifenschutz via loop_count.
+    """
+    try:
+        # loop_count erhöhen
+        update_task(task_id, loop_count=loop_count + 1)
+
+        # Naechsten Schritt aus Kimis Hinweis ableiten
+        hint_lower = next_step_hint.lower()
+        if any(w in hint_lower for w in ["datei", "lesen", "read", "öffnen", "prüfen", "check"]):
+            tool_ref = "code_exec"
+            action = "list"
+            description = '{"action": "list"}'
+        elif any(w in hint_lower for w in ["schreiben", "speichern", "anlegen", "erstellen", "save"]):
+            tool_ref = "code_exec"
+            action = "save"
+            description = '{"action": "save", "filename": "next_step.txt", "content": "' + next_step_hint[:100] + '"}'
+        elif any(w in hint_lower for w in ["suchen", "search", "recherche"]):
+            tool_ref = "websearch"
+            action = "search"
+            description = '{"query": "' + next_step_hint[:80] + '"}'
+        elif any(w in hint_lower for w in ["kalender", "termin", "calendar"]):
+            tool_ref = "calendar_read"
+            action = "list"
+            description = "{}"
+        elif any(w in hint_lower for w in ["todo", "aufgabe", "task"]):
+            tool_ref = "todos_read"
+            action = "list"
+            description = "{}"
+        else:
+            # Kein klares Tool erkannt → als Observation-Step anlegen
+            tool_ref = ""
+            action = "observe"
+            description = next_step_hint[:200]
+
+        create_step(
+            task_id=task_id,
+            step_type=tool_ref or "observation",
+            description=description,
+            tool_ref=tool_ref,
+            interruptible=True,
+            preflight_required=False,
+        )
+        logger.info(f"E: Task {task_id[:8]} Folgezyklus #{loop_count+1}: {tool_ref or 'observe'}")
+
+    except Exception as e:
+        logger.warning(f"E: _e_append_next_step fehlgeschlagen: {e}")
+
 
 
 def _e_send_summary(task: dict, reflection: str, user_id: str, style: str = "summarize") -> None:
     """
     E: Baut und sendet eine Release-Zusammenfassung an Tommy.
-    style="brief"    → kurze Erfolgsmeldung
+    style="brief"     → kurze Erfolgsmeldung
     style="summarize" → verdichtete Zusammenfassung der Arbeit
     """
     task_id = task["id"]
@@ -1211,15 +1299,10 @@ def _e_send_summary(task: dict, reflection: str, user_id: str, style: str = "sum
         from core.ollama_client import chat_internal
         from core.whatsapp import send_message, init_waha
         from core.database import save_message
-        from config import WAHA_API_KEY, OWNER_ID, USER_CONTEXTS
+        from config import WAHA_API_KEY, OWNER_ID
 
-        # Steps und Observations sammeln
         steps = get_steps(task_id=task_id)
-        obs_summaries = []
-        for s in steps:
-            if s.get("result_summary"):
-                obs_summaries.append(s["result_summary"][:100])
-
+        obs_summaries = [s["result_summary"][:100] for s in steps if s.get("result_summary")]
         obs_text = chr(10).join(f"- {o}" for o in obs_summaries[:5]) if obs_summaries else "(keine Beobachtungen)"
 
         if style == "brief":
@@ -1228,9 +1311,9 @@ def _e_send_summary(task: dict, reflection: str, user_id: str, style: str = "sum
             summary_prompt = (
                 "Ich habe intern an einer Aufgabe gearbeitet: " + task.get("goal","")[:100] + chr(10) + chr(10)
                 + "Was ich beobachtet habe:" + chr(10) + obs_text + chr(10) + chr(10)
-                + "Meine Reflexion: " + reflection[:200] + chr(10) + chr(10)
+                + ("Meine Reflexion: " + reflection[:200] + chr(10) + chr(10) if reflection else "")
                 + "Fasse das in 2-3 kurzen Saetzen fuer Tommy zusammen. "
-                + "Kein Markdown, kein Betreff, kein 'Ich habe'-Einstieg. Direkt zum Ergebnis."
+                + "Kein Markdown, kein Betreff. Direkt zum Ergebnis."
             )
             summary, _ = chat_internal(
                 user_id=user_id,
@@ -1241,7 +1324,6 @@ def _e_send_summary(task: dict, reflection: str, user_id: str, style: str = "sum
             )
             message = summary.strip() if summary and len(summary.strip()) > 10 else f"Aufgabe abgeschlossen: {task.get('goal','')[:80]}"
 
-        # Senden
         init_waha(WAHA_API_KEY)
         send_message(OWNER_ID, message)
         save_message(OWNER_ID, "assistant", message)
@@ -1856,26 +1938,41 @@ def task_transition(task_id: str, new_status: str, reason: str = None,
                              task_id=task_id)
                 logger.info(f"task_transition: Todo #{task_obj['linked_todo_id']} automatisch erledigt")
 
-            # E: bei completed + internal → Release-Logik anstoßen
-            if new_status == "completed" and task_obj and task_obj.get("mode") == "internal":
-                release_mode = task_obj.get("release_mode", "manual")
-                if release_mode in ("auto_if_done", "summarize"):
-                    create_trigger(
-                        trigger_type="tool_result",
-                        source="task_transition",
-                        payload={
-                            "task_id": task_id,
-                            "tool": "task_completion",
-                            "success": True,
-                            "result": f"Task abgeschlossen: {task_obj.get('goal','')[:80]}",
-                            "user_id": owner_id,
-                        },
-                    )
-
             # Bei failed/aborted → Todo auf blocked
             elif new_status in ("failed", "aborted") and task_obj and task_obj.get("linked_todo_id"):
                 from core.todo_service import block_todo
                 block_todo(int(task_obj["linked_todo_id"]), reason=f"Task {new_status}")
+
+            # E: Release-Logik für interne Tasks nach Abschluss
+            if new_status in ("completed", "failed", "aborted") and task_obj:
+                task_mode = task_obj.get("mode", "background")
+                release_mode = task_obj.get("release_mode", "manual")
+                release_state = task_obj.get("release_state", "not_released")
+
+                if task_mode == "internal" and release_state not in ("released", "suppressed"):
+                    if release_mode == "manual":
+                        # manual → sofort ready_for_release, kein Trigger
+                        update_task(task_id, release_state="ready_for_release")
+                        logger.info(f"E: Task {task_id[:8]} → ready_for_release (manual, {new_status})")
+                    else:
+                        # auto_if_done / summarize → tool_result Trigger für Reflexion + Release
+                        try:
+                            create_trigger(
+                                trigger_type="tool_result",
+                                source="task_transition",
+                                payload={
+                                    "task_id": task_id,
+                                    "tool": "task_completion",
+                                    "success": new_status == "completed",
+                                    "result": f"Task {new_status}: {task_obj.get('goal','')[:80]}",
+                                    "user_id": owner_id,
+                                    "is_terminal_release": True,
+                                },
+                            )
+                            logger.info(f"E: Task {task_id[:8]} Release-Trigger erzeugt ({release_mode})")
+                        except Exception as _rt:
+                            logger.debug(f"E: Release-Trigger fehlgeschlagen: {_rt}")
+                            update_task(task_id, release_state="ready_for_release")
 
         except Exception as _tf:
             logger.debug(f"task_transition: Fortschreibung fehlgeschlagen (unkritisch): {_tf}")
@@ -2140,12 +2237,11 @@ def _execute_step(step: dict, task_id: str) -> None:
             logger.debug(f"Step Observation fehlgeschlagen (unkritisch): {_oe}")
 
         # E: Ergebnis nur bei chat-Modus sofort senden
-        # internal-Modus → Observation gespeichert, kein sofortiges Senden
-        # Release passiert später via _handle_tool_result() je nach release_mode
+        # internal-Modus → Observation gespeichert, Release via _handle_tool_result
         if task and task.get("mode") == "chat":
             _deliver_step_result(task, step, result)
         elif task and task.get("mode") == "internal":
-            logger.debug(f"Step {step_id[:8]} done (internal — kein sofortiger Send): {tool_ref}.{action}")
+            logger.debug(f"E: Step {step_id[:8]} done (internal — kein sofortiger Send)")
         logger.info(f"Step {step_id[:8]} done: {tool_ref}.{action}")
     else:
         err = result.get("error", "unbekannt")[:80]
