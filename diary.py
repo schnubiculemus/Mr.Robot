@@ -333,19 +333,12 @@ def _save_entry(entry_text, user_id):
     store_chunk(chunk)
     logger.info(f"Tagebuch-Chunk gespeichert: {chunk['id'][:8]}")
 
-    # Vorhaben-Signale → Kimi-Todos + langfristige Ziele
+    # Zentrale Output-Interpretation — einziger Pfad für Todos und Goals
     try:
         from core.kimi_output import process_kimi_output
         process_kimi_output(source="diary", user_id=user_id, raw_text=entry_text, visibility="internal")
-        from core.todos import extract_intent_todos, extract_intent_goals
-        new_todos = []  # handled by process_kimi_output
-        if new_todos:
-            logger.info(f"Tagebuch: {len(new_todos)} Kimi-Todo(s) angelegt")
-        new_goals = extract_intent_goals(entry_text, user_id)
-        if new_goals:
-            logger.info(f"Tagebuch: {len(new_goals)} Kimi-Ziel(e) gespeichert")
     except Exception as _te:
-        logger.debug(f"Tagebuch: IntentTodo/Goal fehlgeschlagen (unkritisch): {_te}")
+        logger.debug(f"Tagebuch: process_kimi_output fehlgeschlagen (unkritisch): {_te}")
 
     return filepath, chunk["id"]
 

@@ -17,39 +17,31 @@ def create_todo(owner_id: str, title: str, description: str = None,
                 origin_ref: str = None, proposal_id: int = None,
                 goal_id: int = None) -> dict | None:
     """
-    Legt ein Todo an mit vollständigen Verknüpfungsfeldern.
+    Legt ein Todo an — direktes Insert mit allen Verknüpfungsfeldern in einem Schritt.
+    Kein zweistufiges Legacy-Create + Update mehr.
     """
     try:
-        from core.todos import create_todo as _legacy_create
-        # Legacy-Funktion für Basis-Felder
-        todo = _legacy_create(
-            user_id=owner_id,
-            title=title,
-            description=description,
-            priority=priority,
-            project=project,
-            due_date=due_date,
-        )
-        if not todo:
-            return None
-
-        # Verknüpfungsfelder nachträglich setzen
+        from core.todos import PRIORITIES, get_todo
         now = to_iso()
+        priority = priority if priority in PRIORITIES else "keine"
+
         conn = get_connection()
         try:
-            conn.execute(
-                """UPDATE todos SET
-                   origin_type=?, origin_ref=?, proposal_id=?, goal_id=?, status_updated_at=?
-                   WHERE id=?""",
-                (origin_type, origin_ref, proposal_id, goal_id, now, todo["id"])
+            cur = conn.execute(
+                """INSERT INTO todos
+                   (user_id, title, description, priority, project, due_date,
+                    status, created_at, origin_type, origin_ref, proposal_id,
+                    goal_id, status_updated_at)
+                   VALUES (?,?,?,?,?,?,'open',?,?,?,?,?,?)""",
+                (owner_id, title.strip(), description, priority, project, due_date,
+                 now, origin_type, origin_ref, proposal_id, goal_id, now)
             )
             conn.commit()
+            todo_id = cur.lastrowid
+            logger.info(f"Todo erstellt: #{todo_id} '{title[:50]}' (Prio: {priority})")
+            return get_todo(todo_id)
         finally:
             conn.close()
-
-        # Frisches Todo mit allen Feldern zurückgeben
-        from core.todos import get_todo
-        return get_todo(todo["id"])
 
     except Exception as e:
         logger.warning(f"todo_service.create_todo fehlgeschlagen: {e}")

@@ -443,40 +443,21 @@ def build_perspective_context() -> str | None:
 def build_goals_context() -> str | None:
     """
     Baut einen Block mit Kimis langfristigen Zielen für den System-Prompt.
-    Nutzt decision-Chunks mit Tag 'kimi-ziel'.
+    Liest aus SQLite (kimi_goals) — nicht mehr aus ChromaDB.
+    Eine Wahrheit für Goals: SQLite.
     """
     try:
-        from memory.memory_store import get_active_collection
-        col = get_active_collection()
-        result = col.get(
-            where={"$and": [
-                {"source": "robot"},
-                {"status": "active"},
-                {"chunk_type": "decision"},
-            ]},
-            include=["documents", "metadatas"],
-        )
-        if not result["ids"]:
-            return None
-
-        goals = []
-        for i, chunk_id in enumerate(result["ids"]):
-            meta = result["metadatas"][i]
-            tags = str(meta.get("tags", ""))
-            if "kimi-ziel" in tags:
-                goals.append({
-                    "text": result["documents"][i],
-                    "created_at": meta.get("created_at", ""),
-                    "confidence": float(meta.get("confidence", 0.5)),
-                })
-
+        from core.goal_service import get_active_goals
+        from config import OWNER_ID
+        goals = get_active_goals(OWNER_ID)
         if not goals:
             return None
 
-        goals.sort(key=lambda g: g["confidence"], reverse=True)
         lines = ["## Meine Ziele"]
         for g in goals[:5]:
-            lines.append(f"→ {g['text'][:150]}")
+            progress = g.get("progress", 0)
+            progress_str = f" ({progress}%)" if progress > 0 else ""
+            lines.append(f"→ {g['title'][:150]}{progress_str}")
         return "\n".join(lines)
 
     except Exception as e:
