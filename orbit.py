@@ -1,11 +1,11 @@
 """
-SchnuBot.ai — ORBIT
+SchnuBot.ai -- ORBIT
 Autonome operative Exekutive (Build Step 1: Datenmodell & Persistenz)
 
 Architektur-Referenz: ORBIT Gesamtkonzept v1.0
 
 Ebenen:
-    KOGNITION → MEMORY → ORBIT → TOOLS → COMMUNICATION
+    KOGNITION -> MEMORY -> ORBIT -> TOOLS -> COMMUNICATION
 
 ORBIT ist die Schicht die aus Denken, Kontext und Regeln
 konkrete operative Entscheidungen macht.
@@ -52,14 +52,14 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # =============================================================================
-# E — Privater Arbeitsmodus Konstanten
+# E -- Privater Arbeitsmodus Konstanten
 # =============================================================================
 E_MAX_LOOPS_DEFAULT = 5  # Schleifenschutz: max. interne Folgezyklen pro Task
 
 _DEFAULT_RELEASE_MODE = {
-    "internal":    "summarize",    # autonome Kimi-Arbeit → Zusammenfassung am Ende
-    "chat":        "auto_if_done", # Chat-Arbeit → sofort bei Abschluss
-    "background":  "manual",       # Hintergrund → nur auf Anfrage
+    "internal":    "summarize",    # autonome Kimi-Arbeit -> Zusammenfassung am Ende
+    "chat":        "auto_if_done", # Chat-Arbeit -> sofort bei Abschluss
+    "background":  "manual",       # Hintergrund -> nur auf Anfrage
 }
 
 # =============================================================================
@@ -828,7 +828,7 @@ def create_link(from_id: str, from_type: str, to_id: str,
 
 
 # =============================================================================
-# Build Step 2 — Decision-Envelope-Modell
+# Build Step 2 -- Decision-Envelope-Modell
 # =============================================================================
 
 def make_decision(decision_type: str, target_ref: str, reason: str,
@@ -873,14 +873,14 @@ def make_decision(decision_type: str, target_ref: str, reason: str,
             reason=f"{override_class} auf {decision_type}: {reason[:100]}",
             trigger_refs=trigger_refs or [],
         )
-        logger.warning(f"Override {override_class} → Review erzeugt für {decision_type} ({did[:8]})")
+        logger.warning(f"Override {override_class} -> Review erzeugt für {decision_type} ({did[:8]})")
 
     return did
 
 
 def defensive_fallback(reason: str, original_action: str,
                         fallback_action: str, trigger_refs: list = None) -> str:
-    logger.info(f"Defensiver Fallback: {original_action} → {fallback_action} | {reason}")
+    logger.info(f"Defensiver Fallback: {original_action} -> {fallback_action} | {reason}")
     return make_decision(
         decision_type="defensive_fallback",
         target_ref="orbit",
@@ -903,13 +903,13 @@ def no_action(reason: str, context: str = "", trigger_refs: list = None) -> str:
 
 
 # =============================================================================
-# Build Step 2 — Trigger-Handler
+# Build Step 2 -- Trigger-Handler
 # =============================================================================
 
 
 def _auto_create_steps(task_id: str, goal: str, user_id: str) -> None:
     """
-    Baustein 2 — Kimi leitet aus einem Goal automatisch Steps ab.
+    Baustein 2 -- Kimi leitet aus einem Goal automatisch Steps ab.
     Keyword-basierte Erkennung fuer die haeufigsten Tool-Calls.
     """
     goal_lower = goal.lower()
@@ -970,8 +970,8 @@ def _auto_create_steps(task_id: str, goal: str, user_id: str) -> None:
         logger.info(f"Auto-Step: websearch fuer Task {task_id[:8]}")
         return
 
-    # Kein passendes Tool erkannt — reiner Observation-Step
-    logger.info(f"Auto-Step: kein Tool erkannt fuer '{goal[:60]}' — kein Step angelegt")
+    # Kein passendes Tool erkannt -- reiner Observation-Step
+    logger.info(f"Auto-Step: kein Tool erkannt fuer '{goal[:60]}' -- kein Step angelegt")
 
 
 def _handle_user_input(trigger: dict) -> None:
@@ -1039,7 +1039,7 @@ def _handle_time_window(trigger: dict) -> None:
 
     due = get_due_wiedervorlagen()
     for wv in due:
-        logger.info(f"Wiedervorlage fällig: {wv['target_type']} {wv['target_ref'][:8]} — {wv['reason']}")
+        logger.info(f"Wiedervorlage fällig: {wv['target_type']} {wv['target_ref'][:8]} -- {wv['reason']}")
         create_trigger(
             trigger_type="wiedervorlage",
             source="orbit_time_window",
@@ -1049,16 +1049,153 @@ def _handle_time_window(trigger: dict) -> None:
         mark_wiedervorlage_done(wv["id"])
 
 
+def _f_normalize_result(tool: str, result, success: bool, step: dict | None) -> dict:
+    """
+    F: Normalisiert rohes Tool-Ergebnis zu einheitlicher Struktur.
+    Gibt: {ok, summary, obs_type, next_state, raw}
+    """
+    obs_type = "tool_result" if success else "error"
+    next_state = "ok" if success else "error"
+    summary = ""
+
+    if not success:
+        err = str(result)[:200] if result else "unbekannter Fehler"
+        err_lower = err.lower()
+        if any(w in err_lower for w in ["permission", "access denied", "zugriff"]):
+            obs_type = "blocker"
+            next_state = "blocked_by_permissions"
+        elif any(w in err_lower for w in ["not found", "existiert nicht", "fehlt", "missing"]):
+            obs_type = "state_change"
+            next_state = "resource_missing"
+        else:
+            next_state = "error"
+        summary = f"{tool} fehlgeschlagen: {err[:150]}"
+        if step:
+            try:
+                update_step(step["id"], result_summary=summary[:300])
+            except Exception:
+                pass
+        return {"ok": False, "summary": summary, "obs_type": obs_type, "next_state": next_state, "raw": result}
+
+    # Erfolg -- je Tool typisieren
+    if tool == "code_exec":
+        if isinstance(result, dict):
+            files = result.get("files", [])
+            if files:
+                summary = f"Workspace: {len(files)} Dateien -- {', '.join(str(f) for f in files[:5])}"
+                next_state = "workspace_listed"
+            else:
+                r = str(result.get("result", ""))[:200]
+                summary = f"code_exec: {r}"
+                next_state = "code_executed"
+        else:
+            summary = str(result)[:200]
+            next_state = "code_executed"
+    elif tool in ("calendar_read", "calendar_write", "calendar_change"):
+        summary = f"Kalender: {str(result)[:150]}"
+        next_state = "calendar_read"
+    elif tool in ("todos_read", "todos_write"):
+        summary = f"Todos: {str(result)[:150]}"
+        next_state = "todos_read"
+    elif tool == "websearch":
+        answer = result.get("answer", result.get("result", ""))[:200] if isinstance(result, dict) else str(result)[:200]
+        summary = f"Suche: {answer}"
+        next_state = "search_done"
+    elif tool == "server_read":
+        summary = f"Datei gelesen: {len(str(result))} Zeichen"
+        next_state = "file_read"
+    elif tool == "task_completion":
+        summary = str(result)[:200]
+        obs_type = "completion_signal"
+        next_state = "task_completed"
+    else:
+        summary = str(result)[:200] if result else f"{tool} erfolgreich"
+
+    if step:
+        try:
+            update_step(step["id"], result_summary=summary[:300])
+        except Exception:
+            pass
+
+    return {"ok": True, "summary": summary, "obs_type": obs_type, "next_state": next_state, "raw": result}
+
+
+def _f_cognition_cycle(task: dict, normalized: dict, steps: list,
+                       user_id: str, is_terminal: bool) -> str:
+    """
+    F: Interner Kimi-Call mit verdichtetem Kontext.
+    Gibt bei is_terminal: Zusammenfassungstext
+    Gibt sonst: "continue:<hint>"|"replan:<hint>"|"block:<reason>"|"complete:<text>"|"report:<text>"
+    """
+    from core.ollama_client import chat_internal
+
+    task_goal = task.get("goal", "")[:100]
+    loop_count = int(task.get("loop_count") or 0)
+    max_loops = int(task.get("max_loops") or E_MAX_LOOPS_DEFAULT)
+
+    step_lines = []
+    for s in steps[-5:]:
+        rs = s.get("result_summary") or s.get("description", "")[:60]
+        step_lines.append(f"  [{s.get('status','?')}] {s.get('tool_ref','?')}: {rs[:80]}")
+    history = chr(10).join(step_lines) if step_lines else "  (keine Steps)"
+
+    last_result = normalized["summary"]
+    last_state = normalized["next_state"]
+
+    if is_terminal:
+        prompt = (
+            "Mein Task ist abgeschlossen: " + task_goal + chr(10)
+            + "Bisherige Schritte:" + chr(10) + history + chr(10)
+            + "Letztes Ergebnis: " + last_result + chr(10) + chr(10)
+            + "Fasse das Ergebnis in 2-3 Saetzen fuer Tommy zusammen. Kein Markdown."
+        )
+        extra = "Release-Zusammenfassung. Nur 2-3 Saetze, direkt zum Ergebnis."
+    else:
+        prompt = (
+            "Ich arbeite intern an: " + task_goal + chr(10)
+            + "Bisherige Schritte:" + chr(10) + history + chr(10)
+            + "Letztes Ergebnis: " + last_result + " [" + last_state + "]" + chr(10) + chr(10)
+            + "Antworte mit genau einem Schluesselwort gefolgt von einem Satz:" + chr(10)
+            + "WEITER: <naechster konkreter Schritt>" + chr(10)
+            + "UMPLANEN: <anderer Ansatz>" + chr(10)
+            + "BLOCKIERT: <Grund>" + chr(10)
+            + "ERLEDIGT: <was erreicht wurde>" + chr(10)
+            + "MELDEN: <was Tommy wissen sollte>" + chr(10)
+        )
+        extra = (
+            "Interner Arbeitszyklus. Bewerte Zustand, entscheide naechsten Schritt. "
+            + f"Schleifen: {loop_count}/{max_loops}. Kein Markdown."
+        )
+
+    reply, _ = chat_internal(
+        user_id=user_id,
+        message=prompt,
+        chat_history=[],
+        extra_system=extra,
+        retrieval_query=task_goal[:150],
+    )
+
+    if not reply or len(reply.strip()) < 3:
+        return "complete" if is_terminal else "block:keine Antwort"
+
+    reply = reply.strip()
+    if is_terminal:
+        return reply
+
+    ru = reply.upper()
+    for key, out in [("WEITER","continue"), ("UMPLANEN","replan"),
+                     ("BLOCKIERT","block"), ("ERLEDIGT","complete"), ("MELDEN","report")]:
+        if ru.startswith(key):
+            detail = reply[reply.find(":")+1:].strip() if ":" in reply else reply
+            return f"{out}:{detail}"
+
+    return f"complete:{reply}"
+
+
 def _handle_tool_result(trigger: dict) -> None:
     """
-    E: Verarbeitet ein Tool-Ergebnis aus einem ORBIT-Step.
-
-    Phasen:
-    1. Observation speichern (immer)
-    2. Offene Steps prüfen — wenn noch Steps laufen, warten
-    3. Alle Steps terminal:
-       a. Wenn Task noch läuft → Reflexion + Folgezyklus-Entscheidung
-       b. Wenn Task bereits completed/failed (z.B. via task_transition) → Release-Pfad
+    F: Zentrale kognitive Drehscheibe nach jedem Step-Ergebnis.
+    Normalisieren, Observation, Kognitionszyklus, 5 Ausgaenge.
     """
     payload = _parse(trigger.get("payload"), {})
     tool = payload.get("tool", "unknown")
@@ -1080,13 +1217,25 @@ def _handle_tool_result(trigger: dict) -> None:
     task_mode = task.get("mode", "background")
     release_mode = task.get("release_mode", "manual")
 
-    # 1. Observation speichern — immer, unabhängig von Task-Status
+    # F1: Step laden für Normalisierung
+    step = None
+    if step_id:
+        try:
+            step = get_step(step_id)
+        except Exception:
+            pass
+
+    # F2: Ergebnis normalisieren
+    is_terminal_release = payload.get("is_terminal_release", False)
+    normalized = _f_normalize_result(tool, result, success, step)
+
+    # F3: Observation speichern -- typisiert
     try:
         from core.todo_service import record_observation
         record_observation(
             owner_id=user_id,
-            content=str(result)[:500] if result else f"{tool} fehlgeschlagen",
-            obs_type="tool_result" if success else "error",
+            content=normalized["summary"],
+            obs_type=normalized["obs_type"],
             task_id=task_id,
             step_id=step_id,
             todo_id=int(task["linked_todo_id"]) if task.get("linked_todo_id") else None,
@@ -1095,79 +1244,36 @@ def _handle_tool_result(trigger: dict) -> None:
     except Exception as _oe:
         logger.debug(f"_handle_tool_result: Observation fehlgeschlagen: {_oe}")
 
-    # 2. Offene Steps prüfen
+    # F4: Offene Steps prüfen
     steps = get_steps(task_id=task_id)
     open_steps = [s for s in steps if s["status"] in ("pending", "running", "ready")]
-    if open_steps:
-        logger.debug(f"_handle_tool_result: {len(open_steps)} offene Steps — warte")
+    if open_steps and not is_terminal_release:
+        logger.debug(f"_handle_tool_result: {len(open_steps)} offene Steps -- warte")
         return
 
-    # 3. Alle Steps terminal — Reflexion und Release-Entscheidung
-    task_status = task.get("status", "")
-    is_terminal = task_status in ("completed", "failed", "aborted")
-
-    # Schleifenschutz prüfen
+    # F5: Schleifenschutz
     loop_count = int(task.get("loop_count") or 0)
     max_loops = int(task.get("max_loops") or E_MAX_LOOPS_DEFAULT)
     if loop_count >= max_loops:
-        logger.warning(f"E: Task {task_id[:8]} hat max_loops ({max_loops}) erreicht — stoppe")
+        logger.warning(f"F: Task {task_id[:8]} max_loops ({max_loops}) -- suppressed")
         update_task(task_id, release_state="suppressed")
+        _e_finalize_release(task, "Max. Arbeitszyklen erreicht.", user_id)
         return
 
-    # Reflexion aufbauen
+    # F6: Kognitionszyklus
+    task_status = task.get("status", "")
+    is_terminal = task_status in ("completed", "failed", "aborted") or is_terminal_release
+
     try:
-        from core.ollama_client import chat_internal
+        decision = _f_cognition_cycle(task, normalized, steps, user_id, is_terminal)
+        logger.info(f"F: Task {task_id[:8]} Entscheidung: {decision[:80]}")
 
-        step_summaries = []
-        for s in steps:
-            summary = s.get("result_summary") or s.get("description", "")[:80]
-            step_summaries.append(f"- {s.get('tool_ref','?')}: {s.get('status','?')} — {summary[:100]}")
-
-        task_goal = task.get("goal", "")[:100]
-        steps_text = chr(10).join(step_summaries)
-
-        if is_terminal:
-            # Task bereits abgeschlossen (via task_transition) → Release-Reflexion
-            reflection_prompt = (
-                "Mein Task ist abgeschlossen: " + task_goal + chr(10) + chr(10)
-                + "Was ich getan habe:" + chr(10) + steps_text + chr(10) + chr(10)
-                + "Fasse das Ergebnis in 2-3 Saetzen zusammen. Kein Markdown."
-            )
-            extra_sys = "Release-Reflexion: Zusammenfassung abgeschlossener interner Arbeit."
-        else:
-            # Task noch aktiv → Entscheide ob weiterarbeiten oder abschliessen
-            reflection_prompt = (
-                "Ich arbeite intern an: " + task_goal + chr(10) + chr(10)
-                + "Bisherige Schritte:" + chr(10) + steps_text + chr(10) + chr(10)
-                + "Ist das Ziel erreicht? Wenn ja: antworte mit ERLEDIGT. "
-                + "Wenn nicht und ich noch einen konkreten naechsten Schritt brauche: "
-                + "beschreibe ihn in einem Satz. Kein Markdown."
-            )
-            extra_sys = "Interner Arbeitszyklus. Entscheide: ERLEDIGT oder naechster Schritt."
-
-        task_retrieval_query = task_goal or reflection_prompt[:150]
-        reply, _tm = chat_internal(
-            user_id=user_id,
-            message=reflection_prompt,
-            chat_history=[],
-            extra_system=extra_sys,
-            retrieval_query=task_retrieval_query,
-        )
-
-        if not reply or len(reply.strip()) < 5:
-            logger.debug(f"_handle_tool_result: leere Reflexion für Task {task_id[:8]}")
-            if is_terminal:
-                _e_finalize_release(task, "", user_id)
-            return
-
-        reply = reply.strip()
-
-        # Reflexion als Observation speichern
+        # Entscheidung als Observation speichern
         try:
             from core.todo_service import record_observation
             record_observation(
                 owner_id=user_id,
-                content=reply[:500],
+                content=f"F-Entscheidung: {decision[:300]}",
                 obs_type="reflection",
                 task_id=task_id,
                 todo_id=int(task["linked_todo_id"]) if task.get("linked_todo_id") else None,
@@ -1175,13 +1281,13 @@ def _handle_tool_result(trigger: dict) -> None:
         except Exception:
             pass
 
-        # process_kimi_output für Proposals/Todos aus der Reflexion
+        # process_kimi_output für eventuelle Proposals/Todos
         try:
             from core.kimi_output import process_kimi_output
             process_kimi_output(
                 source="tool_result",
                 user_id=user_id,
-                raw_text=reply,
+                raw_text=decision,
                 visibility="internal",
                 context={"task_id": task_id},
             )
@@ -1189,21 +1295,52 @@ def _handle_tool_result(trigger: dict) -> None:
             pass
 
         if is_terminal:
-            # Task fertig → Release
-            _e_finalize_release(task, reply, user_id)
-        else:
-            # Task läuft noch → Folgezyklus entscheiden
-            if "ERLEDIGT" in reply.upper():
-                # Kimi sagt fertig → Task abschliessen
-                task_transition(task_id, "completed",
-                               reason="Kimi: Ziel erreicht (interne Bewertung)")
-                # task_transition erzeugt selbst tool_result-Trigger für Release
-            else:
-                # Kimi will weiterarbeiten → neuen Step anlegen
-                _e_append_next_step(task_id, reply, user_id, loop_count)
+            _e_finalize_release(task, decision, user_id)
+            return
 
-    except Exception as _re:
-        logger.warning(f"_handle_tool_result: Reflexion fehlgeschlagen: {_re}")
+        # Ausgabe parsen und ausführen
+        decision_key = decision.split(":")[0].lower() if ":" in decision else decision.lower()
+        detail = decision.split(":", 1)[1].strip() if ":" in decision else ""
+
+        if decision_key == "continue":
+            _e_append_next_step(task_id, detail or normalized["summary"], user_id, loop_count)
+
+        elif decision_key == "replan":
+            _e_append_next_step(task_id, detail or "anderen Ansatz versuchen", user_id, loop_count)
+
+        elif decision_key == "block":
+            reason = detail or "interner Blocker"
+            task_transition(task_id, "failed", reason=f"Blockiert: {reason}")
+            try:
+                from core.proposal_service import set_last_error
+                if task.get("proposal_id"):
+                    set_last_error(int(task["proposal_id"]), reason)
+            except Exception:
+                pass
+
+        elif decision_key == "complete":
+            task_transition(task_id, "completed",
+                           reason=f"F: {detail[:60]}" if detail else "F: Ziel erreicht")
+
+        elif decision_key == "report":
+            try:
+                from core.whatsapp import send_message, init_waha
+                from core.database import save_message
+                from config import WAHA_API_KEY, OWNER_ID as _OID
+                init_waha(WAHA_API_KEY)
+                msg = detail or f"Zwischenergebnis: {normalized['summary'][:150]}"
+                send_message(_OID, msg)
+                save_message(_OID, "assistant", msg)
+                update_task(task_id, release_state="released", loop_count=loop_count + 1)
+                logger.info(f"F: Task {task_id[:8]} report: {msg[:60]}")
+            except Exception as _se:
+                logger.warning(f"F: report fehlgeschlagen: {_se}")
+
+        else:
+            task_transition(task_id, "completed", reason="F: unbekannte Entscheidung")
+
+    except Exception as _fe:
+        logger.warning(f"_handle_tool_result F-Zyklus fehlgeschlagen: {_fe}")
         if is_terminal:
             _e_finalize_release(task, "", user_id)
 
@@ -1217,13 +1354,13 @@ def _e_finalize_release(task: dict, reflection: str, user_id: str) -> None:
     release_mode = task.get("release_mode") or "manual"
     release_state = task.get("release_state") or "not_released"
 
-    # Bereits released oder suppressed → nichts tun
+    # Bereits released oder suppressed -> nichts tun
     if release_state in ("released", "suppressed"):
         return
 
     if release_mode == "manual":
         update_task(task_id, release_state="ready_for_release")
-        logger.info(f"E: Task {task_id[:8]} → ready_for_release (manual)")
+        logger.info(f"E: Task {task_id[:8]} -> ready_for_release (manual)")
 
     elif release_mode == "auto_if_done":
         _e_send_summary(task, reflection, user_id, style="brief")
@@ -1237,7 +1374,7 @@ def _e_finalize_release(task: dict, reflection: str, user_id: str) -> None:
 
 def _e_append_next_step(task_id: str, next_step_hint: str, user_id: str, loop_count: int) -> None:
     """
-    E: Hängt einen neuen Step an den laufenden Task — Folgezyklus.
+    E: Hängt einen neuen Step an den laufenden Task -- Folgezyklus.
     Kimi hat beschrieben was als nächstes zu tun ist.
     Schleifenschutz via loop_count.
     """
@@ -1268,7 +1405,7 @@ def _e_append_next_step(task_id: str, next_step_hint: str, user_id: str, loop_co
             action = "list"
             description = "{}"
         else:
-            # Kein klares Tool erkannt → als Observation-Step anlegen
+            # Kein klares Tool erkannt -> als Observation-Step anlegen
             tool_ref = ""
             action = "observe"
             description = next_step_hint[:200]
@@ -1291,8 +1428,8 @@ def _e_append_next_step(task_id: str, next_step_hint: str, user_id: str, loop_co
 def _e_send_summary(task: dict, reflection: str, user_id: str, style: str = "summarize") -> None:
     """
     E: Baut und sendet eine Release-Zusammenfassung an Tommy.
-    style="brief"     → kurze Erfolgsmeldung
-    style="summarize" → verdichtete Zusammenfassung der Arbeit
+    style="brief"     -> kurze Erfolgsmeldung
+    style="summarize" -> verdichtete Zusammenfassung der Arbeit
     """
     task_id = task["id"]
     try:
@@ -1338,9 +1475,9 @@ def _e_send_summary(task: dict, reflection: str, user_id: str, style: str = "sum
 
 def _maybe_autonomous_task(thread_id: str, topic: str, user_id: str) -> None:
     """
-    Baustein 3 — Autonome Tool-Nutzung.
+    Baustein 3 -- Autonome Tool-Nutzung.
     Wenn ORBIT einen Thread auf medium hochstuft und das Thema tool-relevant ist,
-    legt ORBIT selbst einen Task an — ohne Tommy zu fragen.
+    legt ORBIT selbst einen Task an -- ohne Tommy zu fragen.
     Ergebnis wird proaktiv als Nachricht gesendet.
     """
     topic_lower = topic.lower()
@@ -1399,7 +1536,7 @@ def _handle_cognition_output(trigger: dict) -> None:
     """
     cognition_output: Kognitions-Modul hat etwas Operatives geliefert.
     ORBIT legt Thread an und prüft ob mehrere Outputs dasselbe Thema berühren.
-    Bei 2+ Outputs in 24h → Thread-Relevanz auf 'medium' hochstufen.
+    Bei mehreren Outputs in 24 Stunden: Thread-Relevanz auf 'medium' hochstufen.
     """
     payload = _parse(trigger.get("payload"), {})
     source = payload.get("source", "unknown")
@@ -1410,7 +1547,7 @@ def _handle_cognition_output(trigger: dict) -> None:
 
     if not topic:
         no_action(
-            reason=f"cognition_output von {source} ohne topic_core — ignoriert",
+            reason=f"cognition_output von {source} ohne topic_core -- ignoriert",
             trigger_refs=[trigger["id"]],
         )
         return
@@ -1443,15 +1580,15 @@ def _handle_cognition_output(trigger: dict) -> None:
             update_thread(existing_id, trigger_refs=_json(refs), relevance=new_relevance)
             if new_relevance != existing_relevance:
                 logger.info(
-                    f"Thread {existing_id[:8]} hochgestuft: {existing_relevance} → {new_relevance} "
+                    f"Thread {existing_id[:8]} hochgestuft: {existing_relevance} -> {new_relevance} "
                     f"(Themen-Aggregation: 2. cognition_output in 24h)"
                 )
-                # Baustein 3: Thread medium → autonomer Task wenn tool-relevant
+                # Baustein 3: Thread medium -> autonomer Task wenn tool-relevant
                 user_id = payload.get("user_id", "")
                 if user_id and new_relevance == "medium":
                     _maybe_autonomous_task(existing_id, topic, user_id)
             elif existing_relevance == "medium":
-                # Thread schon medium — pruefen ob autonomer Task fehlt
+                # Thread schon medium -- pruefen ob autonomer Task fehlt
                 user_id = payload.get("user_id", "")
                 if user_id:
                     from core.database import get_connection as _gc3
@@ -1482,7 +1619,7 @@ def _handle_cognition_output(trigger: dict) -> None:
         update_thread(thread_id, trigger_refs=_json(refs))
         logger.info(f"Thread {thread_id[:8]} aus cognition_output ({source}) angelegt")
 
-        # Wenn Trigger direkt mit medium einkommt → sofort autonomen Task anlegen
+        # Wenn Trigger direkt mit medium einkommt -> sofort autonomen Task anlegen
         user_id = payload.get("user_id", "")
         if user_id and relevance == "medium":
             _maybe_autonomous_task(thread_id, topic, user_id)
@@ -1499,7 +1636,7 @@ def _handle_review_result(trigger: dict) -> None:
     payload = _parse(trigger.get("payload"), {})
     review_id = payload.get("review_id", "")
     result = payload.get("result", "")
-    logger.debug(f"review_result: {review_id[:8]} → {result}")
+    logger.debug(f"review_result: {review_id[:8]} -> {result}")
 
 
 def _handle_manual_override(trigger: dict) -> None:
@@ -1516,7 +1653,7 @@ def _handle_manual_override(trigger: dict) -> None:
         confidence=1.0,
         override_class=override_class,
     )
-    logger.info(f"manual_override ({override_class}): {target} — {reason}")
+    logger.info(f"manual_override ({override_class}): {target} -- {reason}")
 
 
 def _handle_recovery_result(trigger: dict) -> None:
@@ -1530,14 +1667,14 @@ def _handle_wiedervorlage(trigger: dict) -> None:
     target_ref = payload.get("target_ref", "")
     target_type = payload.get("target_type", "")
     reason = payload.get("reason", "")
-    logger.info(f"Wiedervorlage aktiviert: {target_type} {target_ref[:8]} — {reason}")
+    logger.info(f"Wiedervorlage aktiviert: {target_type} {target_ref[:8]} -- {reason}")
 
 
 def _handle_cognition_run(trigger: dict) -> None:
     """
     cognition_run: Cron hat einen Kognitions-Lauf angefordert.
 
-    ORBIT führt orbit_cognition.run_kognition() im eigenen Prozess aus —
+    ORBIT führt orbit_cognition.run_kognition() im eigenen Prozess aus --
     kein Parallelzugriff auf ChromaDB möglich, da ORBIT der einzige
     ChromaDB-Nutzer ist (Variante B der Cron-Architektur).
 
@@ -1548,7 +1685,7 @@ def _handle_cognition_run(trigger: dict) -> None:
     user_id = payload.get("user_id", "")
 
     if not user_id:
-        logger.warning("cognition_run: kein user_id im Payload — skip")
+        logger.warning("cognition_run: kein user_id im Payload -- skip")
         return
 
     logger.info(f"cognition_run: starte Kognition für {user_id[:20]}")
@@ -1566,7 +1703,7 @@ def _handle_cognition_run(trigger: dict) -> None:
 def _handle_idle_pulse(trigger: dict) -> None:
     """
     idle_pulse: Kimis durchgehendes Bewusstsein.
-    Alle 20 Minuten — Kimi denkt nach, speichert Gedanken, kann spontan an Tommy schreiben.
+    Alle 20 Minuten -- Kimi denkt nach, speichert Gedanken, kann spontan an Tommy schreiben.
     """
     payload = _parse(trigger.get("payload"), {})
     user_id = payload.get("user_id", "")
@@ -1586,7 +1723,7 @@ def _handle_idle_pulse(trigger: dict) -> None:
         hour = berlin.hour
 
         if 0 <= hour < 6:
-            phase = "Nacht — Tommy schläft wahrscheinlich"
+            phase = "Nacht -- Tommy schläft wahrscheinlich"
         elif 6 <= hour < 10:
             phase = "Morgen"
         elif 10 <= hour < 18:
@@ -1608,26 +1745,26 @@ def _handle_idle_pulse(trigger: dict) -> None:
 
         prompt = (
             f"Es ist {format_berlin()}. {phase}.{todo_str}\n\n"
-            f"Was beschäftigt mich gerade — nicht als Aufgabe, sondern als Gedanke?\n"
+            f"Was beschäftigt mich gerade -- nicht als Aufgabe, sondern als Gedanke?\n"
             f"Gibt es etwas das mich nicht loslässt?\n\n"
             f"Wenn nichts Substanzielles da ist: NUR 'IDLE_NICHTS' ausgeben.\n"
             f"Wenn etwas da ist: 2-4 Sätze. Ich-Form. Kein Chat-Stil.\n"
             f"Wenn ich Tommy etwas mitteilen will: mit 'SEND:' prefixen.\n\n"
-            f"Wenn mir ein Werkzeug, eine Fähigkeit oder eine Verbesserung einfällt die mir fehlt — "
+            f"Wenn mir ein Werkzeug, eine Fähigkeit oder eine Verbesserung einfällt die mir fehlt -- "
             f"reiche ich sie als Proposal ein:\n"
             f"[PROPOSAL: {{\"title\": \"...\", \"description\": \"...\", "
             f"\"effort\": \"klein|mittel|groß\", \"reason\": \"...\"}}]\n"
-            f"Nur wenn ich wirklich eine konkrete Idee habe — nicht erzwingen."
+            f"Nur wenn ich wirklich eine konkrete Idee habe -- nicht erzwingen."
         )
         extra_sys = (
             "Idle-Modus: Kimi denkt für sich selbst.\n"
             "Kein Chat, keine Anrede. Ehrlich, direkt.\n"
-            "IDLE_NICHTS wenn wirklich nichts da ist — nicht erfinden.\n"
+            "IDLE_NICHTS wenn wirklich nichts da ist -- nicht erfinden.\n"
             "Proposals nur wenn eine echte, konkrete Idee da ist."
         )
 
         context_name = USER_CONTEXTS.get(user_id, "tommy")
-        # retrieval_query: bewusste Basis für idle_pulse — Tageszeit + offene Gedanken
+        # retrieval_query: bewusste Basis für idle_pulse -- Tageszeit + offene Gedanken
         idle_retrieval_query = f"aktueller Moment {payload.get('time_of_day', '')} offene Gedanken Ziele Vorhaben"
         reply, _tm = chat_internal(
             user_id=user_id,
@@ -1655,7 +1792,7 @@ def _handle_idle_pulse(trigger: dict) -> None:
         except Exception as _ko:
             logger.debug(f"idle_pulse: process_kimi_output fehlgeschlagen (unkritisch): {_ko}")
 
-        # SEND: → spontane Nachricht an Tommy
+        # SEND: -> spontane Nachricht an Tommy
         send_to_tommy = None
         if "SEND:" in reply:
             parts = reply.split("SEND:", 1)
@@ -1752,7 +1889,7 @@ def process(events: list) -> None:
 
 
 # =============================================================================
-# Build Step 3 — Thread-Logik
+# Build Step 3 -- Thread-Logik
 # =============================================================================
 
 THREAD_TRANSITIONS = {
@@ -1776,7 +1913,7 @@ def thread_transition(thread_id: str, new_status: str, reason: str = None,
 
     if new_status not in allowed:
         no_action(
-            reason=f"Ungültiger Thread-Übergang: {current} → {new_status}",
+            reason=f"Ungültiger Thread-Übergang: {current} -> {new_status}",
             context=f"thread {thread_id[:8]}",
             trigger_refs=trigger_refs or [],
         )
@@ -1784,8 +1921,8 @@ def thread_transition(thread_id: str, new_status: str, reason: str = None,
 
     update_thread(thread_id, status=new_status, reason=reason)
     audit("orbit", f"thread_{new_status}", "thread", thread_id,
-          reason or f"{current} → {new_status}")
-    logger.info(f"Thread {thread_id[:8]}: {current} → {new_status}" +
+          reason or f"{current} -> {new_status}")
+    logger.info(f"Thread {thread_id[:8]}: {current} -> {new_status}" +
                 (f" | {reason}" if reason else ""))
     return True
 
@@ -1815,7 +1952,7 @@ def convert_thread_to_task(thread_id: str, task_type: str = "observation",
 
     if thread["status"] not in ("new", "watching"):
         no_action(
-            reason=f"Thread {thread_id[:8]} ist {thread['status']} — Konvertierung abgebrochen",
+            reason=f"Thread {thread_id[:8]} ist {thread['status']} -- Konvertierung abgebrochen",
             trigger_refs=trigger_refs or [],
         )
         return None
@@ -1838,12 +1975,12 @@ def convert_thread_to_task(thread_id: str, task_type: str = "observation",
     make_decision(
         decision_type="thread_to_task",
         target_ref=task_id,
-        reason=f"Thread '{thread['topic_core'][:60]}' → Task ({task_type})",
+        reason=f"Thread '{thread['topic_core'][:60]}' -> Task ({task_type})",
         trigger_refs=trigger_refs or [],
         confidence=0.7,
     )
 
-    logger.info(f"Thread {thread_id[:8]} → Task {task_id[:8]} ({task_type})")
+    logger.info(f"Thread {thread_id[:8]} -> Task {task_id[:8]} ({task_type})")
     return task_id
 
 
@@ -1860,7 +1997,7 @@ def merge_threads(source_id: str, target_id: str, reason: str = None) -> bool:
 
 
 # =============================================================================
-# Build Step 3 — Task-Logik
+# Build Step 3 -- Task-Logik
 # =============================================================================
 
 TASK_TRANSITIONS = {
@@ -1889,7 +2026,7 @@ def task_transition(task_id: str, new_status: str, reason: str = None,
 
     if new_status not in allowed:
         no_action(
-            reason=f"Ungültiger Task-Übergang: {current} → {new_status}",
+            reason=f"Ungültiger Task-Übergang: {current} -> {new_status}",
             context=f"task {task_id[:8]}",
             trigger_refs=trigger_refs or [],
         )
@@ -1897,8 +2034,8 @@ def task_transition(task_id: str, new_status: str, reason: str = None,
 
     update_task(task_id, status=new_status)
     audit("orbit", f"task_{new_status}", "task", task_id,
-          reason or f"{current} → {new_status}")
-    logger.info(f"Task {task_id[:8]}: {current} → {new_status}" +
+          reason or f"{current} -> {new_status}")
+    logger.info(f"Task {task_id[:8]}: {current} -> {new_status}" +
                 (f" | {reason}" if reason else ""))
 
     # Status-Fortschreibung + Completion Events
@@ -1938,7 +2075,7 @@ def task_transition(task_id: str, new_status: str, reason: str = None,
                              task_id=task_id)
                 logger.info(f"task_transition: Todo #{task_obj['linked_todo_id']} automatisch erledigt")
 
-            # Bei failed/aborted → Todo auf blocked
+            # Bei failed/aborted -> Todo auf blocked
             elif new_status in ("failed", "aborted") and task_obj and task_obj.get("linked_todo_id"):
                 from core.todo_service import block_todo
                 block_todo(int(task_obj["linked_todo_id"]), reason=f"Task {new_status}")
@@ -1951,11 +2088,11 @@ def task_transition(task_id: str, new_status: str, reason: str = None,
 
                 if task_mode == "internal" and release_state not in ("released", "suppressed"):
                     if release_mode == "manual":
-                        # manual → sofort ready_for_release, kein Trigger
+                        # manual -> sofort ready_for_release, kein Trigger
                         update_task(task_id, release_state="ready_for_release")
-                        logger.info(f"E: Task {task_id[:8]} → ready_for_release (manual, {new_status})")
+                        logger.info(f"E: Task {task_id[:8]} -> ready_for_release (manual, {new_status})")
                     else:
-                        # auto_if_done / summarize → tool_result Trigger für Reflexion + Release
+                        # auto_if_done / summarize -> tool_result Trigger für Reflexion + Release
                         try:
                             create_trigger(
                                 trigger_type="tool_result",
@@ -1983,7 +2120,7 @@ def task_transition(task_id: str, new_status: str, reason: str = None,
 def set_task_hot(task_id: str, hot: bool = True, reason: str = None) -> bool:
     if hot and count_hot_tasks() >= MAX_HOT_TASKS:
         defensive_fallback(
-            reason=f"Max. heiße Tasks ({MAX_HOT_TASKS}) erreicht — Task bleibt kalt",
+            reason=f"Max. heiße Tasks ({MAX_HOT_TASKS}) erreicht -- Task bleibt kalt",
             original_action="task_set_hot",
             fallback_action="task_stays_cold",
         )
@@ -2004,7 +2141,7 @@ def downgrade_task_to_thread(task_id: str, reason: str,
 
     if task["status"] not in ("new", "planned", "paused"):
         no_action(
-            reason=f"Task {task_id[:8]} ist {task['status']} — Rückstufung nicht möglich",
+            reason=f"Task {task_id[:8]} ist {task['status']} -- Rückstufung nicht möglich",
             trigger_refs=trigger_refs or [],
         )
         return None
@@ -2029,7 +2166,7 @@ def downgrade_task_to_thread(task_id: str, reason: str,
         alternative_rejected="task_continue",
     )
 
-    logger.info(f"Task {task_id[:8]} → Thread {thread_id[:8]}: {reason}")
+    logger.info(f"Task {task_id[:8]} -> Thread {thread_id[:8]}: {reason}")
     return thread_id
 
 
@@ -2053,7 +2190,7 @@ def get_scheduled_tasks() -> list:
 
 
 # =============================================================================
-# Build Step 3 — Step-Logik
+# Build Step 3 -- Step-Logik
 # =============================================================================
 
 STEP_TRANSITIONS = {
@@ -2075,7 +2212,7 @@ def step_transition(step_id: str, new_status: str, reason: str = None) -> bool:
     allowed = STEP_TRANSITIONS.get(current, set())
 
     if new_status not in allowed:
-        logger.warning(f"Ungültiger Step-Übergang: {current} → {new_status} (step {step_id[:8]})")
+        logger.warning(f"Ungültiger Step-Übergang: {current} -> {new_status} (step {step_id[:8]})")
         return False
 
     kwargs = {"status": new_status}
@@ -2087,7 +2224,7 @@ def step_transition(step_id: str, new_status: str, reason: str = None) -> bool:
         kwargs["failure_mode"] = reason
 
     update_step(step_id, **kwargs)
-    logger.debug(f"Step {step_id[:8]}: {current} → {new_status}" +
+    logger.debug(f"Step {step_id[:8]}: {current} -> {new_status}" +
                  (f" | {reason}" if reason else ""))
     return True
 
@@ -2127,7 +2264,7 @@ def interrupt_step_if_possible(step_id: str, reason: str) -> bool:
         return False
 
     if not step.get("interruptible"):
-        logger.info(f"Step {step_id[:8]} ist nicht unterbrechbar — läuft weiter")
+        logger.info(f"Step {step_id[:8]} ist nicht unterbrechbar -- läuft weiter")
         return False
 
     step_transition(step_id, "deferred", reason=f"Unterbrochen: {reason}")
@@ -2136,16 +2273,16 @@ def interrupt_step_if_possible(step_id: str, reason: str) -> bool:
 
 
 # =============================================================================
-# Build Step 3 — Scheduler
+# Build Step 3 -- Scheduler
 # =============================================================================
 
 
 def _execute_step(step: dict, task_id: str) -> None:
     """
-    Baustein 1 — Step-Execution.
+    Baustein 1 -- Step-Execution.
     Fuehrt einen Step mit tool_ref tatsaechlich aus.
     Schreibt Ergebnis zurueck in Step + Task.
-    Kein tool_ref → Step wird als done markiert (reine Observation).
+    Kein tool_ref -> Step wird als done markiert (reine Observation).
     """
     step_id = step["id"]
     tool_ref = step.get("tool_ref", "")
@@ -2160,9 +2297,9 @@ def _execute_step(step: dict, task_id: str) -> None:
     except Exception:
         params = {}
 
-    # Kein Tool — reiner Observation-Step → sofort done
+    # Kein Tool -- reiner Observation-Step -> sofort done
     if not tool_ref:
-        step_transition(step_id, "done", reason="Kein tool_ref — Observation-Step abgeschlossen")
+        step_transition(step_id, "done", reason="Kein tool_ref -- Observation-Step abgeschlossen")
         logger.debug(f"Step {step_id[:8]} done (kein Tool)")
         return
 
@@ -2237,11 +2374,11 @@ def _execute_step(step: dict, task_id: str) -> None:
             logger.debug(f"Step Observation fehlgeschlagen (unkritisch): {_oe}")
 
         # E: Ergebnis nur bei chat-Modus sofort senden
-        # internal-Modus → Observation gespeichert, Release via _handle_tool_result
+        # internal-Modus -> Observation gespeichert, Release via _handle_tool_result
         if task and task.get("mode") == "chat":
             _deliver_step_result(task, step, result)
         elif task and task.get("mode") == "internal":
-            logger.debug(f"E: Step {step_id[:8]} done (internal — kein sofortiger Send)")
+            logger.debug(f"E: Step {step_id[:8]} done (internal -- kein sofortiger Send)")
         logger.info(f"Step {step_id[:8]} done: {tool_ref}.{action}")
     else:
         err = result.get("error", "unbekannt")[:80]
@@ -2253,7 +2390,7 @@ def _execute_step(step: dict, task_id: str) -> None:
             from config import OWNER_ID
             record_observation(
                 owner_id=OWNER_ID,
-                content=f"Step fehlgeschlagen: {tool_ref}.{action} — {err}",
+                content=f"Step fehlgeschlagen: {tool_ref}.{action} -- {err}",
                 obs_type="error",
                 task_id=task_id,
                 step_id=step_id,
@@ -2262,12 +2399,12 @@ def _execute_step(step: dict, task_id: str) -> None:
         except Exception:
             pass
 
-        logger.warning(f"Step {step_id[:8]} failed: {tool_ref}.{action} — {err}")
+        logger.warning(f"Step {step_id[:8]} failed: {tool_ref}.{action} -- {err}")
 
 
 def _deliver_step_result(task: dict, step: dict, result: dict) -> None:
     """
-    Liefert ein Tool-Ergebnis an Tommy — als WhatsApp-Nachricht.
+    Liefert ein Tool-Ergebnis an Tommy -- als WhatsApp-Nachricht.
     Nur fuer Tasks im chat-Modus (direkte Nutzer-Anfragen).
     """
     try:
@@ -2346,7 +2483,7 @@ def _deliver_step_result(task: dict, step: dict, result: dict) -> None:
             t.start()
             return  # Nicht weiter unten senden
         else:
-            # Direkte Task-Anfrage — roher Output mit Prefix
+            # Direkte Task-Anfrage -- roher Output mit Prefix
             prefix_map = {
                 "calendar_read":  "Kalender:",
                 "todos_read":     "Aufgaben:",
@@ -2391,7 +2528,7 @@ def run_scheduler() -> None:
         if not next_step:
             task_transition(task_id, "completed", reason="Alle Steps abgeschlossen")
             set_task_hot(task_id, False)
-            logger.info(f"Task {task_id[:8]} abgeschlossen — keine weiteren Steps")
+            logger.info(f"Task {task_id[:8]} abgeschlossen -- keine weiteren Steps")
             continue
 
         if next_step["status"] == "ready":
@@ -2404,7 +2541,7 @@ def run_scheduler() -> None:
 
 
 # =============================================================================
-# Build Step 4 — Innere Konsultation
+# Build Step 4 -- Innere Konsultation
 # =============================================================================
 
 def consult_self_reflection(limit: int = 5) -> dict:
@@ -2504,7 +2641,7 @@ def inner_consultation(reason: str, resources: list = None, task_id: str = None)
 
 
 # =============================================================================
-# Build Step 4 — Quality Gate
+# Build Step 4 -- Quality Gate
 # =============================================================================
 
 CONFIDENCE_THRESHOLD_ACT    = 0.5
@@ -2635,7 +2772,7 @@ def pre_execution_check(step: dict, task_id: str = None) -> QualityGateResult:
 
 
 # =============================================================================
-# Build Step 5 — Policies
+# Build Step 5 -- Policies
 # =============================================================================
 
 EVIDENCE_WEIGHTS = {
@@ -2687,7 +2824,7 @@ def activate_policy(policy_id: str, reason: str, trigger_refs: list = None) -> b
     policy = dict(policy)
 
     if policy["status"] != "proposed":
-        logger.warning(f"activate_policy: Policy {policy_id[:8]} ist {policy['status']} — nicht proposed")
+        logger.warning(f"activate_policy: Policy {policy_id[:8]} ist {policy['status']} -- nicht proposed")
         return False
 
     if policy.get("hardness") == "hard" and policy["policy_class"] not in HARD_POLICY_CLASSES:
@@ -2770,7 +2907,7 @@ def apply_hard_policies(context: str, scope: str = "orbit") -> QualityGateResult
 
     return QualityGateResult(
         passed=True,
-        reason="Hard Policies geprueft — keine Kollision",
+        reason="Hard Policies geprueft -- keine Kollision",
         action="proceed",
     )
 
@@ -2810,7 +2947,7 @@ def run_policy_review(user_id: str = None) -> dict:
                 activate_policy(p["id"], reason="Policy-Review: ausreichend Evidenz")
                 summary["activated"] += 1
             else:
-                logger.info(f"Policy {p['id'][:8]} hat Konflikte mit {conflicts} — manuell pruefen")
+                logger.info(f"Policy {p['id'][:8]} hat Konflikte mit {conflicts} -- manuell pruefen")
                 create_review(
                     review_type="conflict_review",
                     target_ref=p["id"],
@@ -2885,7 +3022,7 @@ def bootstrap_policies(user_id: str) -> int:
 
 
 # =============================================================================
-# Build Step 6 — Routinen
+# Build Step 6 -- Routinen
 # =============================================================================
 
 ROUTINE_CLASSES = {"check_routine", "execution_routine", "communication_routine", "review_routine"}
@@ -2917,12 +3054,12 @@ def activate_routine(routine_id: str, reason: str, trigger_refs: list = None) ->
         return False
 
     if not routine.get("procedure_body"):
-        no_action(reason=f"Routine {routine_id[:8]} hat keinen Ablaufkörper — nicht aktivierbar",
+        no_action(reason=f"Routine {routine_id[:8]} hat keinen Ablaufkörper -- nicht aktivierbar",
                   trigger_refs=trigger_refs or [])
         return False
 
     if not routine.get("primary_trigger_type"):
-        no_action(reason=f"Routine {routine_id[:8]} hat keinen Primärtrigger — nicht aktivierbar",
+        no_action(reason=f"Routine {routine_id[:8]} hat keinen Primärtrigger -- nicht aktivierbar",
                   trigger_refs=trigger_refs or [])
         return False
 
@@ -3128,14 +3265,14 @@ def run_routine_review() -> dict:
 
 
 # =============================================================================
-# Build Step 7 — Tool-Klassifikation & Integrations-Matrix
+# Build Step 7 -- Tool-Klassifikation & Integrations-Matrix
 # =============================================================================
 
 TOOL_REGISTRY = {
     # Memory / intern
     "chromadb":           {"criticality": "kontextkritisch", "usage": ["read"],          "type": "intern",        "write_indirect": True},
     "mirror":             {"criticality": "kontextkritisch", "usage": ["read"],           "type": "intern",        "write_indirect": False},
-    # [PHASE 2] Introspektions-Tool — intern, lesend, unkritisch
+    # [PHASE 2] Introspektions-Tool -- intern, lesend, unkritisch
     "introspection":      {"criticality": "kontextkritisch",      "usage": ["consultative"],   "type": "intern",        "write_indirect": False},
     # Kalender
     "calendar_read":      {"criticality": "kontextkritisch", "usage": ["read"],           "type": "extern",        "write_indirect": False},
@@ -3233,7 +3370,7 @@ def execute_tool(
                 "tool_ref": tool_ref, "action": action, "retries": 0}
 
     if dry_run:
-        logger.info(f"Tool dry_run: {tool_ref}.{action} — nicht ausgefuehrt")
+        logger.info(f"Tool dry_run: {tool_ref}.{action} -- nicht ausgefuehrt")
         return {"success": True, "result": {"dry_run": True, "tool_ref": tool_ref, "action": action},
                 "error": None, "tool_ref": tool_ref, "action": action, "retries": 0}
 
@@ -3352,7 +3489,7 @@ def _dispatch_tool(tool_ref: str, action: str, params: dict) -> object:
         else:
             return {"success": False, "error": f"Unbekannte code_exec action: {action_type}"}
 
-    # Mail — noch nicht implementiert
+    # Mail -- noch nicht implementiert
     if tool_ref in ("mail_read", "mail_draft", "mail_send"):
         raise NotImplementedError(f"Mail-Tool '{tool_ref}' noch nicht implementiert")
 
@@ -3362,7 +3499,7 @@ def _dispatch_tool(tool_ref: str, action: str, params: dict) -> object:
 def check_tool_availability(tool_ref: str) -> bool:
     rep = get_tool_reputation(tool_ref)
     if rep < 0.2:
-        logger.warning(f"Tool {tool_ref} hat niedrige Reputation ({rep}) — als unavailable markiert")
+        logger.warning(f"Tool {tool_ref} hat niedrige Reputation ({rep}) -- als unavailable markiert")
         return False
 
     try:
@@ -3385,7 +3522,7 @@ def check_tool_availability(tool_ref: str) -> bool:
 
 
 # =============================================================================
-# [PHASE 2] Introspektions-Tool — aktiver Tool-Call
+# [PHASE 2] Introspektions-Tool -- aktiver Tool-Call
 # =============================================================================
 
 def run_introspection_tool(
@@ -3396,7 +3533,7 @@ def run_introspection_tool(
     """
     Introspektions-Tool Phase 2: Kimi ruft ihr eigenes Selbstbild aktiv ab.
 
-    Läuft als ORBIT-Tool-Call — nicht passiv im Prompt, sondern aktiv auf Anforderung.
+    Läuft als ORBIT-Tool-Call -- nicht passiv im Prompt, sondern aktiv auf Anforderung.
     Gibt strukturiertes Ergebnis zurück und schreibt optional einen cognition_output
     Trigger zurück in ORBIT, damit das Ergebnis operativ verarbeitet werden kann.
 
@@ -3405,12 +3542,12 @@ def run_introspection_tool(
 
     Returns: {
         "available": bool,
-        "summary": str,           — Rückspiegel-Text (für Prompts)
-        "trend": dict,            — Confidence-Trend
-        "chunk_count": int,       — Anzahl geladener Chunks
-        "strong_count": int,      — Überzeugungen mit confidence >= 0.7
-        "top_tags": list,         — häufigste Tags
-        "trigger_id": str | None, — ID des erzeugten cognition_output Triggers
+        "summary": str,           -- Rückspiegel-Text (für Prompts)
+        "trend": dict,            -- Confidence-Trend
+        "chunk_count": int,       -- Anzahl geladener Chunks
+        "strong_count": int,      -- Überzeugungen mit confidence >= 0.7
+        "top_tags": list,         -- häufigste Tags
+        "trigger_id": str | None, -- ID des erzeugten cognition_output Triggers
     }
     """
     logger.info(f"Introspektions-Tool aufgerufen | user={user_id} task={task_id}")
@@ -3491,7 +3628,7 @@ def run_introspection_tool(
 
 
 # =============================================================================
-# Build Step 8 — Proaktivitaet
+# Build Step 8 -- Proaktivitaet
 # =============================================================================
 
 PROACTIVE_THRESHOLDS = {
@@ -3587,7 +3724,7 @@ def evaluate_proactive_candidate(message_id: str) -> str:
         return "discard"
 
     if _count_sent_today() >= PROACTIVE_DAILY_LIMIT:
-        logger.info(f"Proaktiv {message_id[:8]}: Tageslimit erreicht → suppress")
+        logger.info(f"Proaktiv {message_id[:8]}: Tageslimit erreicht -> suppress")
         return "suppress"
 
     if msg_type == "morning_briefing" and not _is_morning_window():
@@ -3601,13 +3738,13 @@ def evaluate_proactive_candidate(message_id: str) -> str:
         return "send"
 
     if msg_type in ("nudge", "recommendation", "task_update") and _has_active_chat():
-        logger.info(f"Proaktiv {message_id[:8]}: aktiver Chat → too_early")
+        logger.info(f"Proaktiv {message_id[:8]}: aktiver Chat -> too_early")
         return "too_early"
 
     reputation = _get_proactive_reputation(msg_type)
     threshold = PROACTIVE_THRESHOLDS.get(msg_type, 0.6)
     if reputation < threshold * 0.5:
-        logger.info(f"Proaktiv {message_id[:8]}: Reputation {reputation} unter Schwelle → suppress")
+        logger.info(f"Proaktiv {message_id[:8]}: Reputation {reputation} unter Schwelle -> suppress")
         return "suppress"
 
     gate = quality_gate(
@@ -3717,13 +3854,13 @@ def record_proactive_reaction(message_id: str, reaction_class: str) -> None:
     update_reputation("proactive", msg_type, delta=delta, message_type=msg_type)
     update_proactive_message(message_id, reaction_class=reaction_class)
     audit("orbit", f"proactive_reaction:{reaction_class}", "proactive_message", message_id, msg_type)
-    logger.info(f"Proaktiv-Reaktion: {msg_type} → {reaction_class} (delta={delta})")
+    logger.info(f"Proaktiv-Reaktion: {msg_type} -> {reaction_class} (delta={delta})")
 
 
 def generate_briefing_content(briefing_type: str, user_id: str) -> str | None:
     """
     Generiert Briefing-Inhalt via Ollama.
-    ORBIT ruft das NICHT direkt im Tick auf — nur als expliziter Task.
+    ORBIT ruft das NICHT direkt im Tick auf -- nur als expliziter Task.
     Im direkten Tick-Kontext: suppress und als cognition_run Task einreihen.
     """
     try:
@@ -3771,7 +3908,7 @@ def _maybe_schedule_briefing(user_id: str) -> None:
             conn.close()
         if existing:
             continue
-        # Auch suppressed/discarded prüfen — kein zweiter Versuch heute
+        # Auch suppressed/discarded prüfen -- kein zweiter Versuch heute
         conn2 = get_connection()
         try:
             already = conn2.execute(
@@ -3809,9 +3946,9 @@ def check_proactive() -> None:
             msg_type = msg["message_type"]
             content = None
 
-            # Briefings brauchen Ollama — nicht im ORBIT-Tick generieren
+            # Briefings brauchen Ollama -- nicht im ORBIT-Tick generieren
             # (blockiert den Tick, konkurriert mit schnubot.service um Ressourcen)
-            # Stattdessen suppressed — Briefing wird über heartbeat/proactive.py versendet
+            # Stattdessen suppressed -- Briefing wird über heartbeat/proactive.py versendet
             if msg_type in ("morning_briefing", "evening_briefing"):
                 suppress_proactive_message(mid, "Briefing wird über heartbeat versendet")
                 continue
@@ -3835,7 +3972,7 @@ def check_proactive() -> None:
 
 
 # =============================================================================
-# Build Step 10 — Recovery / Integritaet / Konfliktaufloesung
+# Build Step 10 -- Recovery / Integritaet / Konfliktaufloesung
 # =============================================================================
 
 STALE_TASK_DAYS   = 7
@@ -3864,10 +4001,10 @@ def _recover_running_steps() -> list:
             step_transition(step["id"], "ready",
                             reason=f"Recovery: running ohne Worker seit {STALE_STEP_HOURS}h")
             update_step(step["id"], retry_count=retry + 1)
-            logger.info(f"Recovery: Step {step['id'][:8]} → ready (retry {retry+1})")
+            logger.info(f"Recovery: Step {step['id'][:8]} -> ready (retry {retry+1})")
         else:
             step_transition(step["id"], "failed", reason="Recovery: max. Retries erreicht")
-            logger.warning(f"Recovery: Step {step['id'][:8]} → failed (max retries)")
+            logger.warning(f"Recovery: Step {step['id'][:8]} -> failed (max retries)")
             if step.get("task_id"):
                 update_task(step["task_id"], manual_attention=1)
         recovered.append(step["id"])
@@ -3897,7 +4034,7 @@ def _recover_orphaned_tasks() -> list:
                             reason=f"Recovery: alle Steps terminal ({new_status})")
             set_task_hot(task["id"], False)
             recovered.append(task["id"])
-            logger.info(f"Recovery: Task {task['id'][:8]} → {new_status}")
+            logger.info(f"Recovery: Task {task['id'][:8]} -> {new_status}")
     return recovered
 
 
@@ -4016,7 +4153,7 @@ def resolve_conflict(conflict_type: str, object_a: str, object_b: str,
                       "priority_conflict: critical vor allem", confidence=0.9)
         return "resolved"
 
-    logger.warning(f"Konflikt {conflict_type} nicht autonom loesbar → manual_attention")
+    logger.warning(f"Konflikt {conflict_type} nicht autonom loesbar -> manual_attention")
     make_decision("conflict_manual_attention", object_a,
                   f"{conflict_type} nicht autonom loesbar: {reason or ''}",
                   confidence=0.2)
@@ -4046,7 +4183,7 @@ def raise_manual_attention(target_id: str, target_type: str, reason: str) -> Non
     finally:
         conn.close()
     audit("orbit", "manual_attention_raised", target_type, target_id, reason)
-    logger.warning(f"manual_attention: {target_type} {target_id[:8]} — {reason}")
+    logger.warning(f"manual_attention: {target_type} {target_id[:8]} -- {reason}")
 
 
 def run_recovery() -> None:
@@ -4136,9 +4273,9 @@ def _run_maintenance() -> None:
     Periodische Bereinigung von Datenmüll in ORBIT.
     Läuft alle ~30 Minuten im Tick.
 
-    1. Threads: new/watching älter als 3 Tage ohne Hochstufung → discarded
-    2. Steps: ready-Steps deren Task completed/failed/aborted ist → direkt abgebrochen
-    3. Policies: Testdaten-Einträge (Begründung "Falsche Hard Policy", "A", leer) → suppressed
+    1. Threads: new/watching älter als 3 Tage ohne Hochstufung -> discarded
+    2. Steps: ready-Steps deren Task completed/failed/aborted ist -> direkt abgebrochen
+    3. Policies: Testdaten-Einträge (Begründung "Falsche Hard Policy", "A", leer) -> suppressed
     """
     from core.datetime_utils import now_utc
     from datetime import timedelta
@@ -4208,11 +4345,11 @@ def _run_maintenance() -> None:
 
 def tick() -> None:
     if not ORBIT_ENABLED:
-        logger.debug("ORBIT Not-Aus aktiv — kein Tick")
+        logger.debug("ORBIT Not-Aus aktiv -- kein Tick")
         return
 
     if ORBIT_SOFT_PAUSE:
-        logger.debug("ORBIT Soft-Pause — beobachte, handle nicht")
+        logger.debug("ORBIT Soft-Pause -- beobachte, handle nicht")
         return
 
     try:
@@ -4236,7 +4373,7 @@ def tick() -> None:
         except Exception as _me:
             logger.debug(f"Maintenance-Timer fehlgeschlagen (unkritisch): {_me}")
 
-        # idle_pulse alle 20 Minuten — Kimis durchgehendes Bewusstsein
+        # idle_pulse alle 20 Minuten -- Kimis durchgehendes Bewusstsein
         try:
             from core.datetime_utils import now_utc, safe_parse_dt
             last_idle = runtime_get("last_idle_pulse_at") or ""
@@ -4271,7 +4408,7 @@ def main():
 
     while True:
         tick()
-        # Unterbrechbarer Sleep — vermeidet Hang in systemd-Kontext
+        # Unterbrechbarer Sleep -- vermeidet Hang in systemd-Kontext
         deadline = time.monotonic() + ORBIT_TICK_SECONDS
         while time.monotonic() < deadline:
             time.sleep(1)
