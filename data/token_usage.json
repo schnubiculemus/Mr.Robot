@@ -78,9 +78,9 @@
     "calls": 256
   },
   "2026-03-21": {
-    "prompt": 1916380,
-    "completion": 260349,
-    "total": 2176729,
-    "calls": 175
+    "prompt": 2007321,
+    "completion": 277754,
+    "total": 2285075,
+    "calls": 187
   }
 }

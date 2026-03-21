@@ -802,11 +802,15 @@ def init_kimi_b_schema(conn=None):
         except Exception:
             pass  # Spalte existiert bereits
 
-    # orbit_tasks — neue Verknüpfungsspalten
+    # orbit_tasks — neue Verknüpfungsspalten + E-Spalten (privater Arbeitsmodus)
     new_task_cols = [
         ("linked_todo_id", "INTEGER"),
         ("goal_id", "INTEGER"),
         ("proposal_id", "INTEGER"),
+        ("release_mode", "TEXT"),       # E: manual | auto_if_done | summarize
+        ("release_state", "TEXT"),      # E: not_released | ready_for_release | released | suppressed
+        ("loop_count", "INTEGER"),      # E: Schleifenschutz — wie oft wurde intern weitergearbeitet
+        ("max_loops", "INTEGER"),       # E: Limit für interne Schleifen (default 5)
     ]
     for col, col_type in new_task_cols:
         try:

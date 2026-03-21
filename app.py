@@ -363,12 +363,13 @@ def _process_chat(phone_number, text, display_name, context_name):
             if search_ctx:
                 logger.info("Web Search: starte zweiten Kimi-Call mit Suchergebnis")
                 try:
-                    search_reply, _ = ollama_chat(phone_number, text, history, context_name,
+                    search_reply, search_turn_meta = ollama_chat(phone_number, text, history, context_name,
                                                   doc_context=search_ctx)
                     search_reply = re.sub(r"\[SEARCH:\s*.+?\]", "", search_reply or "", flags=re.IGNORECASE).strip()
                     search_reply = re.sub(r"\n{3,}", "\n\n", search_reply).strip()
                     if search_reply:
                         reply = search_reply
+                        _turn_meta = search_turn_meta  # D: turn_meta aus finalem Call übernehmen
                         logger.info(f"Web Search: zweiter Call erfolgreich ({len(reply)} Zeichen)")
                     else:
                         logger.warning("Web Search: zweiter Call leer — behalte bereinigte Erstantwort")
@@ -380,12 +381,13 @@ def _process_chat(phone_number, text, display_name, context_name):
             if introspect_ctx:
                 logger.info("INTROSPECT: starte zweiten Kimi-Call")
                 try:
-                    introspect_reply, _ = ollama_chat(phone_number, text, history, context_name,
+                    introspect_reply, introspect_turn_meta = ollama_chat(phone_number, text, history, context_name,
                                                       doc_context=introspect_ctx)
                     introspect_reply = re.sub(r"\[INTROSPECT\]", "", introspect_reply or "", flags=re.IGNORECASE).strip()
                     introspect_reply = re.sub(r"\n{3,}", "\n\n", introspect_reply).strip()
                     if introspect_reply:
                         reply = introspect_reply
+                        _turn_meta = introspect_turn_meta  # D: turn_meta aus finalem Call übernehmen
                         logger.info(f"INTROSPECT: zweiter Call erfolgreich ({len(reply)} Zeichen)")
                     else:
                         logger.warning("INTROSPECT: zweiter Call leer")

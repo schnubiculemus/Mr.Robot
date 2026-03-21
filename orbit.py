@@ -272,31 +272,51 @@ def update_thread(thread_id: str, **kwargs) -> None:
 # Tasks (orbit_tasks)
 # =============================================================================
 
+# E: Standard release_mode je nach Modus
+_DEFAULT_RELEASE_MODE = {
+    "internal":    "summarize",    # autonome Arbeit → Zusammenfassung am Ende
+    "chat":        "auto_if_done", # Chat-Arbeit → sofort bei Abschluss
+    "background":  "manual",       # Hintergrund → nur auf Anfrage
+}
+E_MAX_LOOPS_DEFAULT = 5  # Schleifenschutz: max. interne Folgeschritte
+
+
 def create_task(task_type: str, goal: str, primary_origin: str,
                 mode: str = "background", priority: str = "medium",
                 source_thread_id: str = None,
                 linked_todo_id: int = None,
                 goal_id: int = None,
-                proposal_id: int = None) -> str:
-    """Legt einen neuen ORBIT-Task an mit optionalen Verknüpfungen."""
+                proposal_id: int = None,
+                release_mode: str = None,
+                max_loops: int = None) -> str:
+    """Legt einen neuen ORBIT-Task an mit optionalen Verknüpfungen.
+    E: release_mode steuert wann/ob Ergebnis nach außen geht.
+    """
     tid = new_id()
     now = to_iso()
+    # release_mode aus Modus ableiten wenn nicht explizit gesetzt
+    if release_mode is None:
+        release_mode = _DEFAULT_RELEASE_MODE.get(mode, "manual")
+    if max_loops is None:
+        max_loops = E_MAX_LOOPS_DEFAULT
     conn = get_connection()
     try:
         conn.execute(
             """INSERT INTO orbit_tasks
                (id, task_type, goal, status, mode, priority, primary_origin,
                 source_thread_id, linked_todo_id, goal_id, proposal_id,
+                release_mode, release_state, loop_count, max_loops,
                 created_at, updated_at)
-               VALUES (?, ?, ?, 'new', ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, 'new', ?, ?, ?, ?, ?, ?, ?, ?, 'not_released', 0, ?, ?, ?)""",
             (tid, task_type, goal, mode, priority, primary_origin,
              source_thread_id, linked_todo_id, goal_id, proposal_id,
-             now, now)
+             release_mode, max_loops, now, now)
         )
         conn.commit()
     finally:
         conn.close()
-    audit("orbit", "task_created", "task", tid, f"{task_type}: {goal[:60]}")
+    audit("orbit", "task_created", "task", tid,
+          f"{task_type}: {goal[:60]} [mode={mode}, release={release_mode}]")
     return tid
 
 
@@ -1133,9 +1153,105 @@ def _handle_tool_result(trigger: dict) -> None:
                 context={"task_id": task_id},
             )
 
+            # E: Release-Logik je nach release_mode
+            _e_handle_release(task, reply, user_id)
+
     except Exception as _re:
         logger.debug(f"_handle_tool_result: Kimi-Reflexion fehlgeschlagen (unkritisch): {_re}")
 
+
+
+def _e_handle_release(task: dict, reflection: str, user_id: str) -> None:
+    """
+    E: Release-Entscheidung nach internem Arbeitszyklus.
+    Wird nach Kimi-Reflexion aufgerufen wenn alle Steps terminal sind.
+
+    release_mode:
+      manual       → nichts senden, release_state=ready_for_release
+      auto_if_done → bei abgeschlossenem Task kurze Nachricht senden
+      summarize    → kompakte Zusammenfassung senden
+    """
+    task_id = task["id"]
+    release_mode = task.get("release_mode") or "manual"
+    task_status = task.get("status", "")
+
+    # Schleifenschutz prüfen
+    loop_count = int(task.get("loop_count") or 0)
+    max_loops = int(task.get("max_loops") or E_MAX_LOOPS_DEFAULT)
+    if loop_count >= max_loops:
+        logger.warning(f"E: Task {task_id[:8]} hat max_loops ({max_loops}) erreicht — kein weiterer Release")
+        update_task(task_id, release_state="suppressed")
+        return
+
+    if release_mode == "manual":
+        update_task(task_id, release_state="ready_for_release")
+        logger.info(f"E: Task {task_id[:8]} → ready_for_release (manual)")
+        return
+
+    if release_mode == "auto_if_done":
+        if task_status == "completed":
+            _e_send_summary(task, reflection, user_id, style="brief")
+        else:
+            update_task(task_id, release_state="ready_for_release")
+        return
+
+    if release_mode == "summarize":
+        _e_send_summary(task, reflection, user_id, style="summarize")
+        return
+
+
+def _e_send_summary(task: dict, reflection: str, user_id: str, style: str = "summarize") -> None:
+    """
+    E: Baut und sendet eine Release-Zusammenfassung an Tommy.
+    style="brief"    → kurze Erfolgsmeldung
+    style="summarize" → verdichtete Zusammenfassung der Arbeit
+    """
+    task_id = task["id"]
+    try:
+        from core.ollama_client import chat_internal
+        from core.whatsapp import send_message, init_waha
+        from core.database import save_message
+        from config import WAHA_API_KEY, OWNER_ID, USER_CONTEXTS
+
+        # Steps und Observations sammeln
+        steps = get_steps(task_id=task_id)
+        obs_summaries = []
+        for s in steps:
+            if s.get("result_summary"):
+                obs_summaries.append(s["result_summary"][:100])
+
+        obs_text = chr(10).join(f"- {o}" for o in obs_summaries[:5]) if obs_summaries else "(keine Beobachtungen)"
+
+        if style == "brief":
+            message = f"Erledigt: {task.get('goal','')[:80]}"
+        else:
+            summary_prompt = (
+                "Ich habe intern an einer Aufgabe gearbeitet: " + task.get("goal","")[:100] + chr(10) + chr(10)
+                + "Was ich beobachtet habe:" + chr(10) + obs_text + chr(10) + chr(10)
+                + "Meine Reflexion: " + reflection[:200] + chr(10) + chr(10)
+                + "Fasse das in 2-3 kurzen Saetzen fuer Tommy zusammen. "
+                + "Kein Markdown, kein Betreff, kein 'Ich habe'-Einstieg. Direkt zum Ergebnis."
+            )
+            summary, _ = chat_internal(
+                user_id=user_id,
+                message=summary_prompt,
+                chat_history=[],
+                extra_system="Kurze Zusammenfassung abgeschlossener interner Arbeit. Max 3 Saetze.",
+                retrieval_query=task.get("goal","")[:150],
+            )
+            message = summary.strip() if summary and len(summary.strip()) > 10 else f"Aufgabe abgeschlossen: {task.get('goal','')[:80]}"
+
+        # Senden
+        init_waha(WAHA_API_KEY)
+        send_message(OWNER_ID, message)
+        save_message(OWNER_ID, "assistant", message)
+        update_task(task_id, release_state="released",
+                   loop_count=int(task.get("loop_count") or 0) + 1)
+        logger.info(f"E: Task {task_id[:8]} Release gesendet: {message[:60]}")
+
+    except Exception as e:
+        logger.warning(f"E: _e_send_summary fehlgeschlagen: {e}")
+        update_task(task_id, release_state="ready_for_release")
 
 
 def _maybe_autonomous_task(thread_id: str, topic: str, user_id: str) -> None:
@@ -1740,6 +1856,22 @@ def task_transition(task_id: str, new_status: str, reason: str = None,
                              task_id=task_id)
                 logger.info(f"task_transition: Todo #{task_obj['linked_todo_id']} automatisch erledigt")
 
+            # E: bei completed + internal → Release-Logik anstoßen
+            if new_status == "completed" and task_obj and task_obj.get("mode") == "internal":
+                release_mode = task_obj.get("release_mode", "manual")
+                if release_mode in ("auto_if_done", "summarize"):
+                    create_trigger(
+                        trigger_type="tool_result",
+                        source="task_transition",
+                        payload={
+                            "task_id": task_id,
+                            "tool": "task_completion",
+                            "success": True,
+                            "result": f"Task abgeschlossen: {task_obj.get('goal','')[:80]}",
+                            "user_id": owner_id,
+                        },
+                    )
+
             # Bei failed/aborted → Todo auf blocked
             elif new_status in ("failed", "aborted") and task_obj and task_obj.get("linked_todo_id"):
                 from core.todo_service import block_todo
@@ -2007,9 +2139,13 @@ def _execute_step(step: dict, task_id: str) -> None:
         except Exception as _oe:
             logger.debug(f"Step Observation fehlgeschlagen (unkritisch): {_oe}")
 
-        # Ergebnis als proaktive Nachricht wenn Task im chat-Modus
+        # E: Ergebnis nur bei chat-Modus sofort senden
+        # internal-Modus → Observation gespeichert, kein sofortiges Senden
+        # Release passiert später via _handle_tool_result() je nach release_mode
         if task and task.get("mode") == "chat":
             _deliver_step_result(task, step, result)
+        elif task and task.get("mode") == "internal":
+            logger.debug(f"Step {step_id[:8]} done (internal — kein sofortiger Send): {tool_ref}.{action}")
         logger.info(f"Step {step_id[:8]} done: {tool_ref}.{action}")
     else:
         err = result.get("error", "unbekannt")[:80]
