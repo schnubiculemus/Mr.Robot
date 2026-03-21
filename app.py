@@ -392,69 +392,20 @@ def _process_chat(phone_number, text, display_name, context_name):
                 except Exception as e:
                     logger.error(f"INTROSPECT: zweiter Kimi-Call fehlgeschlagen: {e}")
 
-            # [gespeichert] Signal entfernen
-            reply = re.sub(r"\s*\[gespeichert\]\s*", " ", reply).strip()
-
-            # Todo-Parsing
-            _tasks_enabled = True
+            # Zentrale Output-Interpretation — einzige Stelle für alle Aktionen
             try:
-                import json as _j2
-                _tp = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "tools_config.json")
-                _tasks_enabled = {t["id"]: t for t in _j2.load(open(_tp))}.get("tasks", {}).get("enabled", True)
-            except Exception:
-                pass
-            if _tasks_enabled:
-                try:
-                    from core.todos import extract_all_todo_actions, execute_todo_action
-                    reply, todo_actions = extract_all_todo_actions(reply)
-                    for todo_action in todo_actions:
-                        todo_result = execute_todo_action(phone_number, todo_action)
-                        if todo_result:
-                            reply = reply + ("\n\n" if reply else "") + todo_result
-                except Exception as e:
-                    logger.warning(f"Todo-Parsing fehlgeschlagen: {e}")
-
-            # Calendar-Parsing
-            _calendar_enabled = False
-            try:
-                import json as _jc
-                _cp = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "tools_config.json")
-                _calendar_enabled = {t["id"]: t for t in _jc.load(open(_cp))}.get("calendar", {}).get("enabled", False)
-            except Exception:
-                pass
-            if _calendar_enabled:
-                try:
-                    from core.calendar.calendar_router import extract_calendar_action, execute_calendar_action
-                    reply, cal_action = extract_calendar_action(reply)
-                    if cal_action:
-                        cal_result = execute_calendar_action(cal_action)
-                        if cal_result:
-                            reply = reply + ("\n\n" if reply else "") + cal_result
-                except Exception as e:
-                    logger.warning(f"Calendar-Parsing fehlgeschlagen: {e}")
-
-            # Moltbook-Parsing — immer aktiv (kein Config-Gate)
-            if True:
-                try:
-                    from core.moltbook import extract_moltbook_action, execute_moltbook_action
-                    reply, mb_action = extract_moltbook_action(reply)
-                    if mb_action:
-                        mb_result = execute_moltbook_action(mb_action)
-                        if mb_result:
-                            reply = reply + ("\n\n" if reply else "") + mb_result
-                except Exception as e:
-                    logger.warning(f"Moltbook-Parsing fehlgeschlagen: {e}")
-
-            # Proposal-Parsing — Kimi reicht Projektvorschläge ein
-            try:
-                from core.proposals import extract_proposals, save_proposal
-                reply, proposals = extract_proposals(reply)
-                for proposal in proposals:
-                    save_proposal(proposal, source="chat")
-                    p_title = proposal.get("title", "Vorschlag")
-                    reply = reply + ("\n\n" if reply else "") + f"Vorschlag eingereicht: {p_title}"
+                from core.kimi_output import process_kimi_output
+                proc = process_kimi_output(
+                    source="chat",
+                    user_id=phone_number,
+                    raw_text=reply,
+                    visibility="public",
+                    context={"display_name": display_name},
+                )
+                reply = proc.to_reply()
             except Exception as e:
-                logger.warning(f"Proposal-Parsing fehlgeschlagen: {e}")
+                logger.warning(f"process_kimi_output fehlgeschlagen: {e}")
+                # Fallback: reply unverändert
 
 
 

@@ -1733,33 +1733,33 @@ def api_proposals_get():
     status = request.args.get("status", "pending")
     try:
         from core.proposals import get_proposals
-        proposals = get_proposals(status=status)
+        proposals = get_proposals(status=status if status != "all" else None)
         all_p = get_proposals(status=None)
         stats = {
-            "pending":  sum(1 for p in all_p if "pending" in p["tags"]),
-            "approved": sum(1 for p in all_p if "approved" in p["tags"]),
-            "rejected": sum(1 for p in all_p if "rejected" in p["tags"]),
-            "deferred": sum(1 for p in all_p if "deferred" in p["tags"]),
+            "pending":  sum(1 for p in all_p if p.get("status") == "pending"),
+            "approved": sum(1 for p in all_p if p.get("status") == "approved"),
+            "rejected": sum(1 for p in all_p if p.get("status") == "rejected"),
+            "deferred": sum(1 for p in all_p if p.get("status") == "deferred"),
         }
         return jsonify({"proposals": proposals, "stats": stats})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/api/proposals/<chunk_id>/action", methods=["POST"])
+@app.route("/api/proposals/<int:proposal_id>/action", methods=["POST"])
 @require_auth
-def api_proposal_action(chunk_id):
+def api_proposal_action(proposal_id):
     data = request.get_json()
     action = data.get("action")
     from config import OWNER_ID
     try:
         from core.proposals import approve_proposal, reject_proposal, defer_proposal
         if action == "approve":
-            ok = approve_proposal(chunk_id, OWNER_ID)
+            ok = approve_proposal(proposal_id, OWNER_ID)
         elif action == "reject":
-            ok = reject_proposal(chunk_id)
+            ok = reject_proposal(proposal_id)
         elif action == "defer":
-            ok = defer_proposal(chunk_id)
+            ok = defer_proposal(proposal_id)
         else:
             return jsonify({"error": "Unbekannte Aktion"}), 400
         return jsonify({"ok": ok})

@@ -654,29 +654,18 @@ def run_autonomous_reflection(
             _save_goal(ziel, user_id)
         result_id = _save_result(klassifikation, gedanke, supersedes, target, user_id)
 
-        # Vorhaben-Signale → Kimi-Todos + langfristige Ziele
+        # Zentrale Output-Interpretation
         if gedanke and klassifikation not in ("DISCARD",):
             try:
-                from core.todos import extract_intent_todos, extract_intent_goals, parse_and_execute_todos
-                # Explizite [PROPOSAL: ...] Blöcke
-                try:
-                    from core.proposals import extract_proposals, save_proposal
-                    _, props = extract_proposals(gedanke)
-                    for prop in props:
-                        save_proposal(prop, source="autonomous_reflection")
-                except Exception:
-                    pass
-                # Explizite [TODO_ACTION: ...] Blöcke
-                parse_and_execute_todos(gedanke, user_id)
-                # Dann Signalwort-Erkennung
-                new_todos = extract_intent_todos(gedanke, user_id)
-                if new_todos:
-                    logger.info(f"AutonomousReflection: {len(new_todos)} Kimi-Todo(s) angelegt")
-                new_goals = extract_intent_goals(gedanke, user_id)
-                if new_goals:
-                    logger.info(f"AutonomousReflection: {len(new_goals)} Kimi-Ziel(e) gespeichert")
+                from core.kimi_output import process_kimi_output
+                process_kimi_output(
+                    source="autonomous_reflection",
+                    user_id=user_id,
+                    raw_text=gedanke,
+                    visibility="internal",
+                )
             except Exception as _te:
-                logger.debug(f"AutonomousReflection: IntentTodo/Goal fehlgeschlagen (unkritisch): {_te}")
+                logger.debug(f"AutonomousReflection: process_kimi_output fehlgeschlagen (unkritisch): {_te}")
 
         # goal_tracker — Kimis aktive Zielverfolgung
         try:

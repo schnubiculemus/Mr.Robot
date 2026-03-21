@@ -483,7 +483,7 @@ def build_goals_context() -> str | None:
         logger.debug(f"build_goals_context fehlgeschlagen (unkritisch): {e}")
         return None
 
-def build_system_prompt(context_name=None, user_id=None, user_message=None, doc_context=None, mode="chat", extra_system=None):
+def build_system_prompt(context_name=None, user_id=None, user_message=None, doc_context=None, mode="chat", extra_system=None, prefetched_chunks=None):
     """
     Baut den System-Prompt dynamisch zusammen.
 
@@ -548,10 +548,15 @@ def build_system_prompt(context_name=None, user_id=None, user_message=None, doc_
     if global_rules:
         global_rule_ids = {c["id"] for c in global_rules}
 
-    # 7. Memory-Chunks (kontextabhängig)
-    if user_message and not doc_context:
+    # 7. Memory-Chunks — prefetched wenn möglich, sonst live fetchen
+    if not doc_context:
         try:
-            chunks = score_and_select(user_message)
+            if prefetched_chunks is not None:
+                chunks = prefetched_chunks
+            elif user_message:
+                chunks = score_and_select(user_message)
+            else:
+                chunks = []
             if global_rule_ids:
                 chunks = [c for c in chunks if c["id"] not in global_rule_ids]
             memory_prompt = build_memory_prompt(chunks)
@@ -722,9 +727,10 @@ def chat(user_id, message, chat_history, context_name=None, doc_context=None):
     system_prompt = build_system_prompt(
         context_name=context_name,
         user_id=user_id,
-        user_message=None,  # Retrieval bereits oben gemacht, nicht nochmal
+        user_message=message,  # Memory-Retrieval hier — gleiche Chunks für Prompt und MIRROR
         doc_context=doc_context,
         mode="chat",
+        prefetched_chunks=retrieved_chunks,  # bereits geladen, nicht nochmal fetchen
     )
     messages = [{"role": "system", "content": system_prompt}]
     messages.extend(chat_history)

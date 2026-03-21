@@ -1333,25 +1333,18 @@ def _handle_idle_pulse(trigger: dict) -> None:
             logger.debug("idle_pulse: nichts Substanzielles")
             return
 
-        # TODO_ACTION aus Kimi-Antwort parsen
+        # Zentrale Output-Interpretation
         try:
-            from core.todos import extract_all_todo_actions, execute_todo_action
-            _, todo_actions = extract_all_todo_actions(reply)
-            for action in todo_actions:
-                execute_todo_action(user_id, action)
-                logger.info(f"idle_pulse: Todo-Aktion ausgeführt: {action.get('action')} — {action.get('title', '')[:50]}")
-        except Exception as _ta:
-            logger.debug(f"idle_pulse: Todo-Parsing fehlgeschlagen (unkritisch): {_ta}")
-
-        # PROPOSAL aus Kimi-Antwort parsen
-        try:
-            from core.proposals import extract_proposals, save_proposal
-            _, proposals = extract_proposals(reply)
-            for proposal in proposals:
-                save_proposal(proposal, source="idle_pulse")
-                logger.info(f"idle_pulse: Proposal eingereicht: '{proposal.get('title', '')[:50]}'")
-        except Exception as _pp:
-            logger.debug(f"idle_pulse: Proposal-Parsing fehlgeschlagen (unkritisch): {_pp}")
+            from core.kimi_output import process_kimi_output
+            proc = process_kimi_output(
+                source="idle_pulse",
+                user_id=user_id,
+                raw_text=reply,
+                visibility="internal",
+            )
+            reply = proc.cleaned_text
+        except Exception as _ko:
+            logger.debug(f"idle_pulse: process_kimi_output fehlgeschlagen (unkritisch): {_ko}")
 
         # SEND: → spontane Nachricht an Tommy
         send_to_tommy = None

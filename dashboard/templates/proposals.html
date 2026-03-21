@@ -67,10 +67,8 @@ async function load(status) {
 
     list.innerHTML = data.proposals.map(p => {
         const date = p.created_at ? p.created_at.substring(0, 16).replace('T', ' ') : '';
-        const isPending = p.tags && p.tags.includes('pending');
-        const statusClass = p.tags && p.tags.includes('approved') ? 'approved'
-            : p.tags && p.tags.includes('rejected') ? 'rejected'
-            : p.tags && p.tags.includes('deferred') ? 'deferred' : 'pending';
+        const isPending = p.status === 'pending';
+        const statusClass = p.status || 'pending';
 
         return `<div class="proposal-card ${statusClass}">
             <div class="proposal-title">${p.title || 'Unbenannter Vorschlag'}</div>

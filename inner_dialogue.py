@@ -269,20 +269,17 @@ def run_inner_dialogue(
         store_chunk(chunk)
         logger.info(f"InnerDialogue: {chunk['id'][:8]} → replies_to: {target['id'][:8]} | {reply[:80]}")
 
-        # Vorhaben-Signale → Kimi-Todos
+        # Zentrale Output-Interpretation
         try:
-            from core.todos import extract_intent_todos, extract_intent_goals, parse_and_execute_todos
-            # Explizite [TODO_ACTION: ...] Blöcke zuerst
-            parse_and_execute_todos(reply, user_id)
-            # Dann Signalwort-Erkennung
-            new_todos = extract_intent_todos(reply, user_id)
-            if new_todos:
-                logger.info(f"{__name__}: {len(new_todos)} Kimi-Todo(s) angelegt")
-            new_goals = extract_intent_goals(reply, user_id)
-            if new_goals:
-                logger.info(f"{__name__}: {len(new_goals)} Kimi-Ziel(e) gespeichert")
+            from core.kimi_output import process_kimi_output
+            process_kimi_output(
+                source="inner_dialogue",
+                user_id=user_id,
+                raw_text=reply,
+                visibility="internal",
+            )
         except Exception as _te:
-            logger.debug(f"IntentTodo/Goal fehlgeschlagen (unkritisch): {_te}")
+            logger.debug(f"InnerDialogue: process_kimi_output fehlgeschlagen (unkritisch): {_te}")
 
         return chunk["id"]
 

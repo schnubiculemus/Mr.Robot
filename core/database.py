@@ -726,6 +726,57 @@ def get_consolidator_stats():
 # Soul Proposals
 # =============================================================================
 
+def init_kimi_proposals_table(conn=None):
+    """Erstellt die kimi_proposals Tabelle (operative Wahrheit für Proposals)."""
+    _own_conn = conn is None
+    if _own_conn:
+        conn = get_connection()
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS kimi_proposals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            description TEXT,
+            reason TEXT,
+            effort TEXT NOT NULL DEFAULT 'mittel',
+            status TEXT NOT NULL DEFAULT 'pending',
+            source_module TEXT NOT NULL DEFAULT 'chat',
+            created_at TEXT NOT NULL,
+            approved_at TEXT,
+            rejected_at TEXT,
+            approved_todo_id INTEGER,
+            approved_task_id TEXT,
+            last_error TEXT
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_kimi_proposals_status ON kimi_proposals(status)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_kimi_proposals_user ON kimi_proposals(user_id)")
+    if _own_conn:
+        conn.commit()
+        conn.close()
+
+
+def init_kimi_output_log_table(conn=None):
+    """Log aller process_kimi_output Aufrufe — für Debugging und Audit."""
+    _own_conn = conn is None
+    if _own_conn:
+        conn = get_connection()
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS kimi_output_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            actions_found TEXT,
+            actions_executed TEXT,
+            actions_failed TEXT,
+            created_at TEXT NOT NULL
+        )
+    """)
+    if _own_conn:
+        conn.commit()
+        conn.close()
+
+
 def init_soul_proposals_table(conn=None):
     """Erstellt die soul_proposals Tabelle falls nicht vorhanden."""
     _own_conn = conn is None
@@ -859,6 +910,8 @@ def init_soul_proposals_table(conn=None):
 
     # Soul Proposals
     init_soul_proposals_table(conn)
+    init_kimi_proposals_table(conn)
+    init_kimi_output_log_table(conn)
 
     conn.commit()
     conn.close()

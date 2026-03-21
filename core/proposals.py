@@ -1,33 +1,29 @@
 """
 core/proposals.py — Kimis Proposals-System
 
-Kimi kann Vorschläge für Programmierprojekte und Verbesserungen einreichen.
-Format im Chat oder in der Kognition:
+Proposals leben in SQLite (kimi_proposals Tabelle) — nicht in ChromaDB.
+ChromaDB ist für Memory-Chunks. SQLite ist für operative Objekte.
 
+Kimi reicht Proposals ein via:
 [PROPOSAL: {"title": "...", "description": "...", "effort": "klein|mittel|groß", "reason": "..."}]
 
-Vorschläge landen als 'proposal'-Chunks in ChromaDB mit Status 'pending'.
-Tommy kann im Dashboard approve/reject/defer.
-Approve → automatisch als kimi-Todo angelegt.
+Tommy sieht sie im Dashboard unter /proposals.
+Approve → Todo anlegen. Reject → abgelehnt. Defer → zurückgestellt.
 """
 
 import re
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 logger = logging.getLogger(__name__)
 
 PROPOSAL_PATTERN = re.compile(r'\[PROPOSAL:\s*(\{.*?\})\s*\]', re.DOTALL)
-
-VALID_EFFORTS = ("klein", "mittel", "groß", "gross")
+VALID_EFFORTS = ("klein", "mittel", "groß", "gross", "gros")
 
 
 def extract_proposals(text: str) -> tuple[str, list[dict]]:
-    """
-    Sucht [PROPOSAL: {...}] in Kimis Output.
-    Gibt (cleaned_text, [proposal_dict, ...]) zurück.
-    """
+    """Sucht [PROPOSAL: {...}] in Kimis Output. Gibt (cleaned_text, proposals) zurück."""
     matches = list(PROPOSAL_PATTERN.finditer(text))
     if not matches:
         return text, []
@@ -42,169 +38,151 @@ def extract_proposals(text: str) -> tuple[str, list[dict]]:
             proposal = json.loads(raw)
             proposals.append(proposal)
         except json.JSONDecodeError as e:
-            logger.warning(f"Proposal JSON parse error: {e} — raw: {match.group(1)[:100]}")
+            logger.warning(f"Proposal JSON parse error: {e}")
 
     return cleaned, proposals
 
 
-def save_proposal(proposal: dict, source: str = "chat") -> str | None:
+def save_proposal(proposal: dict, source: str = "chat", user_id: str = "") -> int | None:
     """
-    Speichert einen Vorschlag als Chunk in ChromaDB.
-    Returns: chunk_id oder None bei Fehler.
+    Speichert einen Proposal in SQLite.
+    Returns: proposal.id (int) oder None bei Fehler.
     """
     try:
-        from memory.memory_store import store_chunk
-        from memory.chunk_schema import create_chunk
+        from core.database import get_connection, init_kimi_proposals_table
+        from core.datetime_utils import to_iso
 
-        title = proposal.get("title", "Unbenannter Vorschlag")[:100]
-        description = proposal.get("description", "")[:500]
+        init_kimi_proposals_table()
+
+        title = proposal.get("title", "Unbenannter Vorschlag")[:200]
+        description = proposal.get("description", "")[:1000]
+        reason = proposal.get("reason", "")[:500]
         effort = proposal.get("effort", "mittel").lower()
         if effort not in VALID_EFFORTS:
             effort = "mittel"
-        reason = proposal.get("reason", "")[:300]
 
-        text = f"PROPOSAL: {title}"
-        if description:
-            text += f"\n\nBeschreibung: {description}"
-        if reason:
-            text += f"\n\nBegründung: {reason}"
-        text += f"\n\nAufwand: {effort}"
-
-        chunk = create_chunk(
-            text=text,
-            chunk_type="decision",
-            source="robot",
-            confidence=0.8,
-            epistemic_status="stated",
-            tags=["proposal", "pending", f"effort:{effort}", f"source:{source}"],
-        )
-        # Extra-Metadaten für Dashboard
-        chunk["metadata"]["proposal_status"] = "pending"
-        chunk["metadata"]["proposal_title"] = title
-        chunk["metadata"]["proposal_effort"] = effort
-
-        store_chunk(chunk)
-        logger.info(f"Proposal gespeichert: {chunk['id'][:8]} — '{title[:50]}'")
-        return chunk["id"]
+        conn = get_connection()
+        try:
+            cur = conn.execute(
+                """INSERT INTO kimi_proposals
+                   (user_id, title, description, reason, effort, status, source_module, created_at)
+                   VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)""",
+                (user_id, title, description, reason, effort, source, to_iso())
+            )
+            conn.commit()
+            proposal_id = cur.lastrowid
+            logger.info(f"Proposal gespeichert: #{proposal_id} — '{title[:50]}'")
+            return proposal_id
+        finally:
+            conn.close()
 
     except Exception as e:
         logger.warning(f"save_proposal fehlgeschlagen: {e}")
         return None
 
 
-def get_proposals(status: str = "pending") -> list[dict]:
-    """Lädt alle Proposals mit einem bestimmten Status aus ChromaDB."""
+def get_proposals(status: str = "pending", user_id: str = None) -> list[dict]:
+    """Lädt Proposals aus SQLite."""
     try:
-        from memory.memory_store import get_active_collection
-        col = get_active_collection()
-        results = col.get(
-            where={"$and": [
-                {"source": "robot"},
-                {"chunk_type": "decision"},
-            ]},
-            include=["documents", "metadatas", "ids"],
-        )
-        proposals = []
-        for i, doc in enumerate(results.get("documents") or []):
-            meta = (results.get("metadatas") or [{}])[i]
-            tags = str(meta.get("tags", ""))
-            if "proposal" not in tags:
-                continue
-            if status and f"pending" not in tags and status == "pending":
-                continue
-            if status and status not in tags and status != "pending":
-                continue
-            proposals.append({
-                "id": (results.get("ids") or [""])[i],
-                "text": doc,
-                "title": meta.get("proposal_title", ""),
-                "effort": meta.get("proposal_effort", "mittel"),
-                "status": meta.get("proposal_status", "pending"),
-                "created_at": meta.get("created_at", ""),
-                "tags": tags,
-            })
-        proposals.sort(key=lambda p: p["created_at"], reverse=True)
-        return proposals
+        from core.database import get_connection, init_kimi_proposals_table
+        init_kimi_proposals_table()
+        conn = get_connection()
+        try:
+            if status and status != "all":
+                rows = conn.execute(
+                    "SELECT * FROM kimi_proposals WHERE status=? ORDER BY created_at DESC",
+                    (status,)
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM kimi_proposals ORDER BY created_at DESC"
+                ).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
     except Exception as e:
         logger.warning(f"get_proposals fehlgeschlagen: {e}")
         return []
 
 
-def approve_proposal(chunk_id: str, user_id: str) -> bool:
-    """Genehmigt einen Vorschlag — legt automatisch ein kimi-Todo an."""
+def approve_proposal(proposal_id: int, user_id: str) -> bool:
+    """Genehmigt einen Proposal und legt automatisch ein kimi-Todo an."""
     try:
-        from memory.memory_store import get_active_collection
+        from core.database import get_connection
+        from core.datetime_utils import to_iso
         from core.todos import create_todo
-        from core.datetime_utils import now_berlin
-        from datetime import timedelta
 
-        col = get_active_collection()
-        result = col.get(ids=[chunk_id], include=["documents", "metadatas"])
-        if not result["ids"]:
-            return False
+        conn = get_connection()
+        try:
+            row = conn.execute(
+                "SELECT * FROM kimi_proposals WHERE id=?", (proposal_id,)
+            ).fetchone()
+            if not row:
+                return False
+            proposal = dict(row)
 
-        meta = result["metadatas"][0]
-        title = meta.get("proposal_title", "Proposal")
-        effort = meta.get("proposal_effort", "mittel")
+            # kimi-Todo anlegen
+            due = (datetime.now(timezone.utc) + timedelta(days=3)).strftime("%Y-%m-%d")
+            todo = create_todo(
+                user_id=user_id,
+                title=f"[Approved] {proposal['title']}",
+                description=f"Genehmigter Proposal. Aufwand: {proposal['effort']}. {proposal.get('description','')[:200]}",
+                priority="mittel",
+                project="kimi",
+                due_date=due,
+            )
 
-        # Status updaten
-        col.update(
-            ids=[chunk_id],
-            metadatas=[{**meta, "proposal_status": "approved", "tags": str(meta.get("tags", "")).replace("pending", "approved")}]
-        )
-
-        # kimi-Todo anlegen
-        due = (now_berlin() + timedelta(days=3)).strftime("%Y-%m-%d")
-        create_todo(
-            user_id=user_id,
-            title=f"[Approved] {title}",
-            description=f"Genehmigter Proposal. Aufwand: {effort}",
-            priority="mittel",
-            project="kimi",
-            due_date=due,
-        )
-        logger.info(f"Proposal approved: {chunk_id[:8]} — '{title[:50]}'")
-        return True
+            # Proposal updaten
+            conn.execute(
+                "UPDATE kimi_proposals SET status='approved', approved_at=?, approved_todo_id=? WHERE id=?",
+                (to_iso(), todo["id"] if todo else None, proposal_id)
+            )
+            conn.commit()
+            logger.info(f"Proposal #{proposal_id} approved → Todo #{todo['id'] if todo else '?'}")
+            return True
+        finally:
+            conn.close()
     except Exception as e:
         logger.warning(f"approve_proposal fehlgeschlagen: {e}")
         return False
 
 
-def reject_proposal(chunk_id: str) -> bool:
-    """Lehnt einen Vorschlag ab."""
+def reject_proposal(proposal_id: int) -> bool:
+    """Lehnt einen Proposal ab."""
     try:
-        from memory.memory_store import get_active_collection
-        col = get_active_collection()
-        result = col.get(ids=[chunk_id], include=["metadatas"])
-        if not result["ids"]:
-            return False
-        meta = result["metadatas"][0]
-        col.update(
-            ids=[chunk_id],
-            metadatas=[{**meta, "proposal_status": "rejected", "tags": str(meta.get("tags", "")).replace("pending", "rejected")}]
-        )
-        logger.info(f"Proposal rejected: {chunk_id[:8]}")
-        return True
+        from core.database import get_connection
+        from core.datetime_utils import to_iso
+        conn = get_connection()
+        try:
+            conn.execute(
+                "UPDATE kimi_proposals SET status='rejected', rejected_at=? WHERE id=?",
+                (to_iso(), proposal_id)
+            )
+            conn.commit()
+            logger.info(f"Proposal #{proposal_id} rejected")
+            return True
+        finally:
+            conn.close()
     except Exception as e:
         logger.warning(f"reject_proposal fehlgeschlagen: {e}")
         return False
 
 
-def defer_proposal(chunk_id: str) -> bool:
-    """Stellt einen Vorschlag zurück."""
+def defer_proposal(proposal_id: int) -> bool:
+    """Stellt einen Proposal zurück."""
     try:
-        from memory.memory_store import get_active_collection
-        col = get_active_collection()
-        result = col.get(ids=[chunk_id], include=["metadatas"])
-        if not result["ids"]:
-            return False
-        meta = result["metadatas"][0]
-        col.update(
-            ids=[chunk_id],
-            metadatas=[{**meta, "proposal_status": "deferred", "tags": str(meta.get("tags", "")).replace("pending", "deferred")}]
-        )
-        logger.info(f"Proposal deferred: {chunk_id[:8]}")
-        return True
+        from core.database import get_connection
+        conn = get_connection()
+        try:
+            conn.execute(
+                "UPDATE kimi_proposals SET status='deferred' WHERE id=?",
+                (proposal_id,)
+            )
+            conn.commit()
+            logger.info(f"Proposal #{proposal_id} deferred")
+            return True
+        finally:
+            conn.close()
     except Exception as e:
         logger.warning(f"defer_proposal fehlgeschlagen: {e}")
         return False

@@ -335,8 +335,10 @@ def _save_entry(entry_text, user_id):
 
     # Vorhaben-Signale → Kimi-Todos + langfristige Ziele
     try:
+        from core.kimi_output import process_kimi_output
+        process_kimi_output(source="diary", user_id=user_id, raw_text=entry_text, visibility="internal")
         from core.todos import extract_intent_todos, extract_intent_goals
-        new_todos = extract_intent_todos(entry_text, user_id)
+        new_todos = []  # handled by process_kimi_output
         if new_todos:
             logger.info(f"Tagebuch: {len(new_todos)} Kimi-Todo(s) angelegt")
         new_goals = extract_intent_goals(entry_text, user_id)
@@ -546,8 +548,9 @@ def run_diary_note(user_id: str, trigger_context: str) -> str | None:
 
     # Vorhaben-Signale → Kimi-Todos
     try:
-        from core.todos import extract_intent_todos
-        new_todos = extract_intent_todos(note_text, user_id)
+        from core.kimi_output import process_kimi_output
+        process_kimi_output(source="diary_note", user_id=user_id, raw_text=note_text, visibility="internal")
+        new_todos = []  # handled by process_kimi_output
         if new_todos:
             logger.info(f"DiaryNote: {len(new_todos)} Kimi-Todo(s) angelegt")
     except Exception as _te:
