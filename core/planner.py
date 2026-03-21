@@ -104,7 +104,9 @@ def collect_candidates(owner_id: str) -> dict:
             """SELECT * FROM orbit_tasks
                WHERE mode IN ('internal','background')
                AND status NOT IN ('completed','failed','aborted')
-               ORDER BY created_at DESC"""
+               AND (primary_origin LIKE ? OR primary_origin LIKE ? OR primary_origin LIKE ?)
+               ORDER BY created_at DESC""",
+            (f"user:{owner_id}%", f"kimi_todo:%", f"planner:%")
         ).fetchall()]
 
         # Letzte Observations pro Task (Fehler/Schleifen erkennen)
@@ -341,7 +343,7 @@ def score_candidates(candidates: dict, situation: dict) -> list:
     for t in situation["low_value"]:
         scored.append(_score_todo(t, DEFER))
 
-    # Proposals als potenzielle Arbeitslinien
+    # Proposals -- drei Klassen statt immer DEFER
     for p in candidates["proposals"]:
         goal_rel = W_GOAL_RELEVANCE * 0.4 if p.get("goal_id") and p["goal_id"] in active_goal_ids else 0.0
         effort_map = {"klein": 0.0, "mittel": W_EFFORT_PENALTY * 0.5, "gross": W_EFFORT_PENALTY, "groß": W_EFFORT_PENALTY}
@@ -349,17 +351,31 @@ def score_candidates(candidates: dict, situation: dict) -> list:
         days = _staleness_days(p)
         staleness = min(W_STALENESS * 0.5, days * 0.05)
         score = goal_rel + staleness - effort_pen
-        # Proposals werden nie direkt gestartet -- nur als Referenz
+
+        # Proposal-Klasse bestimmen
+        has_desc = bool(p.get("description") and len(p.get("description","")) > 20)
+        if goal_rel > 0 and effort_pen <= W_EFFORT_PENALTY * 0.5 and has_desc:
+            proposal_class = "proposal_ready"        # konkret + Zielbezug + kleiner Aufwand
+            decision = DEFER  # Proposals brauchen Genehmigung, aber als ready markiert
+        elif goal_rel > 0 or days > 7:
+            proposal_class = "proposal_relevant_but_not_now"
+            decision = DEFER
+        else:
+            proposal_class = "proposal_low_value"
+            decision = DROP_OR_PAUSE
+
         scored.append({
-            "type":      "proposal",
-            "id":        p["id"],
-            "title":     p.get("title",""),
-            "score":     round(score, 2),
-            "decision":  DEFER,  # Proposal braucht explizite Genehmigung
-            "blocked":   False,
-            "has_task":  False,
+            "type":           "proposal",
+            "id":             p["id"],
+            "title":          p.get("title",""),
+            "score":          round(score, 2),
+            "decision":       decision,
+            "proposal_class": proposal_class,
+            "blocked":        False,
+            "has_task":       False,
             "execution_mode": "none",
-            "goal_id":   p.get("goal_id"),
+            "goal_id":        p.get("goal_id"),
+            "entblockbar":    True,
         })
 
     # Sortierung: CONTINUE/UNBLOCK vor START vor DEFER, dann nach Score
@@ -492,21 +508,45 @@ def _format_line(item: dict | None) -> dict | None:
     if not item:
         return None
     return {
-        "kind":     item["type"],
-        "id":       item["id"],
-        "decision": item["decision"],
-        "reason":   item.get("reason", ""),
-        "title":    item.get("title",""),
+        "kind":           item["type"],
+        "id":             item["id"],
+        "decision":       item["decision"],
+        "reason":         item.get("reason", ""),
+        "title":          item.get("title",""),
+        "goal_id":        item.get("goal_id"),
+        "execution_mode": item.get("execution_mode","none"),
+        "task_template":  item.get("task_template"),
     }
 
 
 def _format_blocked(scored: list) -> list:
-    return [
-        {"kind": s["type"], "id": s["id"], "decision": s["decision"],
-         "reason": "blockiert oder niedrige Prioritaet"}
-        for s in scored
-        if s["decision"] in (UNBLOCK_LINE, DEFER) and not s.get("entblockbar", True)
-    ][:3]
+    """
+    Gibt alle Blocker-relevanten Linien zurueck -- differenziert:
+    - UNBLOCK_LINE entblockbar: priorisierbar
+    - UNBLOCK_LINE nicht entblockbar: hart blockiert
+    - DEFER mit Proposal-Klasse: bewusst zurueckgestellt
+    """
+    result = []
+    for s in scored:
+        if s["decision"] == UNBLOCK_LINE:
+            result.append({
+                "kind":         s["type"],
+                "id":           s["id"],
+                "decision":     UNBLOCK_LINE,
+                "entblockbar":  s.get("entblockbar", True),
+                "reason":       "entblockbar" if s.get("entblockbar", True) else "hart blockiert",
+                "title":        s.get("title",""),
+            })
+        elif s["decision"] == DEFER and s.get("proposal_class") == "proposal_ready":
+            result.append({
+                "kind":           s["type"],
+                "id":             s["id"],
+                "decision":       DEFER,
+                "proposal_class": s.get("proposal_class"),
+                "reason":         "Proposal bereit -- wartet auf Genehmigung",
+                "title":          s.get("title",""),
+            })
+    return result[:5]
 
 
 # =============================================================================
@@ -549,15 +589,21 @@ def maybe_start_task(chosen: list, owner_id: str) -> list:
                 proposal_id=line.get("proposal_id"),
             )
 
-            # Ersten Step je nach Template
+            # Ersten Step je nach Template -- operativ differenziert
+            import json as _json
             template_steps = {
-                "analysis":       ("todos_read",  '{"action": "list", "project": "kimi"}'),
-                "implementation": ("todos_read",  '{"action": "list"}'),
-                "review":         ("todos_read",  '{"action": "list"}'),
-                "unblock":        ("todos_read",  '{"action": "list"}'),
-                "maintenance":    ("todos_read",  '{"action": "list"}'),
+                # analysis: Kimi-Todos und Kontext lesen, dann bewerten
+                "analysis": ("todos_read", _json.dumps({"action": "list", "project": "kimi"})),
+                # implementation: alle offenen Todos + Workspace
+                "implementation": ("todos_read", _json.dumps({"action": "list"})),
+                # review: Observations und letzte Aktivitaet sichten
+                "review": ("todos_read", _json.dumps({"action": "list", "project": "kimi"})),
+                # unblock: direkt pruefen was blockiert
+                "unblock": ("todos_read", _json.dumps({"action": "list", "status": "blocked"})),
+                # maintenance: Workspace-Zustand pruefen
+                "maintenance": ("code_exec", _json.dumps({"action": "list"})),
             }
-            step_tool, step_desc = template_steps.get(tmpl, ("todos_read", '{"action": "list"}'))
+            step_tool, step_desc = template_steps.get(tmpl, ("todos_read", _json.dumps({"action": "list"})))
 
             _orbit.create_step(
                 task_id=task_id,
