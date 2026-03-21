@@ -26,6 +26,20 @@ def create_proposal(owner_id: str, title: str, description: str = None,
         now = to_iso()
         conn = get_connection()
         try:
+            # Dedupe: ähnlicher Proposal bereits pending?
+            existing = conn.execute(
+                "SELECT id, title FROM kimi_proposals WHERE owner_id=? AND status='pending'",
+                (owner_id,)
+            ).fetchall()
+            title_words = set(w.lower() for w in title.split() if len(w) > 4)
+            for row in existing:
+                row_words = set(w.lower() for w in row["title"].split() if len(w) > 4)
+                if title_words and row_words:
+                    overlap = len(title_words & row_words) / len(title_words)
+                    if overlap > 0.6:
+                        logger.info(f"create_proposal: ähnlicher Proposal #{row['id']} bereits pending, skip")
+                        return get_proposal(row["id"])
+
             cur = conn.execute(
                 """INSERT INTO kimi_proposals
                    (owner_id, goal_id, title, description, reason, effort,
@@ -42,7 +56,24 @@ def create_proposal(owner_id: str, title: str, description: str = None,
             conn.close()
     except Exception as e:
         logger.warning(f"create_proposal fehlgeschlagen: {e}")
+        # last_error in DB nicht möglich da Objekt noch nicht existiert — nur loggen
         return None
+
+
+def set_last_error(proposal_id: int, error: str) -> None:
+    """Setzt last_error auf dem Proposal — für Debugging und Dashboard."""
+    try:
+        conn = get_connection()
+        try:
+            conn.execute(
+                "UPDATE kimi_proposals SET last_error=?, updated_at=? WHERE id=?",
+                (str(error)[:500], to_iso(), proposal_id)
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.debug(f"set_last_error fehlgeschlagen: {e}")
 
 
 def get_proposal(proposal_id: int) -> dict | None:
@@ -157,6 +188,7 @@ def approve_proposal(proposal_id: int, owner_id: str) -> dict | None:
         except Exception as _db_err:
             # Kompensation: Todo wieder löschen da Proposal-Update fehlschlug
             logger.warning(f"approve_proposal: DB-Update fehlgeschlagen, kompensiere: {_db_err}")
+            set_last_error(proposal_id, f"approve fehlgeschlagen: {_db_err}")
             try:
                 delete_todo(todo["id"])
             except Exception:

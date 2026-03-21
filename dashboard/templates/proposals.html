@@ -13,6 +13,7 @@
 <div class="tab-bar">
     <button class="tab active" data-status="pending">Offen</button>
     <button class="tab" data-status="approved">Genehmigt</button>
+    <button class="tab" data-status="implemented">Umgesetzt</button>
     <button class="tab" data-status="deferred">Zurückgestellt</button>
     <button class="tab" data-status="rejected">Abgelehnt</button>
 </div>
@@ -41,6 +42,11 @@
 .empty-state { text-align: center; padding: 60px 20px; color: var(--text-4); font-size: 14px; }
 .header-stats { display: flex; gap: 16px; }
 .stat-pill { padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 500; background: var(--surface-2); border: 1px solid var(--border); color: var(--text-2); }
+.proposal-reason { font-size: 12px; color: var(--text-3); font-style: italic; margin-bottom: 10px; line-height: 1.5; }
+.proposal-links { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.link-badge { padding: 2px 8px; border-radius: 4px; font-size: 11px; background: var(--surface-2); border: 1px solid var(--border); color: var(--accent); font-weight: 500; }
+.source-badge { padding: 2px 8px; border-radius: 4px; font-size: 11px; background: var(--surface-2); color: var(--text-3); }
+.error-badge { margin-top: 8px; padding: 6px 10px; border-radius: 6px; font-size: 11px; color: var(--red); background: var(--red-light); }
 </style>
 
 <script>
@@ -68,15 +74,33 @@ async function load(status) {
     list.innerHTML = data.proposals.map(p => {
         const date = p.created_at ? p.created_at.substring(0, 16).replace('T', ' ') : '';
         const isPending = p.status === 'pending';
+        const isApproved = p.status === 'approved';
         const statusClass = p.status || 'pending';
+
+        // Verknüpfungen
+        const todoLink = p.approved_todo_id
+            ? `<span class="link-badge">Todo #${p.approved_todo_id}</span>` : '';
+        const taskLink = p.approved_task_id
+            ? `<span class="link-badge">Task ${p.approved_task_id.substring(0,8)}</span>` : '';
+        const goalLink = p.goal_id
+            ? `<span class="link-badge">Goal #${p.goal_id}</span>` : '';
+        const errorBadge = p.last_error
+            ? `<div class="error-badge">⚠ ${p.last_error.substring(0,80)}</div>` : '';
+
+        const links = (todoLink || taskLink || goalLink)
+            ? `<div class="proposal-links">${goalLink}${todoLink}${taskLink}</div>` : '';
 
         return `<div class="proposal-card ${statusClass}">
             <div class="proposal-title">${p.title || 'Unbenannter Vorschlag'}</div>
-            <div class="proposal-text">${p.text || ''}</div>
+            ${p.description ? `<div class="proposal-text">${p.description.substring(0,300)}${p.description.length > 300 ? '…' : ''}</div>` : ''}
+            ${p.reason ? `<div class="proposal-reason">💡 ${p.reason.substring(0,150)}${p.reason.length > 150 ? '…' : ''}</div>` : ''}
             <div class="proposal-meta">
                 <span class="effort-badge">Aufwand: ${p.effort || 'mittel'}</span>
+                <span class="source-badge">${p.source_type || 'chat'}</span>
                 <span class="date-text">${date}</span>
             </div>
+            ${links}
+            ${errorBadge}
             ${isPending ? `<div class="proposal-actions">
                 <button class="btn-approve" onclick="action('${p.id}', 'approve')">✓ Genehmigen</button>
                 <button class="btn-defer" onclick="action('${p.id}', 'defer')">↩ Zurückstellen</button>
