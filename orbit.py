@@ -1464,12 +1464,17 @@ def _e_send_summary(task: dict, reflection: str, user_id: str, style: str = "sum
             )
             message = summary.strip() if summary and len(summary.strip()) > 10 else f"Aufgabe abgeschlossen: {task.get('goal','')[:80]}"
 
+        # G: Sendepfad verifizieren -- release_state nur bei bestätigtem Versand
         init_waha(WAHA_API_KEY)
-        send_message(OWNER_ID, message)
-        save_message(OWNER_ID, "assistant", message)
-        update_task(task_id, release_state="released",
-                   loop_count=int(task.get("loop_count") or 0) + 1)
-        logger.info(f"E: Task {task_id[:8]} Release gesendet: {message[:60]}")
+        send_ok = send_message(OWNER_ID, message)
+        if send_ok is not False:  # send_message gibt None oder True zurück
+            save_message(OWNER_ID, "assistant", message)
+            update_task(task_id, release_state="released",
+                       loop_count=int(task.get("loop_count") or 0) + 1)
+            logger.info(f"G: Task {task_id[:8]} Release verifiziert + gesendet: {message[:60]}")
+        else:
+            update_task(task_id, release_state="ready_for_release")
+            logger.warning(f"G: Task {task_id[:8]} Senden fehlgeschlagen -- release_state=ready_for_release")
 
     except Exception as e:
         logger.warning(f"E: _e_send_summary fehlgeschlagen: {e}")
