@@ -296,12 +296,32 @@ def _run_todo(action: Action, user_id: str, context: dict | None) -> ActionResul
         ok = block_todo(int(todo_id), reason=payload.get("reason", "blockiert"))
         return ActionResult(ok=ok, type=action.type, object_type="todo", object_id=todo_id)
 
+    elif act == "delete":
+        todo_id = payload.get("id")
+        if not todo_id:
+            return ActionResult(ok=False, type=action.type, error="Keine Todo-ID für delete")
+        # G: delete_todo verifiziert ob wirklich gelöscht
+        from core.todos import delete_todo, get_todo
+        existed = get_todo(int(todo_id)) is not None
+        if not existed:
+            return ActionResult(ok=False, type=action.type,
+                               error=f"Todo #{todo_id} existiert nicht")
+        ok = delete_todo(int(todo_id))
+        return ActionResult(ok=ok, type=action.type, object_type="todo",
+                           object_id=todo_id,
+                           message=f"Todo #{todo_id} gelöscht" if ok else None,
+                           error=None if ok else f"Todo #{todo_id} konnte nicht gelöscht werden")
+
     else:
         # Fallback für unbekannte Todo-Aktionen
+        # G: kein blindes ok=True -- nur bei echtem Ergebnis mit ID
         from core.todos import execute_todo_action
         result_text = execute_todo_action(user_id, payload)
-        return ActionResult(ok=result_text is not None, type=action.type,
-                           object_type="todo", message=result_text)
+        # Vorsichtige Verifikation: nur ok wenn Text eine ID enthält
+        has_id = result_text is not None and "#" in (result_text or "")
+        return ActionResult(ok=has_id, type=action.type,
+                           object_type="todo", message=result_text if has_id else None,
+                           error=result_text if not has_id else None)
 
 
 def _run_proposal(action: Action, user_id: str, context: dict | None) -> ActionResult:
@@ -352,8 +372,9 @@ def _run_moltbook(action: Action, user_id: str, context: dict | None) -> ActionR
 
 def build_public_appendix(results: list[ActionResult], visibility: str) -> list[str]:
     """
-    Baut die öffentlichen Anhänge für Tommys Antwort.
+    G: Baut die öffentlichen Anhänge für Tommys Antwort.
     Nur ok=True Actions dürfen Bestätigungen erzeugen.
+    ok=False Actions erzeugen ehrliche Fehlermeldungen.
     Nur bei visibility="public".
     """
     if visibility != "public":
@@ -363,6 +384,14 @@ def build_public_appendix(results: list[ActionResult], visibility: str) -> list[
     for result in results:
         if result.ok and result.message:
             appendix.append(result.message)
+        elif not result.ok and result.error:
+            # G: Fehlschläge ehrlich kommunizieren statt schweigen
+            _type = result.object_type or result.type
+            if "proposal" in _type:
+                appendix.append(f"Proposal konnte nicht gespeichert werden: {result.error[:80]}")
+            elif "todo" in _type:
+                appendix.append(f"Todo wurde nicht angelegt: {result.error[:80]}")
+            # Andere Fehler nur loggen, nicht immer nach außen
     return appendix
 
 
@@ -526,6 +555,79 @@ def _extract_proposals_via_llm(text: str, user_id: str) -> list[dict]:
         return []
 
 
+# G: Sprachmuster die bestätigte Zustandsänderungen implizieren
+_G_PROPOSAL_PATTERNS = [
+    r'eingereicht\s+als\s+proposal',
+    r'ist\s+als\s+vorschlag\s+drin',
+    r'habe\s+(?:ich\s+)?(?:das\s+)?(?:als\s+)?proposal\s+(?:angelegt|eingereicht|gespeichert)',
+    r'vorschlag\s+ist\s+(?:jetzt\s+)?(?:gespeichert|angelegt|drin)',
+]
+_G_TODO_PATTERNS = [
+    r'habe\s+(?:ich\s+)?(?:es\s+|das\s+)?notiert',
+    r'habe\s+(?:ich\s+)?(?:ein\s+)?todo\s+angelegt',
+    r'ist\s+(?:als\s+todo\s+)?eingetragen',
+    r'habe\s+(?:ich\s+)?(?:es\s+)?aufgeschrieben',
+]
+_G_TASK_PATTERNS = [
+    r'ich\s+kümmere\s+mich\s+darum',
+    r'ich\s+arbeite\s+(?:jetzt\s+)?daran',
+]
+_G_DONE_PATTERNS = [
+    r'(?:^|\.\s+)erledigt(?:\s*\.|$)',
+    r'ist\s+(?:jetzt\s+)?fertig',
+    r'ist\s+(?:jetzt\s+)?abgeschlossen',
+]
+
+
+def enforce_state_truth(text: str, results: list, context: dict | None = None) -> str:
+    """
+    G: Entfernt oder ersetzt bestätigende Sprache die durch results nicht gedeckt ist.
+    Phantom-Writes, Phantom-Progress, Phantom-Abschlüsse werden bereinigt.
+    """
+    import re
+
+    if not text:
+        return text
+
+    proposal_ok = any(r.ok and r.object_type == "proposal" for r in results)
+    todo_ok = any(r.ok and r.object_type == "todo" for r in results)
+    task_ok = any(r.ok and r.object_type in ("task", "orbit_task") for r in results)
+    completion_ok = any(r.ok and r.type in ("todo.complete", "task.complete") for r in results)
+
+    cleaned = text
+
+    # Proposal-Behauptungen ohne Nachweis entfernen
+    if not proposal_ok:
+        for pattern in _G_PROPOSAL_PATTERNS:
+            cleaned = re.sub(pattern, '[Proposal konnte nicht gespeichert werden]', cleaned,
+                           flags=re.IGNORECASE)
+
+    # Todo-Behauptungen ohne Nachweis entfernen
+    if not todo_ok:
+        for pattern in _G_TODO_PATTERNS:
+            cleaned = re.sub(pattern, '[Todo wurde nicht angelegt]', cleaned,
+                           flags=re.IGNORECASE)
+
+    # Task-Behauptungen ohne Nachweis — vorsichtiger: nur wenn gar nichts ok
+    if not task_ok and not todo_ok and not proposal_ok:
+        for pattern in _G_TASK_PATTERNS:
+            cleaned = re.sub(pattern, 'ich versuche das zu verarbeiten', cleaned,
+                           flags=re.IGNORECASE)
+
+    # Abschluss-Behauptungen ohne Nachweis
+    if not completion_ok and not todo_ok:
+        for pattern in _G_DONE_PATTERNS:
+            # Nur wenn wirklich standalone "Erledigt" -- nicht bei echtem Abschluss
+            pass  # Zu riskant für normalen Text -- nur für explizite Aussagen
+
+    # [Proposal konnte nicht...] etc. sauber in Fließtext integrieren
+    cleaned = re.sub(r'\s*\[Proposal konnte nicht gespeichert werden\]\s*', ' ', cleaned)
+    cleaned = re.sub(r'\s*\[Todo wurde nicht angelegt\]\s*', ' ', cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+
+    return cleaned
+
+
 def process_kimi_output(
     *,
     source: str,
@@ -575,6 +677,10 @@ def process_kimi_output(
                         logger.info(f"process_kimi_output: LLM-Proposal gespeichert #{r.object_id}")
         except Exception as _llm_e:
             logger.debug(f"process_kimi_output: LLM-Extraction fehlgeschlagen (unkritisch): {_llm_e}")
+
+    # G: cleaned_text gegen results absichern -- keine falschen Bestätigungen
+    if visibility == "public" and cleaned_text:
+        cleaned_text = enforce_state_truth(cleaned_text, results, context)
 
     # Phase C: Verifikation + Rückgabe
     public_appendix = build_public_appendix(results, visibility)

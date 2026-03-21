@@ -72,11 +72,20 @@ def complete_todo(todo_id: int) -> dict | None:
 
 
 def delete_todo(todo_id: int) -> bool:
+    """G: Verifiziert ob Todo wirklich existiert und gelöscht wurde."""
     from core.database import get_connection
     conn = get_connection()
+    # Erst prüfen ob Todo existiert
+    row = conn.execute("SELECT id FROM todos WHERE id=?", (todo_id,)).fetchone()
+    if not row:
+        conn.close()
+        return False  # G: Todo existiert nicht -- kein falsches "gelöscht"
     conn.execute("DELETE FROM todos WHERE id=?", (todo_id,))
     conn.commit()
-    return True
+    # Verifizieren dass wirklich gelöscht
+    still_exists = conn.execute("SELECT id FROM todos WHERE id=?", (todo_id,)).fetchone()
+    conn.close()
+    return still_exists is None  # True nur wenn wirklich weg
 
 
 def get_todo(todo_id: int) -> dict | None:
