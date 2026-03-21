@@ -598,3 +598,22 @@ def get_reminder_message(user_id: str) -> str | None:
         parts.append(f"*Heute fällig:*\n{items}")
 
     return "\n\n".join(parts)
+
+
+def parse_and_execute_todos(text: str, user_id: str) -> list:
+    """
+    Parst [TODO_ACTION: {...}] Blöcke aus internen Kimi-Outputs (Reflexion, Dialog etc.)
+    und führt sie aus. Gibt Liste der ausgeführten Aktionen zurück.
+    Für Kognitions-Module die keinen WhatsApp-Parser haben.
+    """
+    _, actions = extract_all_todo_actions(text)
+    results = []
+    for action in actions:
+        try:
+            result = execute_todo_action(user_id, action)
+            if result:
+                results.append(result)
+                logger.info(f"parse_and_execute_todos: {action.get('action')} — {action.get('title', '')[:50]}")
+        except Exception as e:
+            logger.debug(f"parse_and_execute_todos: Aktion fehlgeschlagen: {e}")
+    return results

@@ -400,8 +400,29 @@ def execute_code_exec(action: str, params: dict) -> str:
     elif action in ("list", "ls"):
         return list_files()
 
+    elif action == "save_pending":
+        # Holt Code den code_write im Runtime-State hinterlegt hat und führt run_file aus
+        filename = params.get("filename", "")
+        if not filename:
+            return "Fehler: 'filename' fehlt für save_pending."
+        try:
+            import sys, os
+            sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            from orbit import runtime_get
+            code = runtime_get(f"pending_code_{filename}")
+            if code:
+                return save_file(filename, code)
+            else:
+                # Datei existiert bereits vom code_write — direkt weiter
+                filepath = os.path.join(WORKSPACE, filename)
+                if os.path.exists(filepath):
+                    return f"Datei {filename} bereits vorhanden — skip save_pending."
+                return f"Kein pending Code für {filename} gefunden."
+        except Exception as e:
+            return f"save_pending Fehler: {e}"
+
     else:
         return (
             f"Unbekannte Aktion '{action}'. "
-            f"Verfügbar: run, run_file, save, read, delete, list"
+            f"Verfügbar: run, run_file, save, read, delete, list, save_pending"
         )

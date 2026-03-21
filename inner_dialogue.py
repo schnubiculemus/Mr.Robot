@@ -25,7 +25,7 @@ from memory.chunk_schema import create_chunk
 logger = logging.getLogger(__name__)
 
 MIN_NEW_BOT_CHUNKS = 1
-MIN_INTERVAL_HOURS = 3
+MIN_INTERVAL_HOURS = 1.5
 
 
 # =============================================================================
@@ -271,12 +271,13 @@ def run_inner_dialogue(
 
         # Vorhaben-Signale → Kimi-Todos
         try:
-            from core.todos import extract_intent_todos
+            from core.todos import extract_intent_todos, extract_intent_goals, parse_and_execute_todos
+            # Explizite [TODO_ACTION: ...] Blöcke zuerst
+            parse_and_execute_todos(reply, user_id)
+            # Dann Signalwort-Erkennung
             new_todos = extract_intent_todos(reply, user_id)
             if new_todos:
                 logger.info(f"{__name__}: {len(new_todos)} Kimi-Todo(s) angelegt")
-            # Langfristige Ziele
-            from core.todos import extract_intent_goals
             new_goals = extract_intent_goals(reply, user_id)
             if new_goals:
                 logger.info(f"{__name__}: {len(new_goals)} Kimi-Ziel(e) gespeichert")

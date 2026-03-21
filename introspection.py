@@ -28,7 +28,7 @@ from memory.chunk_schema import create_chunk
 
 logger = logging.getLogger(__name__)
 
-MIN_NEW_TURNS = 5
+MIN_NEW_TURNS = 3
 
 
 # =============================================================================

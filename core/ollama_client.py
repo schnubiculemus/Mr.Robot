@@ -528,6 +528,15 @@ def build_system_prompt(context_name=None, user_id=None, user_message=None, doc_
             "Antwort exakt im geforderten Format, in der geforderten Sprache."
         )
 
+        # Tool-Syntax im internen Modus — nur Todo-Anlage
+        parts.append(
+            "VERFÜGBARE WERKZEUGE (interne Nutzung):\n"
+            "Todo anlegen:\n"
+            "  [TODO_ACTION: {\"action\": \"create\", \"title\": \"...\"," 
+            " \"category\": \"kimi\", \"priority\": \"mittel\"}]\n"
+            "Wenn ich ein Vorhaben habe: TODO anlegen. Nicht beschreiben — anlegen."
+        )
+
     # 5. Selbstwissen — immer, in beiden Modi
     arch = load_architecture()
     if arch:
@@ -575,13 +584,22 @@ def build_system_prompt(context_name=None, user_id=None, user_message=None, doc_
         except Exception as _pe:
             logger.debug(f"build_perspective_context fehlgeschlagen (unkritisch): {_pe}")
 
-        # Kimis langfristige Ziele
+        # Kimis langfristige Ziele (chat)
         try:
             goals = build_goals_context()
             if goals:
                 parts.append(goals)
         except Exception as _ge:
             logger.debug(f"build_goals_context fehlgeschlagen (unkritisch): {_ge}")
+
+    # 7.6 Ziele auch im internen Modus — Kimi soll intern zielgerichtet denken
+    if mode != "chat":
+        try:
+            goals = build_goals_context()
+            if goals:
+                parts.append(goals)
+        except Exception as _ge:
+            logger.debug(f"build_goals_context (internal) fehlgeschlagen: {_ge}")
 
     # 8. Globale Regeln am ENDE — nach Memory, vor der User-Nachricht
     if global_rules:
@@ -704,7 +722,7 @@ def chat(user_id, message, chat_history, context_name=None, doc_context=None):
     system_prompt = build_system_prompt(
         context_name=context_name,
         user_id=user_id,
-        user_message=message,
+        user_message=None,  # Retrieval bereits oben gemacht, nicht nochmal
         doc_context=doc_context,
         mode="chat",
     )
@@ -734,15 +752,6 @@ def chat_internal(user_id, message, chat_history=None, context_name=None, doc_co
     """
     chat_history = chat_history or []
 
-    retrieved_chunks = []
-    active_global_rules = []
-    try:
-        if message and not doc_context:
-            retrieved_chunks = score_and_select(message)
-        active_global_rules = _load_global_rules()
-    except Exception as e:
-        logger.warning(f"Internal chunk-fetch fehlgeschlagen: {e}")
-
     system_prompt = build_system_prompt(
         context_name=context_name,
         user_id=user_id,
@@ -758,10 +767,7 @@ def chat_internal(user_id, message, chat_history=None, context_name=None, doc_co
 
     result = _call_ollama(messages)
     if not result:
-        return "", {"chunks": retrieved_chunks, "global_rules": active_global_rules}
+        return "", {}
 
     response_text = result.get("message", {}).get("content", "").strip()
-    return response_text, {
-        "chunks": retrieved_chunks,
-        "global_rules": active_global_rules,
-    }
+    return response_text, {}

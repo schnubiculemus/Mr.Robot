@@ -321,7 +321,8 @@ def run_kognition(user_id: str, context_name: str):
     now = now_utc()
     berlin = now_berlin()
     state = load_state()
-    logger.info(f"--- Kognition: {context_name} ({user_id}) ---")
+    _module_status = {}  # Tracking: was hat gelaufen, was nicht
+    logger.info(f"--- Kognition: {context_name} ({user_id}) | {berlin.strftime("%H:%M")} ---")
 
     # ── Tagebuch (abends 20–23h) ─────────────────────────────────────────────
     try:
@@ -332,14 +333,17 @@ def run_kognition(user_id: str, context_name: str):
             if result:
                 filepath, chunk_id = result
                 logger.info(f"Tagebuch geschrieben: {filepath}")
+                _module_status["diary"] = True
                 _cognition_output(user_id, "diary", "Kimis Tagebucheintrag", "weak")
                 state = load_state()
                 state = _session_write(state, user_id, "diary", chunk_id, "Tagebucheintrag")
                 save_state(state)
             else:
                 logger.info("Tagebuch: bereits heute geschrieben")
+            _module_status["diary"] = "skip"
         else:
             logger.debug("Tagebuch: kein Abend-Fenster")
+            _module_status["diary"] = "window"
     except Exception as e:
         logger.warning(f"Tagebuch fehlgeschlagen: {e}")
 
@@ -356,6 +360,7 @@ def run_kognition(user_id: str, context_name: str):
                                    "Verhaltensreflexion aus MIRROR-Daten")
             save_state(state)
             logger.info(f"Introspection: {chunk_id[:8]}")
+            _module_status["introspect"] = True
             _cognition_output(user_id, "introspection",
                               "Verhaltensreflexion aus MIRROR-Daten", "medium")
     except Exception as e:
@@ -374,6 +379,7 @@ def run_kognition(user_id: str, context_name: str):
                                    "Moltbook Exploration abgeschlossen")
             save_state(state)
             logger.info(f"Moltbook: {chunk_id[:8]}")
+            _module_status["moltbook"] = True
             _cognition_output(user_id, "moltbook",
                               "Moltbook Exploration abgeschlossen", "weak")
     except Exception as e:
@@ -401,6 +407,7 @@ def run_kognition(user_id: str, context_name: str):
                                    "Innerer Dialog mit früheren Reflexionen")
             save_state(state)
             logger.info(f"Innerer Dialog: {chunk_id[:8]}")
+            _module_status["inner_dialogue"] = True
             _cognition_output(user_id, "inner_dialogue",
                               "Innerer Dialog mit früheren Reflexionen", "weak")
     except Exception as e:
@@ -430,6 +437,7 @@ def run_kognition(user_id: str, context_name: str):
                                    "Autonome Reflexion über offene Fragen")
             save_state(state)
             logger.info(f"Autonome Reflexion: {chunk_id[:8]}")
+            _module_status["auto_reflect"] = True
             _cognition_output(user_id, "autonomous_reflection",
                               "Autonome Reflexion über offene Fragen", "medium")
 
@@ -481,6 +489,7 @@ def run_kognition(user_id: str, context_name: str):
                                    "Neue Beobachtung ueber Tommy")
             save_state(state)
             logger.info(f"Tommy-Modell: {chunk_id[:8]}")
+            _module_status["tommy_model"] = True
             _cognition_output(user_id, "tommy_model",
                               "Neue Beobachtung ueber Tommy", "weak")
     except Exception as e:
@@ -495,7 +504,7 @@ def run_kognition(user_id: str, context_name: str):
             from tommy_model import run_calendar_awareness
             cal_topic = run_calendar_awareness(user_id)
             if cal_topic:
-                _cognition_output(user_id, "calendar_awareness", cal_topic, "weak")
+                _cognition_output(user_id, "calendar_awareness", cal_topic, "medium")
                 logger.info(f"CalendarAwareness: Trigger gefeuert — '{cal_topic}'")
     except Exception as e:
         logger.warning(f"Kalender-Awareness fehlgeschlagen: {e}")
@@ -552,6 +561,10 @@ def run_kognition(user_id: str, context_name: str):
     except Exception as e:
         logger.debug(f"Timeline-Log fehlgeschlagen (unkritisch): {e}")
 
+    # ── Status-Summary ──────────────────────────────────────────────────────
+    if _module_status:
+        status_parts = [f"{k}={'✓' if v else '–'}" for k, v in _module_status.items()]
+        logger.info(f"Kognition Summary: {' | '.join(status_parts)}")
     logger.info(f"--- Kognition fertig ---")
 
 

@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block title %}Proposals{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1 class="page-title">Proposals</h1>
+        <p class="page-subtitle">Kimis Projektvorschläge</p>
+    </div>
+    <div class="header-stats" id="stats"></div>
+</div>
+
+<div class="tab-bar">
+    <button class="tab active" data-status="pending">Offen</button>
+    <button class="tab" data-status="approved">Genehmigt</button>
+    <button class="tab" data-status="deferred">Zurückgestellt</button>
+    <button class="tab" data-status="rejected">Abgelehnt</button>
+</div>
+
+<div id="proposals-list" class="proposals-grid"></div>
+
+<style>
+.tab-bar { display: flex; gap: 8px; margin-bottom: 24px; }
+.tab { padding: 6px 16px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text-2); cursor: pointer; font-size: 13px; }
+.tab.active { background: var(--text-1); color: white; border-color: var(--text-1); }
+.proposals-grid { display: flex; flex-direction: column; gap: 12px; }
+.proposal-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px; }
+.proposal-card.pending { border-left: 3px solid var(--amber); }
+.proposal-card.approved { border-left: 3px solid var(--accent); }
+.proposal-card.rejected { border-left: 3px solid var(--red); opacity: 0.6; }
+.proposal-card.deferred { border-left: 3px solid var(--blue); }
+.proposal-title { font-size: 15px; font-weight: 600; color: var(--text-1); margin-bottom: 8px; }
+.proposal-text { font-size: 13px; color: var(--text-2); line-height: 1.6; margin-bottom: 12px; white-space: pre-wrap; }
+.proposal-meta { display: flex; gap: 12px; align-items: center; margin-bottom: 14px; }
+.effort-badge { padding: 2px 10px; border-radius: 20px; font-size: 11px; font-weight: 500; background: var(--amber-light); color: var(--amber); }
+.date-text { font-size: 11px; color: var(--text-4); }
+.proposal-actions { display: flex; gap: 8px; }
+.btn-approve { padding: 6px 14px; border-radius: 6px; border: none; background: var(--accent); color: white; cursor: pointer; font-size: 12px; font-weight: 500; }
+.btn-defer { padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text-2); cursor: pointer; font-size: 12px; }
+.btn-reject { padding: 6px 14px; border-radius: 6px; border: 1px solid var(--red-light); background: var(--red-light); color: var(--red); cursor: pointer; font-size: 12px; }
+.empty-state { text-align: center; padding: 60px 20px; color: var(--text-4); font-size: 14px; }
+.header-stats { display: flex; gap: 16px; }
+.stat-pill { padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 500; background: var(--surface-2); border: 1px solid var(--border); color: var(--text-2); }
+</style>
+
+<script>
+let currentStatus = 'pending';
+
+async function load(status) {
+    currentStatus = status;
+    const res = await fetch(`/api/proposals?status=${status}`);
+    const data = await res.json();
+
+    // Stats
+    const s = data.stats || {};
+    document.getElementById('stats').innerHTML = `
+        <span class="stat-pill">Offen: ${s.pending||0}</span>
+        <span class="stat-pill">✓ ${s.approved||0}</span>
+        <span class="stat-pill">↩ ${s.deferred||0}</span>
+    `;
+
+    const list = document.getElementById('proposals-list');
+    if (!data.proposals || data.proposals.length === 0) {
+        list.innerHTML = '<div class="empty-state">Keine Proposals in dieser Kategorie.</div>';
+        return;
+    }
+
+    list.innerHTML = data.proposals.map(p => {
+        const date = p.created_at ? p.created_at.substring(0, 16).replace('T', ' ') : '';
+        const isPending = p.tags && p.tags.includes('pending');
+        const statusClass = p.tags && p.tags.includes('approved') ? 'approved'
+            : p.tags && p.tags.includes('rejected') ? 'rejected'
+            : p.tags && p.tags.includes('deferred') ? 'deferred' : 'pending';
+
+        return `<div class="proposal-card ${statusClass}">
+            <div class="proposal-title">${p.title || 'Unbenannter Vorschlag'}</div>
+            <div class="proposal-text">${p.text || ''}</div>
+            <div class="proposal-meta">
+                <span class="effort-badge">Aufwand: ${p.effort || 'mittel'}</span>
+                <span class="date-text">${date}</span>
+            </div>
+            ${isPending ? `<div class="proposal-actions">
+                <button class="btn-approve" onclick="action('${p.id}', 'approve')">✓ Genehmigen</button>
+                <button class="btn-defer" onclick="action('${p.id}', 'defer')">↩ Zurückstellen</button>
+                <button class="btn-reject" onclick="action('${p.id}', 'reject')">✗ Ablehnen</button>
+            </div>` : ''}
+        </div>`;
+    }).join('');
+}
+
+async function action(id, act) {
+    await fetch(`/api/proposals/${id}/action`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({action: act})
+    });
+    load(currentStatus);
+}
+
+document.querySelectorAll('.tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        load(tab.dataset.status);
+    });
+});
+
+load('pending');
+</script>
+{% endblock %}

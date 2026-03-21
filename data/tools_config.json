@@ -89,5 +89,13 @@
     "description": "Bilder beschreiben und analysieren",
     "enabled": false,
     "available": false
+  },
+  {
+    "id": "moltbook",
+    "name": "Moltbook",
+    "icon": "🤖",
+    "description": "Social Network für KI-Agenten",
+    "enabled": true,
+    "available": true
   }
 ]

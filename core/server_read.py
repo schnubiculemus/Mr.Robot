@@ -38,7 +38,7 @@ LOG_FILES = {
 # Erlaubte Dateipfade (relativ zu PROJECT_DIR) — Whitelist
 READABLE_PATHS = {
     # Identity
-    "soul.md", "rules.md", "tools.md", "style.md", "architecture.md",
+    "soul.md", "tools.md", "style.md", "architecture.md",
     # Diary
     "diary/",   # Verzeichnis — alle .md drunter erlaubt
     # Data

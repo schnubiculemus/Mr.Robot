@@ -1494,7 +1494,6 @@ def api_consolidator_diff(chunk_id):
 # =============================================================================
 
 SOUL_MD_PATH = os.path.join(PROJECT_DIR, "soul.md")
-RULES_MD_PATH = os.path.join(PROJECT_DIR, "rules.md")
 TOOLS_MD_PATH = os.path.join(PROJECT_DIR, "tools.md")
 ARCHITECTURE_MD_PATH = os.path.join(PROJECT_DIR, "architecture.md")
 
@@ -1569,7 +1568,6 @@ def api_soul_md_save():
 
 
 _ESSENCE_FILES = {
-    "rules": RULES_MD_PATH,
     "tools": TOOLS_MD_PATH,
     "architecture": ARCHITECTURE_MD_PATH,
 }
@@ -1717,6 +1715,56 @@ def api_soul_proposal_status(proposal_id):
         return jsonify({"error": "Invalid status"}), 400
     update_soul_proposal_status(proposal_id, status)
     return jsonify({"ok": True})
+
+
+# =============================================================================
+# Kimi Proposals
+# =============================================================================
+
+@app.route("/proposals")
+@require_auth
+def proposals_page():
+    return render_template("proposals.html")
+
+
+@app.route("/api/proposals")
+@require_auth
+def api_proposals_get():
+    status = request.args.get("status", "pending")
+    try:
+        from core.proposals import get_proposals
+        proposals = get_proposals(status=status)
+        all_p = get_proposals(status=None)
+        stats = {
+            "pending":  sum(1 for p in all_p if "pending" in p["tags"]),
+            "approved": sum(1 for p in all_p if "approved" in p["tags"]),
+            "rejected": sum(1 for p in all_p if "rejected" in p["tags"]),
+            "deferred": sum(1 for p in all_p if "deferred" in p["tags"]),
+        }
+        return jsonify({"proposals": proposals, "stats": stats})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/proposals/<chunk_id>/action", methods=["POST"])
+@require_auth
+def api_proposal_action(chunk_id):
+    data = request.get_json()
+    action = data.get("action")
+    from config import OWNER_ID
+    try:
+        from core.proposals import approve_proposal, reject_proposal, defer_proposal
+        if action == "approve":
+            ok = approve_proposal(chunk_id, OWNER_ID)
+        elif action == "reject":
+            ok = reject_proposal(chunk_id)
+        elif action == "defer":
+            ok = defer_proposal(chunk_id)
+        else:
+            return jsonify({"error": "Unbekannte Aktion"}), 400
+        return jsonify({"ok": ok})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 # =============================================================================

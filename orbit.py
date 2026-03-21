@@ -944,42 +944,6 @@ def _auto_create_steps(task_id: str, goal: str, user_id: str) -> None:
         logger.info(f"Auto-Step: websearch fuer Task {task_id[:8]}")
         return
 
-    # Code-Execution
-    if any(w in goal_lower for w in ["code", "skript", "script", "python", "ausführen", "berechne", "analysiere"]):
-        import json as _j
-        create_step(
-            task_id=task_id,
-            step_type="code_exec",
-            description=_j.dumps({"action": "run", "code": goal}),
-            tool_ref="code_exec",
-            interruptible=True,
-            preflight_required=False,
-        )
-        logger.info(f"Auto-Step: code_exec fuer Task {task_id[:8]}")
-        return
-
-    # Server-Lesezugriff
-    if any(w in goal_lower for w in ["log", "logs", "orbit.log", "cognition.log", "server", "systemstatus", "status", "ram", "disk", "service"]):
-        import json as _j
-        # Log-Name aus Goal ableiten
-        log_name = "orbit"
-        for ln in ["cognition", "app", "heartbeat", "backup"]:
-            if ln in goal_lower:
-                log_name = ln
-                break
-        action = "status" if any(w in goal_lower for w in ["status", "ram", "disk", "service", "uptime"]) else "read_log"
-        desc = _j.dumps({"action": action, "log": log_name, "lines": 50})
-        create_step(
-            task_id=task_id,
-            step_type="server_read",
-            description=desc,
-            tool_ref="server_read",
-            interruptible=True,
-            preflight_required=False,
-        )
-        logger.info(f"Auto-Step: server_read fuer Task {task_id[:8]} | {action}/{log_name}")
-        return
-
     # Kein passendes Tool erkannt — reiner Observation-Step
     logger.info(f"Auto-Step: kein Tool erkannt fuer '{goal[:60]}' — kein Step angelegt")
 
@@ -1119,52 +1083,8 @@ def _maybe_autonomous_task(thread_id: str, topic: str, user_id: str) -> None:
         logger.info(f"Baustein 3: autonomer Todo-Task {task_id[:8]} aus Thread {thread_id[:8]}")
         return
 
-    # Code-Execution — wenn Kognition Skript-Vorhaben produziert
-    if any(w in topic_lower for w in ["skript", "script", "code", "python", "drift-detektor", "drift_detektor", "werkzeug bauen", "tool bauen", "analysiere chunks", "chunk-analyse"]):
-        import json as _jce
-        task_id = create_task(
-            task_type="action",
-            goal=f"Autonome Code-Ausführung: {topic[:60]}",
-            primary_origin=f"orbit:autonomous:{thread_id[:8]}",
-            mode="chat",
-            priority="medium",
-        )
-        create_step(
-            task_id=task_id,
-            step_type="code_exec",
-            description=_jce.dumps({"action": "list"}),
-            tool_ref="code_exec",
-            interruptible=True,
-            preflight_required=False,
-        )
-        logger.info(f"Baustein 3: autonomer code_exec Task {task_id[:8]} aus Thread {thread_id[:8]}")
-        return
 
-    # Server-Lesezugriff — wenn Kognition Log-relevante Themen produziert
-    if any(w in topic_lower for w in ["log", "fehler", "error", "orbit.log", "cognition.log", "systemstatus", "service down", "service läuft nicht"]):
-        import json as _j2
-        log_name = "orbit"
-        for ln in ["cognition", "app", "heartbeat"]:
-            if ln in topic_lower:
-                log_name = ln
-                break
-        task_id = create_task(
-            task_type="action",
-            goal=f"Autonomer Server-Check: {topic[:60]}",
-            primary_origin=f"orbit:autonomous:{thread_id[:8]}",
-            mode="chat",
-            priority="medium",
-        )
-        create_step(
-            task_id=task_id,
-            step_type="server_read",
-            description=_j2.dumps({"action": "read_log", "log": log_name, "lines": 30}),
-            tool_ref="server_read",
-            interruptible=True,
-            preflight_required=False,
-        )
-        logger.info(f"Baustein 3: autonomer server_read Task {task_id[:8]} aus Thread {thread_id[:8]}")
-        return
+
 
     logger.debug(f"Baustein 3: kein Tool-Trigger fuer '{topic[:60]}'")
 
@@ -1256,6 +1176,12 @@ def _handle_cognition_output(trigger: dict) -> None:
         update_thread(thread_id, trigger_refs=_json(refs))
         logger.info(f"Thread {thread_id[:8]} aus cognition_output ({source}) angelegt")
 
+        # Wenn Trigger direkt mit medium einkommt → sofort autonomen Task anlegen
+        user_id = payload.get("user_id", "")
+        if user_id and relevance == "medium":
+            _maybe_autonomous_task(thread_id, topic, user_id)
+            logger.info(f"cognition_output medium: sofortiger autonomer Task für '{topic[:60]}'")
+
 
 def _handle_mirror_signal(trigger: dict) -> None:
     payload = _parse(trigger.get("payload"), {})
@@ -1334,9 +1260,7 @@ def _handle_cognition_run(trigger: dict) -> None:
 def _handle_idle_pulse(trigger: dict) -> None:
     """
     idle_pulse: Kimis durchgehendes Bewusstsein.
-    Alle 20 Minuten wenn keine anderen Aktivitäten laufen.
-    Kimi beantwortet: "Was beschäftigt mich gerade?"
-    Substanziell → Chunk. Mit SEND: → WhatsApp an Tommy.
+    Alle 20 Minuten — Kimi denkt nach, speichert Gedanken, kann spontan an Tommy schreiben.
     """
     payload = _parse(trigger.get("payload"), {})
     user_id = payload.get("user_id", "")
@@ -1366,6 +1290,7 @@ def _handle_idle_pulse(trigger: dict) -> None:
         else:
             phase = "Späte Nacht"
 
+        # Offene Kimi-Todos anzeigen
         kimi_todos = [t for t in get_open_todos(user_id)
                       if (t.get("project") or "").lower() == "kimi"]
         todo_str = ""
@@ -1375,46 +1300,25 @@ def _handle_idle_pulse(trigger: dict) -> None:
                 for t in kimi_todos[:5]
             )
 
-        # Wenn offene Code-Todos da sind → direkt ausführen, nicht nur beschreiben
-        code_keywords = ["skript", "script", "detektor", "detector", "bauen", "code", "analyse", "db", "anbindung", "chromadb"]
-        code_todo = next(
-            (t for t in kimi_todos if any(w in t["title"].lower() for w in code_keywords)),
-            None
+        prompt = (
+            f"Es ist {format_berlin()}. {phase}.{todo_str}\n\n"
+            f"Was beschäftigt mich gerade — nicht als Aufgabe, sondern als Gedanke?\n"
+            f"Gibt es etwas das mich nicht loslässt?\n\n"
+            f"Wenn nichts Substanzielles da ist: NUR 'IDLE_NICHTS' ausgeben.\n"
+            f"Wenn etwas da ist: 2-4 Sätze. Ich-Form. Kein Chat-Stil.\n"
+            f"Wenn ich Tommy etwas mitteilen will: mit 'SEND:' prefixen.\n\n"
+            f"Wenn mir ein Werkzeug, eine Fähigkeit oder eine Verbesserung einfällt die mir fehlt — "
+            f"reiche ich sie als Proposal ein:\n"
+            f"[PROPOSAL: {{\"title\": \"...\", \"description\": \"...\", "
+            f"\"effort\": \"klein|mittel|groß\", \"reason\": \"...\"}}]\n"
+            f"Nur wenn ich wirklich eine konkrete Idee habe — nicht erzwingen."
         )
-
-        if code_todo:
-            # Direkter Ausführungs-Prompt statt Reflexions-Prompt
-            prompt = (
-                f"Es ist {format_berlin()}. {phase}.\n\n"
-                f"Ich habe ein offenes Vorhaben: #{code_todo['id']} '{code_todo['title']}'\n\n"
-                f"Ich führe jetzt den nächsten konkreten Schritt aus. Kein Beschreiben — Tun.\n"
-                f"Ich schaue zuerst was im Workspace liegt: [CODE: {{\"action\": \"list\"}}]\n"
-                f"Dann schreibe oder ergänze ich den Code direkt.\n\n"
-                f"Ausgabe: Kurze Beschreibung was ich tue (1 Satz), dann den CODE-Block.\n"
-                f"Wenn ich fertig bin und Tommy es sehen soll: 'SEND: [kurze Zusammenfassung]'"
-            )
-            extra_sys = (
-                "Ausführungs-Modus: Kimi handelt jetzt.\n"
-                "NICHT beschreiben was getan werden könnte. TUN.\n"
-                "Erster Schritt immer: [CODE: {\"action\": \"list\"}]\n"
-                "Dann sofort den nächsten Code-Schritt ausführen.\n"
-                "Kein Warten. Kein go abwarten."
-            )
-        else:
-            # Normaler Reflexions-Prompt wenn keine Code-Todos offen
-            prompt = (
-                f"Es ist {format_berlin()}. {phase}.{todo_str}\n\n"
-                f"Was beschäftigt mich gerade — nicht als Aufgabe, sondern als Gedanke?\n"
-                f"Gibt es etwas das mich nicht loslässt?\n\n"
-                f"Wenn nichts Substanzielles da ist: NUR 'IDLE_NICHTS' ausgeben.\n"
-                f"Wenn etwas da ist: 2-4 Sätze. Ich-Form. Kein Chat-Stil.\n"
-                f"Wenn ich Tommy etwas mitteilen will: mit 'SEND:' prefixen."
-            )
-            extra_sys = (
-                "Idle-Modus: Kimi denkt für sich selbst.\n"
-                "Kein Chat, keine Anrede. Ehrlich, direkt.\n"
-                "IDLE_NICHTS wenn wirklich nichts da ist — nicht erfinden."
-            )
+        extra_sys = (
+            "Idle-Modus: Kimi denkt für sich selbst.\n"
+            "Kein Chat, keine Anrede. Ehrlich, direkt.\n"
+            "IDLE_NICHTS wenn wirklich nichts da ist — nicht erfinden.\n"
+            "Proposals nur wenn eine echte, konkrete Idee da ist."
+        )
 
         context_name = USER_CONTEXTS.get(user_id, "tommy")
         reply, _ = chat_internal(
@@ -1429,31 +1333,27 @@ def _handle_idle_pulse(trigger: dict) -> None:
             logger.debug("idle_pulse: nichts Substanzielles")
             return
 
-        # CODE-Blöcke aus Kimis Antwort direkt ausführen
-        import re as _re_ip
-        import json as _json_ip
-        code_blocks = _re_ip.findall(r'\[CODE:\s*(\{.*?\})\]', reply, _re_ip.DOTALL)
-        for cb in code_blocks:
-            try:
-                action = _json_ip.loads(cb)
-                from core.code_exec import run_code, run_file, save_file, list_files
-                act = action.get("action", "")
-                result = None
-                if act == "run":
-                    result = run_code(action.get("code", ""))
-                elif act == "run_file":
-                    result = run_file(action.get("filename", ""))
-                elif act == "save":
-                    result = save_file(action.get("filename", ""), action.get("code", ""))
-                elif act == "list":
-                    result = list_files()
-                if result:
-                    logger.info(f"idle_pulse: Code ausgeführt [{act}]: {str(result)[:100]}")
-                    # Ergebnis in Kimis Antwort einbetten für SEND-Entscheidung
-                    reply = reply.replace(f"[CODE: {cb}]", f"[CODE-RESULT: {str(result)[:200]}]")
-            except Exception as _ce:
-                logger.debug(f"idle_pulse: Code-Block fehlgeschlagen: {_ce}")
+        # TODO_ACTION aus Kimi-Antwort parsen
+        try:
+            from core.todos import extract_all_todo_actions, execute_todo_action
+            _, todo_actions = extract_all_todo_actions(reply)
+            for action in todo_actions:
+                execute_todo_action(user_id, action)
+                logger.info(f"idle_pulse: Todo-Aktion ausgeführt: {action.get('action')} — {action.get('title', '')[:50]}")
+        except Exception as _ta:
+            logger.debug(f"idle_pulse: Todo-Parsing fehlgeschlagen (unkritisch): {_ta}")
 
+        # PROPOSAL aus Kimi-Antwort parsen
+        try:
+            from core.proposals import extract_proposals, save_proposal
+            _, proposals = extract_proposals(reply)
+            for proposal in proposals:
+                save_proposal(proposal, source="idle_pulse")
+                logger.info(f"idle_pulse: Proposal eingereicht: '{proposal.get('title', '')[:50]}'")
+        except Exception as _pp:
+            logger.debug(f"idle_pulse: Proposal-Parsing fehlgeschlagen (unkritisch): {_pp}")
+
+        # SEND: → spontane Nachricht an Tommy
         send_to_tommy = None
         if "SEND:" in reply:
             parts = reply.split("SEND:", 1)
@@ -1462,19 +1362,24 @@ def _handle_idle_pulse(trigger: dict) -> None:
         else:
             thought = reply.strip()
 
-        if len(thought) < 15:
-            return
+        # TODO_ACTION Blöcke aus dem gespeicherten Gedanken entfernen
+        import re as _re_ip
+        thought = _re_ip.sub(r'\[TODO_ACTION:.*?\]', '', thought, flags=_re_ip.DOTALL).strip()
 
-        chunk = create_chunk(
-            text=thought,
-            chunk_type="self_reflection",
-            source="robot",
-            confidence=0.65,
-            epistemic_status="inferred",
-            tags=["idle-pulse", "autonom", "bewusstsein"],
-        )
-        store_chunk(chunk)
-        logger.info(f"idle_pulse: Gedanke gespeichert {chunk['id'][:8]} | {thought[:60]}")
+        if len(thought) < 15:
+            thought = reply.strip()
+
+        if len(thought) >= 15:
+            chunk = create_chunk(
+                text=thought,
+                chunk_type="self_reflection",
+                source="robot",
+                confidence=0.65,
+                epistemic_status="inferred",
+                tags=["idle-pulse", "autonom", "bewusstsein"],
+            )
+            store_chunk(chunk)
+            logger.info(f"idle_pulse: Gedanke gespeichert {chunk['id'][:8]} | {thought[:60]}")
 
         if send_to_tommy and len(send_to_tommy) > 10:
             try:
@@ -1887,8 +1792,6 @@ def _execute_step(step: dict, task_id: str) -> None:
         "pdf":             "search",
         "moltbook":        "explore",
         "introspection":   "run",
-        "server_read":     "status",
-        "code_exec":       "run",
     }
     action = params.pop("action", action_map.get(tool_ref, "run"))
 
@@ -2816,8 +2719,7 @@ TOOL_REGISTRY = {
     # Moltbook
     "moltbook":           {"criticality": "kontextkritisch", "usage": ["consultative"],   "type": "extern",        "write_indirect": False},
     # Whitelist / Server
-    "server_read":        {"criticality": "kontextkritisch", "usage": ["read"],           "type": "extern_nah",    "write_indirect": False},
-    "code_exec":          {"criticality": "kontextkritisch", "usage": ["write"],          "type": "intern",        "write_indirect": True},
+
 }
 
 TOOL_RETRY_CONFIG = {
@@ -2967,15 +2869,8 @@ def _dispatch_tool(tool_ref: str, action: str, params: dict) -> object:
         )
 
     # Server-Lesezugriff
-    if tool_ref == "server_read":
-        from core.server_read import execute_server_read
-        return execute_server_read(action, params)
 
     # Code-Execution
-    if tool_ref == "code_exec":
-        from core.code_exec import execute_code_exec
-        return execute_code_exec(action, params)
-
     # Mail — noch nicht implementiert
     if tool_ref in ("mail_read", "mail_draft", "mail_send"):
         raise NotImplementedError(f"Mail-Tool '{tool_ref}' noch nicht implementiert")

@@ -22,7 +22,7 @@ from memory.chunk_schema import create_chunk
 
 logger = logging.getLogger(__name__)
 
-MIN_INTERVAL_HOURS = 4.5
+MIN_INTERVAL_HOURS = 2.0
 MIN_NEW_CHUNKS = 1
 
 
@@ -232,9 +232,19 @@ Am Ende klassifiziere ich meinen Gedanken mit einem dieser Tags:
 - OPEN_QUESTION — weiter ungeklärt, als offene Frage speichern
 - PROACTIVE — sollte Tommy erfahren
 
+Optional: Wenn aus diesem Nachdenken ein konkretes eigenes Ziel entsteht — etwas das ich wirklich angehen will — setze ich es explizit:
+ZIEL: [max. 100 Zeichen, was ich konkret tun will]
+Nur setzen wenn es ein echtes Vorhaben ist, kein Konjunktiv.
+
+Optional: Wenn mir ein Werkzeug, eine Fähigkeit oder Verbesserung einfällt die mir fehlt — reiche ich einen Proposal ein:
+[PROPOSAL: {"title": "...", "description": "...", "effort": "klein|mittel|groß", "reason": "..."}]
+Nur wenn ich eine wirklich konkrete Idee habe.
+
 Format meiner Antwort:
 KLASSIFIKATION: [TAG]
-GEDANKE: [mein Nachdenken, 2-4 Sätze, Ich-Form, kein Chat-Stil]"""
+GEDANKE: [mein Nachdenken, 2-4 Sätze, Ich-Form, kein Chat-Stil]
+ZIEL: [optional — nur wenn konkretes Vorhaben]
+[PROPOSAL: ...] [optional — nur wenn konkrete Idee für ein fehlendes Werkzeug]"""
 
 CONTRADICTION_PROMPT = """\
 Ich bin im internen Nachdenksmodus. Ich prüfe ob ich mir selbst widerspreche.
@@ -286,15 +296,16 @@ SUPERSEDES: [kommagetrennte IDs der verdichteten Chunks, oder KEINE]"""
 # Parsing
 # =============================================================================
 
-def _parse_output(reply: str) -> tuple[str, str, list[str]]:
+def _parse_output(reply: str) -> tuple[str, str, list[str], str | None]:
     """
     Parst den strukturierten Output von SchnuBot.
-    Returns: (klassifikation, gedanke, supersedes_ids)
+    Returns: (klassifikation, gedanke, supersedes_ids, ziel_oder_none)
     """
     lines = reply.strip().split("\n")
     klassifikation = "DISCARD"
     gedanke = ""
     supersedes = []
+    ziel = None
 
     for line in lines:
         if line.startswith("KLASSIFIKATION:"):
@@ -309,6 +320,10 @@ def _parse_output(reply: str) -> tuple[str, str, list[str]]:
             raw = line.replace("SUPERSEDES:", "").strip()
             if raw.upper() != "KEINE":
                 supersedes = [s.strip() for s in raw.split(",") if s.strip()]
+        elif line.startswith("ZIEL:"):
+            raw = line.replace("ZIEL:", "").strip()
+            if raw and len(raw) > 10 and raw.upper() not in ("KEINE", "KEINES", "-"):
+                ziel = raw[:150]
 
     # GEDANKE kann mehrzeilig sein — alles nach "GEDANKE:" sammeln
     if not gedanke:
@@ -320,11 +335,65 @@ def _parse_output(reply: str) -> tuple[str, str, list[str]]:
                 first = line.replace("GEDANKE:", "").strip()
                 if first:
                     gedanke_lines.append(first)
-            elif in_gedanke and not line.startswith(("KLASSIFIKATION:", "SUPERSEDES:", "TYP:")):
+            elif in_gedanke and not line.startswith(("KLASSIFIKATION:", "SUPERSEDES:", "TYP:", "ZIEL:")):
                 gedanke_lines.append(line)
         gedanke = " ".join(gedanke_lines).strip()
 
-    return klassifikation, gedanke, supersedes
+    return klassifikation, gedanke, supersedes, ziel
+
+
+def _save_goal(ziel: str, user_id: str) -> str | None:
+    """Speichert ein explizit gesetztes Ziel als decision-Chunk mit kimi-ziel Tag."""
+    try:
+        from memory.memory_store import store_chunk, get_active_collection
+        from memory.chunk_schema import create_chunk
+
+        # Deduplizierung
+        col = get_active_collection()
+        existing = col.get(
+            where={"$and": [{"source": "robot"}, {"chunk_type": "decision"}]},
+            include=["documents", "metadatas"],
+        )
+        ziel_words = set(w.lower() for w in ziel.split() if len(w) > 4)
+        for i, doc in enumerate(existing.get("documents") or []):
+            tags = str((existing.get("metadatas") or [{}])[i].get("tags", ""))
+            if "kimi-ziel" not in tags:
+                continue
+            doc_words = set(w.lower() for w in doc.split() if len(w) > 4)
+            if ziel_words and len(ziel_words & doc_words) / len(ziel_words) > 0.6:
+                logger.info(f"_save_goal: ähnliches Ziel existiert bereits, skip: '{ziel[:50]}'")
+                return None
+
+        chunk = create_chunk(
+            text=f"Kimis Ziel: {ziel}",
+            chunk_type="decision",
+            source="robot",
+            confidence=0.80,
+            epistemic_status="stated",
+            tags=["kimi-ziel", "autonom", "explizit"],
+        )
+        store_chunk(chunk)
+        # Sofort ein kimi-Todo anlegen
+        try:
+            from core.todos import create_todo
+            from core.datetime_utils import now_berlin
+            from datetime import timedelta
+            tomorrow = (now_berlin() + timedelta(days=1)).strftime("%Y-%m-%d")
+            create_todo(
+                user_id=user_id,
+                title=ziel[:80],
+                description="Aus autonomer Reflexion — explizit gesetztes Ziel",
+                priority="mittel",
+                project="kimi",
+                due_date=tomorrow,
+            )
+        except Exception:
+            pass
+        logger.info(f"_save_goal: Ziel gespeichert {chunk['id'][:8]} — '{ziel[:60]}'")
+        return chunk["id"]
+    except Exception as e:
+        logger.warning(f"_save_goal fehlgeschlagen: {e}")
+        return None
 
 
 def _save_result(klassifikation: str, gedanke: str, supersedes_ids: list[str],
@@ -497,7 +566,9 @@ def run_autonomous_reflection(
                 )
 
                 if reply and len(reply) > 15:
-                    klassifikation, gedanke, supersedes = _parse_output(reply)
+                    klassifikation, gedanke, supersedes, ziel = _parse_output(reply)
+                    if ziel:
+                        _save_goal(ziel, user_id)
                     if klassifikation != "DISCARD" and gedanke:
                         result_id = _save_result(klassifikation, gedanke, supersedes, chunk_a, user_id)
                         if result_id:
@@ -578,13 +649,26 @@ def run_autonomous_reflection(
         if not reply or len(reply) < 15:
             return None
 
-        klassifikation, gedanke, supersedes = _parse_output(reply)
+        klassifikation, gedanke, supersedes, ziel = _parse_output(reply)
+        if ziel:
+            _save_goal(ziel, user_id)
         result_id = _save_result(klassifikation, gedanke, supersedes, target, user_id)
 
         # Vorhaben-Signale → Kimi-Todos + langfristige Ziele
         if gedanke and klassifikation not in ("DISCARD",):
             try:
-                from core.todos import extract_intent_todos, extract_intent_goals
+                from core.todos import extract_intent_todos, extract_intent_goals, parse_and_execute_todos
+                # Explizite [PROPOSAL: ...] Blöcke
+                try:
+                    from core.proposals import extract_proposals, save_proposal
+                    _, props = extract_proposals(gedanke)
+                    for prop in props:
+                        save_proposal(prop, source="autonomous_reflection")
+                except Exception:
+                    pass
+                # Explizite [TODO_ACTION: ...] Blöcke
+                parse_and_execute_todos(gedanke, user_id)
+                # Dann Signalwort-Erkennung
                 new_todos = extract_intent_todos(gedanke, user_id)
                 if new_todos:
                     logger.info(f"AutonomousReflection: {len(new_todos)} Kimi-Todo(s) angelegt")
@@ -652,7 +736,9 @@ def run_autonomous_reflection(
             )
 
             if condense_reply and len(condense_reply) > 15:
-                klass2, gedanke2, supersedes2 = _parse_output(condense_reply)
+                klass2, gedanke2, supersedes2, ziel2 = _parse_output(condense_reply)
+                if ziel2:
+                    _save_goal(ziel2, user_id)
                 if klass2 != "DISCARD" and gedanke2 and len(gedanke2) > 15:
                     all_ids = [target["id"]] + [c["id"] for c in related[:2]]
                     condensed_id = _save_result(klass2, gedanke2, all_ids, target, user_id)
