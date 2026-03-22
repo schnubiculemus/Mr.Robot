@@ -370,6 +370,22 @@ def api_planner_state():
     })
 
 
+@app.route("/api/write-audit")
+@require_auth
+def api_write_audit():
+    """Letzte Write-Audit-Eintraege."""
+    from core.database import get_connection
+    limit = int(request.args.get("limit", 20))
+    conn = get_connection()
+    try:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM write_audit ORDER BY executed_at DESC LIMIT ?", (limit,)
+        ).fetchall()]
+    finally:
+        conn.close()
+    return jsonify(rows)
+
+
 @app.route("/api/planner/run", methods=["POST"])
 @require_auth
 def api_planner_run():

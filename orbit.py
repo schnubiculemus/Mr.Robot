@@ -386,10 +386,25 @@ def count_hot_tasks() -> int:
 # Steps (orbit_steps)
 # =============================================================================
 
+# Schreibende Tools -- erfordern automatisch commit_point=True
+_WRITE_TOOLS = {"workspace", "todos_write", "calendar_write"}
+
+
 def create_step(task_id: str, step_type: str, description: str = None,
                 tool_ref: str = None, interruptible: bool = True,
-                preflight_required: bool = False) -> str:
-    """Legt einen neuen Step an."""
+                preflight_required: bool = False,
+                commit_point: bool = None) -> str:
+    """
+    Legt einen neuen Step an.
+    5.1: Schreibende Tools setzen commit_point automatisch auf True.
+    """
+    # commit_point automatisch setzen fuer schreibende Tools
+    if commit_point is None:
+        commit_point = tool_ref in _WRITE_TOOLS
+    # Schreibende Tools erzwingen preflight
+    if tool_ref in _WRITE_TOOLS:
+        preflight_required = True
+
     sid = new_id()
     now = to_iso()
     conn = get_connection()
@@ -405,6 +420,8 @@ def create_step(task_id: str, step_type: str, description: str = None,
         conn.commit()
     finally:
         conn.close()
+    audit("orbit", "step_created",  "step", sid,
+          f"{step_type} {'[WRITE]' if commit_point else ''} fuer Task {task_id[:8]}")
     return sid
 
 
@@ -3459,8 +3476,17 @@ def execute_tool(
     task_id: str = None,
     step_id: str = None,
     dry_run: bool = False,
+    owner_id: str = None,
 ) -> dict:
     import time as _time
+    # 5.1: owner_id fuer Gate-Service
+    if owner_id is None:
+        try:
+            from config import OWNER_ID
+            owner_id = OWNER_ID
+        except Exception:
+            owner_id = ""
+    _owner_id = owner_id
     tool_info = get_tool_info(tool_ref)
     criticality = tool_info.get("criticality", "kontextkritisch")
     is_commit = "committing" in tool_info.get("usage", []) or criticality == "kritisch"
@@ -3571,6 +3597,7 @@ def _dispatch_tool(tool_ref: str, action: str, params: dict) -> object:
         workspace = os.path.join(PROJECT_DIR, "kimi_workspace")
         os.makedirs(workspace, exist_ok=True)
 
+        # Lese-Aktionen: kein Gate
         if action_type == "list":
             files = os.listdir(workspace)
             joined = "\n".join(files) if files else "(leer)"
@@ -3584,21 +3611,38 @@ def _dispatch_tool(tool_ref: str, action: str, params: dict) -> object:
             with open(path, "r", encoding="utf-8") as f:
                 return {"success": True, "result": f.read()[:5000]}
 
+        # Schreib-Aktionen: 5.1 Gate
         elif action_type == "save":
-            fname = params.get("filename", "output.txt")
-            code = params.get("code", params.get("content", ""))
-            path = os.path.join(workspace, os.path.basename(fname))
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(code)
-            return {"success": True, "result": f"Datei gespeichert: {fname}"}
+            from core.gate_service import execute_write
+            def _do_save(p):
+                fname = p.get("filename", "output.txt")
+                code = p.get("code", p.get("content", ""))
+                path = os.path.join(workspace, os.path.basename(fname))
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(code)
+                return {"success": True, "result": f"Datei gespeichert: {fname}"}
+            gresult = execute_write("workspace.save", params, _owner_id,
+                                    _do_save, task_id=task_id, step_id=step_id)
+            return {"success": gresult["ok"],
+                    "result": gresult.get("result") or gresult.get("error"),
+                    "error": gresult.get("error"),
+                    "audit_id": gresult.get("audit_id")}
 
         elif action_type == "delete":
-            fname = params.get("filename", "")
-            path = os.path.join(workspace, os.path.basename(fname))
-            if os.path.exists(path):
-                os.remove(path)
-                return {"success": True, "result": f"Datei gelöscht: {fname}"}
-            return {"success": False, "error": f"Datei nicht gefunden: {fname}"}
+            from core.gate_service import execute_write
+            def _do_delete(p):
+                fname = p.get("filename", "")
+                path = os.path.join(workspace, os.path.basename(fname))
+                if os.path.exists(path):
+                    os.remove(path)
+                    return {"success": True, "result": f"Datei geloescht: {fname}"}
+                return {"success": False, "error": f"Datei nicht gefunden: {fname}"}
+            gresult = execute_write("workspace.delete", params, _owner_id,
+                                    _do_delete, task_id=task_id, step_id=step_id)
+            return {"success": gresult["ok"],
+                    "result": gresult.get("result") or gresult.get("error"),
+                    "error": gresult.get("error"),
+                    "audit_id": gresult.get("audit_id")}
 
         else:
             return {"success": False, "error": f"Unbekannte workspace action: {action_type}"}

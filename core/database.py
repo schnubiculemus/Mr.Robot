@@ -853,6 +853,28 @@ def init_kimi_b_schema(conn=None):
         )
     """)
 
+    # write_audit — Audit-Trail fuer alle Schreiboperationen (5.x)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS write_audit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_id TEXT NOT NULL,
+            task_id TEXT,
+            step_id TEXT,
+            action_type TEXT NOT NULL,
+            tool_ref TEXT NOT NULL,
+            risk_class TEXT NOT NULL,
+            gate_result TEXT NOT NULL,
+            preflight_result TEXT,
+            write_result TEXT,
+            verify_result TEXT,
+            target_ref TEXT,
+            target_scope TEXT,
+            success INTEGER NOT NULL DEFAULT 0,
+            error TEXT,
+            executed_at TEXT NOT NULL
+        )
+    """)
+
     # planner_decisions — historische Entscheidungen
     conn.execute("""
         CREATE TABLE IF NOT EXISTS planner_decisions (
