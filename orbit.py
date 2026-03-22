@@ -2544,16 +2544,32 @@ def _execute_step(step: dict, task_id: str) -> None:
     if result["success"]:
         step_transition(step_id, "done", reason=f"Tool {tool_ref} erfolgreich")
 
-        # 6.1: first_meaningful_execution tracken
+        # 6.1 + 7.5: first_meaningful_execution tracken + Artefakt materialisieren
         if result.get("audit_id"):
             try:
                 action_key = f"{tool_ref}.{action}"
-                from core.planner import record_meaningful_execution, MEANINGFUL_EXEC_TOOLS
-                if action_key in MEANINGFUL_EXEC_TOOLS:
+                step_type = step.get("step_type", "") if step else ""
+                from core.planner import record_meaningful_execution, MEANINGFUL_EXEC_TOOLS, MEANINGFUL_EXEC_STEPS
+                is_meaningful = (action_key in MEANINGFUL_EXEC_TOOLS or step_type in MEANINGFUL_EXEC_STEPS)
+                if is_meaningful:
                     t_obj = get_task(task_id) if task_id else None
                     linked_todo = t_obj.get("linked_todo_id") if t_obj else None
                     if linked_todo:
-                        record_meaningful_execution(int(linked_todo), action_key)
+                        record_meaningful_execution(int(linked_todo), action_key, step_type)
+                        # 7.5: Ergebnis als Execution-Artefakt materialisieren
+                        try:
+                            from core.workspace_artifact_service import materialize_execution_artifact
+                            result_text = str(result.get("result",""))[:2000]
+                            if result_text and result_text.strip():
+                                materialize_execution_artifact(
+                                    owner_id=_owner_id,
+                                    line_id=f"todo:{linked_todo}",
+                                    content=f"# Erster Vollzug\n\n**Aktion:** {action_key}\n\n**Ergebnis:**\n{result_text}",
+                                    format="md",
+                                    task_id=task_id, step_id=step_id,
+                                )
+                        except Exception:
+                            pass
             except Exception:
                 pass
 
@@ -3863,8 +3879,78 @@ def _dispatch_tool(tool_ref: str, action: str, params: dict) -> object:
         workspace = os.path.join(PROJECT_DIR, "kimi_workspace")
         os.makedirs(workspace, exist_ok=True)
 
-        # Lese-Aktionen: kein Gate
-        if action_type == "list":
+        # 7.x: Semantische Artifact-Actions
+        if action_type == "artifact_create":
+            from core.workspace_artifact_service import create_artifact
+            line_id = params.get("line_id") or (f"todo:{task_id}" if task_id else "general")
+            art = create_artifact(
+                owner_id=_owner_id,
+                line_id=line_id,
+                artifact_type=params.get("artifact_type", "analysis"),
+                format=params.get("format", "md"),
+                content=params.get("content", ""),
+                purpose=params.get("purpose", "working_state"),
+                task_id=task_id, step_id=step_id,
+            )
+            if art:
+                return {"success": True, "result": f"Artifact #{art['id']} erstellt",
+                        "artifact_id": art["id"], "path": art["relative_path"]}
+            return {"success": False, "error": "Artifact-Erstellung fehlgeschlagen"}
+
+        elif action_type == "artifact_update":
+            from core.workspace_artifact_service import update_artifact_content
+            ok = update_artifact_content(
+                artifact_id=int(params.get("artifact_id", 0)),
+                content=params.get("content", ""),
+                status=params.get("status"),
+            )
+            return {"success": ok, "result": "Artifact aktualisiert" if ok else "Fehler"}
+
+        elif action_type == "artifact_read":
+            from core.workspace_artifact_service import get_artifact, read_artifact_content
+            art_id = params.get("artifact_id")
+            if art_id:
+                content_text = read_artifact_content(int(art_id))
+                return {"success": bool(content_text),
+                        "result": (content_text or "")[:5000]}
+            # Letztes Artefakt der Linie
+            line_id = params.get("line_id", "")
+            from core.workspace_artifact_service import get_latest_line_artifact
+            art = get_latest_line_artifact(line_id, params.get("artifact_type"))
+            if not art:
+                return {"success": False, "error": "Kein Artifact gefunden"}
+            content_text = read_artifact_content(art["id"])
+            return {"success": True, "result": (content_text or "")[:5000],
+                    "artifact_id": art["id"]}
+
+        elif action_type == "artifact_list":
+            from core.workspace_artifact_service import list_line_artifacts, build_line_manifest
+            line_id = params.get("line_id", "")
+            manifest = build_line_manifest(line_id)
+            return {"success": True, "result": str(manifest)[:2000], "manifest": manifest}
+
+        elif action_type == "worklog_append":
+            from core.workspace_artifact_service import append_worklog_entry
+            line_id = params.get("line_id") or (f"todo:{task_id}" if task_id else "general")
+            ok = append_worklog_entry(line_id, params.get("content", ""),
+                                       task_id=task_id)
+            return {"success": ok, "result": "Worklog aktualisiert" if ok else "Fehler"}
+
+        elif action_type == "materialize_execution":
+            from core.workspace_artifact_service import materialize_execution_artifact
+            line_id = params.get("line_id") or (f"todo:{task_id}" if task_id else "general")
+            art = materialize_execution_artifact(
+                owner_id=_owner_id, line_id=line_id,
+                content=params.get("content", ""),
+                format=params.get("format", "md"),
+                task_id=task_id, step_id=step_id,
+            )
+            return {"success": bool(art),
+                    "result": f"Execution materialisiert: Artifact #{art['id']}" if art else "Fehler",
+                    "artifact_id": art["id"] if art else None}
+
+        # Legacy-Aktionen: kein Gate fuer Lesen
+        elif action_type == "list":
             files = os.listdir(workspace)
             joined = "\n".join(files) if files else "(leer)"
             return {"success": True, "result": joined, "files": files}

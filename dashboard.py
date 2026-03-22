@@ -558,6 +558,88 @@ def api_write_requests_history():
     return jsonify(rows)
 
 
+# =============================================================================
+# 7.x Workspace / Artifact API
+# =============================================================================
+
+@app.route("/api/workspace/lines")
+@require_auth
+def api_workspace_lines():
+    """Alle Linien mit Workspace-Eintraegen."""
+    from core.database import get_connection
+    conn = get_connection()
+    try:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM line_workspace_state ORDER BY last_workspace_write_at DESC LIMIT 50"
+        ).fetchall()]
+    finally:
+        conn.close()
+    return jsonify(rows)
+
+
+@app.route("/api/workspace/lines/<path:line_id>/artifacts")
+@require_auth
+def api_workspace_line_artifacts(line_id):
+    """Alle Artifacts einer Linie."""
+    from core.workspace_artifact_service import list_line_artifacts, build_line_manifest
+    status = request.args.get("status")
+    artifact_type = request.args.get("type")
+    artifacts = list_line_artifacts(line_id, status=status, artifact_type=artifact_type)
+    manifest = build_line_manifest(line_id)
+    return jsonify({"artifacts": artifacts, "manifest": manifest})
+
+
+@app.route("/api/workspace/artifacts/<int:artifact_id>")
+@require_auth
+def api_workspace_artifact(artifact_id):
+    """Einzelnes Artifact mit Inhalt."""
+    from core.workspace_artifact_service import get_artifact, read_artifact_content
+    art = get_artifact(artifact_id)
+    if not art:
+        return jsonify({"error": "Nicht gefunden"}), 404
+    content = read_artifact_content(artifact_id)
+    return jsonify({"artifact": art, "content": content})
+
+
+@app.route("/api/workspace/artifacts/<int:artifact_id>/status", methods=["POST"])
+@require_auth
+def api_workspace_artifact_status(artifact_id):
+    """Status eines Artifacts aendern."""
+    from core.workspace_artifact_service import set_artifact_status
+    data = request.json or {}
+    ok = set_artifact_status(artifact_id, data.get("status",""), actor="dashboard")
+    return jsonify({"ok": ok})
+
+
+@app.route("/api/workspace/stats")
+@require_auth
+def api_workspace_stats():
+    """Gesamtstatistik des Workspace."""
+    from core.database import get_connection
+    conn = get_connection()
+    try:
+        total = conn.execute("SELECT COUNT(*) FROM workspace_artifacts").fetchone()[0]
+        by_type = [dict(r) for r in conn.execute(
+            "SELECT artifact_type, COUNT(*) as n FROM workspace_artifacts GROUP BY artifact_type"
+        ).fetchall()]
+        by_status = [dict(r) for r in conn.execute(
+            "SELECT status, COUNT(*) as n FROM workspace_artifacts GROUP BY status"
+        ).fetchall()]
+        materialized = conn.execute(
+            "SELECT COUNT(*) FROM workspace_artifacts WHERE is_materialized_execution=1"
+        ).fetchone()[0]
+        recent = [dict(r) for r in conn.execute(
+            "SELECT * FROM workspace_artifacts ORDER BY created_at DESC LIMIT 10"
+        ).fetchall()]
+    finally:
+        conn.close()
+    return jsonify({
+        "total": total, "materialized": materialized,
+        "by_type": by_type, "by_status": by_status,
+        "recent": recent,
+    })
+
+
 @app.route("/api/write-control")
 @require_auth
 def api_write_control():

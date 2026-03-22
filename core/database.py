@@ -909,6 +909,52 @@ def init_kimi_b_schema(conn=None):
         except Exception:
             pass
 
+    # 7.x: Workspace-Artefaktsystem
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS workspace_artifacts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_id TEXT NOT NULL,
+            line_id TEXT NOT NULL,
+            task_id TEXT,
+            step_id TEXT,
+            artifact_type TEXT NOT NULL,
+            purpose TEXT,
+            format TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'draft',
+            filename TEXT NOT NULL,
+            relative_path TEXT NOT NULL,
+            version INTEGER NOT NULL DEFAULT 1,
+            supersedes_artifact_id INTEGER,
+            is_materialized_execution INTEGER NOT NULL DEFAULT 0,
+            created_by TEXT NOT NULL DEFAULT 'kimi',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS workspace_artifact_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            artifact_id INTEGER NOT NULL,
+            event_type TEXT NOT NULL,
+            actor TEXT NOT NULL DEFAULT 'kimi',
+            payload_json TEXT,
+            created_at TEXT NOT NULL
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS line_workspace_state (
+            line_id TEXT PRIMARY KEY,
+            owner_id TEXT NOT NULL,
+            latest_artifact_id INTEGER,
+            latest_materialized_artifact_id INTEGER,
+            last_workspace_write_at TEXT,
+            artifact_count INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL
+        )
+    """)
+
     # write_audit — Audit-Trail fuer alle Schreiboperationen (5.x)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS write_audit (
