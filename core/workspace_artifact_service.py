@@ -185,7 +185,35 @@ def create_artifact(owner_id: str, line_id: str, artifact_type: str,
 
         artifact = get_artifact(artifact_id)
         logger.info(f"Artifact #{artifact_id} erstellt: {artifact_type} v{version} fuer Linie {line_id}")
-        # Prio 2: Manifest automatisch rebuilden
+
+        # Prio B: supersedes_artifact_id -- altes aktives Artefakt gleichen Typs superseden
+        if version > 1:
+            try:
+                conn3 = get_connection()
+                old_arts = conn3.execute(
+                    """SELECT id FROM workspace_artifacts
+                       WHERE line_id=? AND artifact_type=? AND status='active' AND id!=?
+                       ORDER BY version DESC LIMIT 1""",
+                    (line_id, artifact_type, artifact_id)
+                ).fetchall()
+                for old_art in old_arts:
+                    conn3.execute(
+                        "UPDATE workspace_artifacts SET status='superseded', supersedes_artifact_id=?, updated_at=? WHERE id=?",
+                        (artifact_id, to_iso(), old_art["id"])
+                    )
+                    _write_event(old_art["id"], "superseded", created_by,
+                                 {"superseded_by": artifact_id})
+                if old_arts:
+                    conn3.execute(
+                        "UPDATE workspace_artifacts SET supersedes_artifact_id=? WHERE id=?",
+                        (old_arts[0]["id"], artifact_id)
+                    )
+                conn3.commit()
+                conn3.close()
+            except Exception as _se:
+                logger.debug(f"supersedes auto-chain fehlgeschlagen: {_se}")
+
+        # Auto rebuild manifest
         try:
             rebuild_artifact_index(line_id)
         except Exception:
@@ -247,6 +275,13 @@ def update_artifact_content(artifact_id: int, content: str,
 
         _write_event(artifact_id, "updated", actor,
                      {"status": new_status, "size": len(content)})
+        # Prio B: Index nach Update rebuilden
+        try:
+            art_updated = get_artifact(artifact_id)
+            if art_updated:
+                rebuild_artifact_index(art_updated["line_id"])
+        except Exception:
+            pass
         # line_workspace_state: last_write aktualisieren
         try:
             from core.database import get_connection as _gc_u
@@ -286,6 +321,7 @@ def set_artifact_status(artifact_id: int, status: str, actor: str = "kimi") -> b
             art = get_artifact(artifact_id)
             if art:
                 _touch_line_state(art["owner_id"], art["line_id"])
+                rebuild_artifact_index(art["line_id"])  # Prio B
         except Exception:
             pass
         return True

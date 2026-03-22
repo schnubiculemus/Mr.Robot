@@ -309,6 +309,17 @@ def collect_candidates(owner_id: str) -> dict:
                 if len(recent_obs[tid]) < 10:
                     recent_obs[tid].append({"type": r["type"], "content": r["content"]})
 
+        # 7.5: Workspace-Artefaktstand pro Todo lesen
+        workspace_states = {}
+        try:
+            ws_rows = conn.execute(
+                "SELECT line_id, latest_artifact_id, latest_materialized_artifact_id, last_workspace_write_at, artifact_count FROM line_workspace_state"
+            ).fetchall()
+            for ws in ws_rows:
+                workspace_states[ws["line_id"]] = dict(ws)
+        except Exception:
+            pass
+
         # 5.4: Offene Write-Requests als Linien
         write_request_lines = [dict(r) for r in conn.execute(
             """SELECT id, action_key, approval_status, origin_todo_id, line_status,
@@ -327,6 +338,7 @@ def collect_candidates(owner_id: str) -> dict:
             "active_tasks":        active_tasks,
             "recent_obs":          recent_obs,
             "write_request_lines": write_request_lines,
+            "workspace_states":    workspace_states,
         }
     finally:
         conn.close()
@@ -337,6 +349,9 @@ def collect_candidates(owner_id: str) -> dict:
 # =============================================================================
 
 def _build_situation(candidates: dict) -> dict:
+    # workspace_states direkt aus candidates weitergeben
+    if "workspace_states" not in candidates:
+        candidates["workspace_states"] = {}
     active_task_by_todo = {}
     for t in candidates["active_tasks"]:
         if t.get("linked_todo_id"):
@@ -676,6 +691,19 @@ def score_candidates(candidates: dict, situation: dict, owner_id: str = "") -> l
             if base_decision == CONTINUE_LINE:
                 base_decision = DEFER
 
+        # 7.5: Workspace-Bonus -- Linie mit echtem Artefaktstand wird bevorzugt fortgesetzt
+        line_id = f"todo:{todo.get('id','')}"
+        ws_state = (candidates.get("workspace_states") or {}).get(line_id, {})
+        has_materialized = bool(ws_state.get("latest_materialized_artifact_id"))
+        has_artifacts = (ws_state.get("artifact_count") or 0) > 0
+        workspace_bonus = 0.0
+        if has_materialized:
+            workspace_bonus = 1.5  # Hat echten Vollzug -- staerker fortsetzen
+        elif has_artifacts:
+            workspace_bonus = 0.5  # Hat Artefakte -- leichter bevorzugen
+        if workspace_bonus > 0:
+            score += workspace_bonus
+
         # 6.3: execution_pressure -- Bonus fuer umsetzungsreife Linien
         ex_pressure = _get_execution_pressure(todo)
         if ex_pressure > 0:
@@ -715,6 +743,10 @@ def score_candidates(candidates: dict, situation: dict, owner_id: str = "") -> l
             "execution_required":  execution_required,
             "meta_cycle_count":    todo.get("meta_cycle_count") or 0,
             "first_meaningful_execution": todo.get("first_meaningful_execution"),
+            "workspace_bonus":     workspace_bonus,
+            "has_materialized":    has_materialized,
+            "has_artifacts":       has_artifacts,
+            "last_workspace_write": ws_state.get("last_workspace_write_at"),
         }
 
     for t in situation["running"]:
@@ -1412,6 +1444,14 @@ def maybe_start_task(chosen: list, owner_id: str) -> list:
             start_todo(line["id"], task_id)
             started.append(task_id)
             logger.info(f"Planner: Task {task_id[:8]} ({tmpl}) fuer Todo #{line['id']}")
+            # 7.4: Brief-Artefakt bei Linienstart
+            try:
+                _orbit._auto_trigger_brief(
+                    task_id, owner_id,
+                    f"todo:{line['id']}", line["title"]
+                )
+            except Exception:
+                pass
         except Exception as e:
             logger.warning(f"Planner: Task-Start fehlgeschlagen #{line['id']}: {e}")
 
