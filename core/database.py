@@ -835,6 +835,22 @@ def init_kimi_b_schema(conn=None):
         except Exception:
             pass  # Spalte existiert bereits
 
+    # 6.x: Execution-Tracking fuer Linien (first_meaningful_execution, meta_cycles, pressure)
+    for _ex_col, _ex_type in [
+        ("first_meaningful_execution", "TEXT"),  # ISO-Timestamp erster echter Vollzug
+        ("meta_cycle_count", "INTEGER"),          # Zaehler fuer Meta-Zyklen ohne Vollzug
+        ("execution_pressure", "REAL"),           # Score-Modifikator 0.0-3.0
+        ("first_line_gate_active", "INTEGER"),    # 0/1 -- Gate aktiv
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE todos ADD COLUMN {_ex_col} {_ex_type}")
+        except Exception:
+            pass
+        try:
+            conn.execute(f"ALTER TABLE orbit_tasks ADD COLUMN {_ex_col} {_ex_type}")
+        except Exception:
+            pass
+
     # planner_state — persistenter Fokuszustand
     conn.execute("""
         CREATE TABLE IF NOT EXISTS planner_state (

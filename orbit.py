@@ -2493,6 +2493,19 @@ def _execute_step(step: dict, task_id: str) -> None:
     if result["success"]:
         step_transition(step_id, "done", reason=f"Tool {tool_ref} erfolgreich")
 
+        # 6.1: first_meaningful_execution tracken
+        if result.get("audit_id"):
+            try:
+                action_key = f"{tool_ref}.{action}"
+                from core.planner import record_meaningful_execution, MEANINGFUL_EXEC_TOOLS
+                if action_key in MEANINGFUL_EXEC_TOOLS:
+                    t_obj = get_task(task_id) if task_id else None
+                    linked_todo = t_obj.get("linked_todo_id") if t_obj else None
+                    if linked_todo:
+                        record_meaningful_execution(int(linked_todo), action_key)
+            except Exception:
+                pass
+
         # result_summary in Step schreiben
         result_summary = str(result.get("result", ""))[:300] if result.get("result") else f"{tool_ref}.{action} erfolgreich"
         try:

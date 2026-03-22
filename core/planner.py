@@ -48,6 +48,16 @@ BLOCKER_WAITING_FOLLOWUP  = "waiting_internal_followup"
 # Fokusbindung -- Mindeststunden bevor Fokus gewechselt wird
 FOCUS_MIN_HOURS = 1.5
 
+# 6.x Konstanten
+W_EXECUTION_PRESSURE   = 3.0   # Bonus fuer Linien unter Umsetzungsdruck
+META_CYCLE_THRESHOLD   = 3     # Anzahl Meta-Zyklen bevor Gate aktiv
+MEANINGFUL_EXEC_TOOLS  = {      # Tools die als first_meaningful_execution zaehlen
+    "workspace.save", "workspace.delete",
+    "todos.create", "todos.complete",
+    "proposal.approve", "proposal.reject",
+    "calendar.write", "calendar.change",
+}
+
 # Score-Gewichte
 W_CONTINUITY        = 6.0
 W_PROGRESS_NEAR     = 3.0
@@ -663,7 +673,17 @@ def score_candidates(candidates: dict, situation: dict, owner_id: str = "") -> l
         # 4.2: Nicht-planbare Blocker auf DEFER setzen
         if blocker_type and not _blocker_is_plannable(blocker_type):
             if base_decision == CONTINUE_LINE:
-                base_decision = DEFER  # nicht weiter pushen
+                base_decision = DEFER
+
+        # 6.3: execution_pressure -- Bonus fuer umsetzungsreife Linien
+        ex_pressure = _get_execution_pressure(todo)
+        if ex_pressure > 0:
+            score += ex_pressure
+            details["execution_pressure"] = ex_pressure
+
+        # 6.1: First-Line-Gate -- aktiv wenn reif und noch kein Vollzug
+        is_mature = _is_line_mature(todo, situation)
+        first_line_gate = is_mature and not todo.get("first_meaningful_execution")
 
         return {
             "type":           "todo",
@@ -682,7 +702,12 @@ def score_candidates(candidates: dict, situation: dict, owner_id: str = "") -> l
             "task_template":  todo.get("task_template"),
             "goal_id":        todo.get("goal_id"),
             "proposal_id":    todo.get("proposal_id"),
-            "entblockbar":    blocker_type not in (BLOCKER_HARD,),
+            "entblockbar":       blocker_type not in (BLOCKER_HARD,),
+            "execution_pressure": ex_pressure,
+            "first_line_gate":    first_line_gate,
+            "is_mature":          is_mature,
+            "meta_cycle_count":   todo.get("meta_cycle_count") or 0,
+            "first_meaningful_execution": todo.get("first_meaningful_execution"),
         }
 
     for t in situation["running"]:
@@ -963,16 +988,33 @@ def choose_worklines(candidates: dict, scored: list,
                   else "Hauptlinie wartet auf Freigabe -- Nebenlinie aktiv.")
         return _build_result(primary, secondary, scored, reason, CONTINUE_LINE, replan_trigger)
 
+    # 6.3: Linien mit execution_pressure bevorzugen
+    pressure_cands = sorted(
+        [s for s in continue_cands if s.get("execution_pressure", 0) > 0],
+        key=lambda s: s.get("execution_pressure", 0), reverse=True
+    )
+
     # Aktiv fortsetzbare Linien bevorzugen
-    primary_pool = active_waiting if active_waiting else (feedback_waiting or continue_cands)
+    primary_pool = (pressure_cands if pressure_cands
+                    else active_waiting if active_waiting
+                    else (feedback_waiting or continue_cands))
 
     if primary_pool:
         primary = primary_pool[0]
         secondary_pool = [s for s in primary_pool[1:]] + start_cands
         secondary = secondary_pool[0] if secondary_pool else None
-        reason = "Laufende Arbeit fortsetzen."
-        if external_waiting and not active_waiting:
+
+        # 6.4: Fokusgrund je nach execution_pressure
+        if primary.get("first_line_gate"):
+            reason = (f"First-Line-Gate aktiv: {primary.get('meta_cycle_count',0)} Meta-Zyklen "
+                      f"-- erster Vollzug noetig.")
+        elif primary.get("execution_pressure", 0) > 0:
+            reason = (f"Umsetzungsdruck ({primary['execution_pressure']:.1f}) -- "
+                      f"Implementation bevorzugt.")
+        elif external_waiting and not active_waiting:
             reason = "Warte auf externe Bedingung -- Nebenlinie starten falls moeglich."
+        else:
+            reason = "Laufende Arbeit fortsetzen."
         return _build_result(primary, secondary, scored, reason, CONTINUE_LINE, replan_trigger)
 
     if unblock_cands:
@@ -1035,6 +1077,83 @@ def choose_worklines(candidates: dict, scored: list,
         logger.debug(f"LLM Feinauswahl fehlgeschlagen, Fallback: {e}")
         return _build_result(top[0], top[1] if len(top) > 1 else None,
                             scored, "Fallback: Top-Kandidaten", START_LINE, replan_trigger)
+
+
+def _is_line_mature(todo: dict, situation: dict) -> bool:
+    """
+    6.1: Prueft ob eine Linie umsetzungsreif ist.
+    Umsetzungsreif = Voraussetzungen erfuellt, kein harter Blocker,
+                     noch kein first_meaningful_execution,
+                     mehrere Meta-Zyklen ohne echten Vollzug.
+    """
+    # Muss execution_mode gesetzt haben
+    if todo.get("execution_mode", "none") == "none":
+        return False
+    # Kein harter Blocker
+    if todo.get("status") == "blocked":
+        return False
+    # Noch kein erster echter Vollzug
+    if todo.get("first_meaningful_execution"):
+        return False
+    # Mindestens META_CYCLE_THRESHOLD Meta-Zyklen ohne Vollzug
+    meta_cycles = todo.get("meta_cycle_count") or 0
+    if meta_cycles < META_CYCLE_THRESHOLD:
+        return False
+    return True
+
+
+def _get_execution_pressure(todo: dict) -> float:
+    """
+    6.3: Berechnet execution_pressure fuer eine Linie.
+    Hoeher = mehr Druck in Richtung erster Vollzug.
+    """
+    if todo.get("first_meaningful_execution"):
+        return 0.0  # Erster Vollzug schon passiert
+    meta_cycles = todo.get("meta_cycle_count") or 0
+    base = min(meta_cycles * 0.5, W_EXECUTION_PRESSURE)
+    # Extra-Druck wenn Goal-relevant
+    if todo.get("goal_id"):
+        base = min(base * 1.2, W_EXECUTION_PRESSURE)
+    return round(base, 2)
+
+
+def record_meta_cycle(todo_id: int, owner_id: str) -> None:
+    """6.2: Erhoehe Meta-Zyklus-Zaehler fuer ein Todo."""
+    try:
+        from core.database import get_connection
+        conn = get_connection()
+        conn.execute(
+            "UPDATE todos SET meta_cycle_count = COALESCE(meta_cycle_count,0) + 1 WHERE id=?",
+            (todo_id,)
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.debug(f"record_meta_cycle fehlgeschlagen: {e}")
+
+
+def record_meaningful_execution(todo_id: int, action_key: str) -> None:
+    """6.1: Markiert ersten echten Vollzug fuer eine Linie."""
+    try:
+        from core.database import get_connection
+        from core.datetime_utils import to_iso
+        if action_key not in MEANINGFUL_EXEC_TOOLS:
+            return
+        conn = get_connection()
+        # Nur setzen wenn noch nicht vorhanden
+        conn.execute(
+            """UPDATE todos SET
+               first_meaningful_execution=?,
+               first_line_gate_active=0,
+               execution_pressure=0.0
+               WHERE id=? AND first_meaningful_execution IS NULL""",
+            (to_iso(), todo_id)
+        )
+        conn.commit()
+        conn.close()
+        logger.info(f"6.x: first_meaningful_execution fuer Todo #{todo_id} via {action_key}")
+    except Exception as e:
+        logger.debug(f"record_meaningful_execution fehlgeschlagen: {e}")
 
 
 def _derive_followup_from_proposal(proposal: dict, candidates: dict,
@@ -1331,6 +1450,25 @@ def run_planner(owner_id: str, force: bool = False) -> dict:
             record_observation(owner_id=owner_id, content=obs_text, obs_type="state_change")
         except Exception:
             pass
+
+        # 6.2: Meta-Zyklen-Tracking -- inkrementieren fuer aktive Linien ohne Vollzug
+        if primary:
+            primary_todo_id = primary.get("id") if primary.get("type") == "todo" else None
+            if primary_todo_id and not primary.get("first_meaningful_execution"):
+                record_meta_cycle(primary_todo_id, owner_id)
+                # First-Line-Gate in DB aktualisieren
+                try:
+                    from core.database import get_connection as _gc6x
+                    _c6x = _gc6x()
+                    is_gate = primary.get("first_line_gate", False)
+                    _c6x.execute(
+                        "UPDATE todos SET first_line_gate_active=?, execution_pressure=? WHERE id=?",
+                        (1 if is_gate else 0, primary.get("execution_pressure", 0.0), primary_todo_id)
+                    )
+                    _c6x.commit()
+                    _c6x.close()
+                except Exception:
+                    pass
 
         # 5.4: Deferred Write-Requests -- zugehoerige Todos nicht starten
         import datetime as _dt

@@ -329,6 +329,11 @@ def api_planner_state():
         wr_overdue = len([s for s in scored if s.get("type") == "write_request"
                           and s.get("overdue")])
 
+        # 6.x: Linien mit Gate/Pressure zaehlen
+        gate_active_count = len([s for s in scored if s.get("first_line_gate")])
+        pressure_count    = len([s for s in scored if s.get("execution_pressure", 0) > 0])
+        mature_count      = len([s for s in scored if s.get("is_mature")])
+
         lagebild = {
             "running":   len(sit["running"]),
             "waiting":   len(sit["waiting"]),
@@ -336,6 +341,9 @@ def api_planner_state():
             "startable": len(sit["startable"]),
             "write_requests_pending": wr_pending,
             "write_requests_overdue": wr_overdue,
+            "gate_active":    gate_active_count,
+            "under_pressure": pressure_count,
+            "mature_lines":   mature_count,
             "top_candidates": [
                 {"id": s["id"], "type": s["type"], "title": s["title"][:50],
                  "decision": s["decision"], "score": s["score"],
@@ -343,7 +351,12 @@ def api_planner_state():
                  "line_status": s.get("line_status"),
                  "overdue": s.get("overdue", False),
                  "decision_due_at": s.get("decision_due_at"),
-                 "blocker_type": s.get("blocker_type")}
+                 "blocker_type": s.get("blocker_type"),
+                 "execution_pressure": s.get("execution_pressure", 0),
+                 "first_line_gate": s.get("first_line_gate", False),
+                 "is_mature": s.get("is_mature", False),
+                 "meta_cycle_count": s.get("meta_cycle_count", 0),
+                 "first_meaningful_execution": s.get("first_meaningful_execution")}
                 for s in scored[:8]
             ],
         }
