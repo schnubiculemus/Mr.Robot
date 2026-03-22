@@ -1420,6 +1420,33 @@ def _e_append_next_step(task_id: str, next_step_hint: str, user_id: str, loop_co
             tool_ref = "calendar_read"
             action = "list"
             description = "{}"
+        elif any(w in hint_lower for w in ["blockiert", "block", "feststeckt", "gesperrt"]):
+            # 5.1: Todo-Status auf blocked setzen via Gate
+            import json as _j
+            task_obj = get_task(task_id)
+            todo_id = task_obj.get("linked_todo_id") if task_obj else None
+            if todo_id:
+                tool_ref = "todos_write"
+                action = "status"
+                description = _j.dumps({"action": "status", "id": todo_id,
+                                        "status": "blocked", "reason": next_step_hint[:100]})
+            else:
+                tool_ref = "todos_read"
+                action = "list"
+                description = "{}"
+        elif any(w in hint_lower for w in ["erledigt", "abgeschlossen", "fertig", "done", "complete"]):
+            # 5.1: Todo auf done setzen via Gate
+            import json as _j
+            task_obj = get_task(task_id)
+            todo_id = task_obj.get("linked_todo_id") if task_obj else None
+            if todo_id:
+                tool_ref = "todos_write"
+                action = "complete"
+                description = _j.dumps({"action": "complete", "id": todo_id})
+            else:
+                tool_ref = "todos_read"
+                action = "list"
+                description = "{}"
         elif any(w in hint_lower for w in ["todo", "aufgabe", "task"]):
             tool_ref = "todos_read"
             action = "list"
@@ -3555,8 +3582,56 @@ def _dispatch_tool(tool_ref: str, action: str, params: dict) -> object:
 
     # Todos / Listen
     if tool_ref in ("todos_read", "todos_write", "todos_delete"):
-        from core.todos import execute_todo_action
-        return execute_todo_action(params.get("phone_number", ""), params)
+        action_type = params.get("action", action)
+
+        # Lese-Aktionen: kein Gate
+        if tool_ref == "todos_read" or action_type in ("list", "get"):
+            from core.todos import execute_todo_action
+            return execute_todo_action(params.get("phone_number", ""), params)
+
+        # Schreib-Aktionen: 5.1 Gate
+        from core.gate_service import execute_write
+
+        # Action-Key bestimmen
+        action_key_map = {
+            "create": "todos.create",
+            "complete": "todos.complete",
+            "block": "todos.status",
+            "status": "todos.status",
+            "delete": "todos.status",  # delete treated as status change in 5.1
+        }
+        action_key = action_key_map.get(action_type, "todos.status")
+
+        # params um owner_id / phone_number ergaenzen
+        write_params = dict(params)
+        write_params["owner_id"] = _owner_id
+
+        def _do_todo_write(p):
+            from core.todos import execute_todo_action
+            result_text = execute_todo_action(p.get("phone_number", p.get("owner_id", "")), p)
+            # Verifizierbare Rueckgabe: ob Todo-ID in Text erscheint
+            success = result_text is not None and len(str(result_text).strip()) > 0
+            # Bei create: ID extrahieren fuer Verify
+            todo_id = None
+            if action_type == "create" and result_text:
+                import re
+                m = re.search(r'#(\d+)', str(result_text))
+                if m:
+                    todo_id = int(m.group(1))
+            return {"success": success, "result": result_text, "id": todo_id}
+
+        gresult = execute_write(
+            action_key, write_params, _owner_id, _do_todo_write,
+            task_id=task_id, step_id=step_id
+        )
+        # Kompatible Rueckgabe
+        result_text = gresult.get("result") or gresult.get("error", "")
+        return {
+            "success": gresult["ok"],
+            "result": result_text,
+            "error": gresult.get("error"),
+            "audit_id": gresult.get("audit_id"),
+        }
 
     # Web Search
     if tool_ref == "websearch":

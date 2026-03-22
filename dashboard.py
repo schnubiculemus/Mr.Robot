@@ -361,12 +361,27 @@ def api_planner_state():
     except Exception:
         hierarchy = []
 
+    # Write-Audit letzte 10
+    try:
+        write_audit = [dict(r) for r in conn2.execute(
+            "SELECT action_type, tool_ref, risk_class, gate_result, success, verify_result, executed_at, error FROM write_audit ORDER BY executed_at DESC LIMIT 10"
+        ).fetchall()] if False else []  # conn2 schon geschlossen -- eigene Abfrage
+        from core.database import get_connection as _gc3
+        _c3 = _gc3()
+        write_audit = [dict(r) for r in _c3.execute(
+            "SELECT action_type, tool_ref, risk_class, gate_result, success, verify_result, target_ref, executed_at, error FROM write_audit ORDER BY executed_at DESC LIMIT 10"
+        ).fetchall()]
+        _c3.close()
+    except Exception:
+        write_audit = []
+
     return jsonify({
         "focus":        focus,
         "focus_hours":  round(focus_hours, 1),
         "decisions":    decisions,
         "lagebild":     lagebild,
         "hierarchy":    hierarchy,
+        "write_audit":  write_audit,
     })
 
 
