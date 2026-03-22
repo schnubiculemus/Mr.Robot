@@ -431,8 +431,8 @@ def api_write_requests():
 @app.route("/api/write-requests/<int:req_id>/action", methods=["POST"])
 @require_auth
 def api_write_request_action(req_id):
-    """Approve oder Reject eines Write-Requests."""
-    from core.gate_service import approve_write_request, reject_write_request
+    """Approve, Reject oder Defer eines Write-Requests."""
+    from core.gate_service import approve_write_request, reject_write_request, defer_write_request
     data = request.json or {}
     action = data.get("action")
     if action == "approve":
@@ -441,7 +441,31 @@ def api_write_request_action(req_id):
     elif action == "reject":
         ok = reject_write_request(req_id, reason=data.get("reason",""), rejected_by="dashboard")
         return jsonify({"ok": ok})
+    elif action == "defer":
+        hours = int(data.get("hours", 24))
+        ok = defer_write_request(req_id, defer_hours=hours,
+                                  reason=data.get("reason",""), deferred_by="dashboard")
+        return jsonify({"ok": ok})
     return jsonify({"error": "Unbekannte Aktion"}), 400
+
+
+@app.route("/api/write-requests/history")
+@require_auth
+def api_write_requests_history():
+    """Alle Write-Requests mit Status-History."""
+    from core.database import get_connection
+    from config import USER_CONTEXTS
+    user_id = list(USER_CONTEXTS.keys())[0]
+    conn = get_connection()
+    try:
+        rows = [dict(r) for r in conn.execute(
+            """SELECT * FROM write_requests WHERE owner_id=?
+               ORDER BY created_at DESC LIMIT 50""",
+            (user_id,)
+        ).fetchall()]
+    finally:
+        conn.close()
+    return jsonify(rows)
 
 
 @app.route("/api/planner/run", methods=["POST"])

@@ -1785,6 +1785,15 @@ def _handle_idle_pulse(trigger: dict) -> None:
         else:
             phase = "Späte Nacht"
 
+        # 5.3: Abgelaufene Write-Requests bereinigen
+        try:
+            from core.gate_service import expire_stale_write_requests
+            expired = expire_stale_write_requests(user_id)
+            if expired:
+                logger.info(f"idle_pulse: {expired} Write-Requests abgelaufen")
+        except Exception as _exp_e:
+            logger.debug(f"idle_pulse: expire_stale fehlgeschlagen: {_exp_e}")
+
         # Planner -- wenn keine internen Tasks laufen
         from core.database import get_connection as _gc
         _conn = _gc()

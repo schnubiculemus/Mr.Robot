@@ -12,6 +12,14 @@
 
 <div id="planner-content" style="color:var(--text-muted);font-size:0.85rem">Lade...</div>
 
+<div style="margin-top:1.5rem">
+  <button onclick="loadHistory()" style="padding:0.3rem 0.75rem;background:var(--bg);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:0.78rem;color:var(--text-muted)">&#128221; Write-History anzeigen</button>
+  <div id="history-section" style="display:none;margin-top:1rem;background:var(--card-bg);border:1px solid var(--border);border-radius:12px;padding:1.25rem">
+    <div style="font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);margin-bottom:0.75rem">Write-History</div>
+    <div id="history-content"></div>
+  </div>
+</div>
+
 <script>
 const BADGE = {
   continue_line:'#d1fae5|#065f46|Fortsetzen',
@@ -79,7 +87,12 @@ function render(data) {
   // --- Zeile 1: Fokus + Lagebild ---
   let focusBody = '';
   if (primaryCand) {
+    // 5.3: Approval-Kontext bei waiting_user_decision
+    const isWaitingApproval = primaryCand.blocker_type === 'waiting_user_decision' || false;
     focusBody += focusLine({...primaryCand, kind: primaryCand.type});
+    if (isWaitingApproval) {
+      focusBody += `<div style="font-size:0.78rem;padding:0.4rem 0.6rem;background:#fef3c7;border-radius:6px;margin-top:0.3rem;color:#92400e">&#9203; Wartet auf Freigabe</div>`;
+    }
     if (secondaryCand) focusBody += focusLine({...secondaryCand, kind: secondaryCand.type});
     if (focus.focus_reason) focusBody += `<div style="font-size:0.78rem;color:var(--text-muted);padding:0.5rem 0.65rem;background:var(--bg);border-radius:6px;margin-top:0.4rem">&#128204; ${focus.focus_reason}</div>`;
     if (focus.replan_after) {
@@ -152,8 +165,14 @@ function render(data) {
         </div>
         ${r.preview_text ? `<div style="font-size:0.8rem;color:var(--text-muted);margin-bottom:0.5rem;padding:0.4rem 0.5rem;background:var(--bg);border-radius:4px">&#128269; ${r.preview_text}</div>` : ''}
         ${r.reason ? `<div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:0.5rem">Grund: ${r.reason}</div>` : ''}
-        <div style="display:flex;gap:0.5rem">
+        <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:0.4rem">
+          ${r.task_id ? 'Task: '+r.task_id.substring(0,8) : ''}
+          ${r.created_at ? ' &middot; ' + new Date(r.created_at).toLocaleString('de',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}) : ''}
+          ${r.expires_at ? ' &middot; laeuft ab: ' + new Date(r.expires_at).toLocaleString('de',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}) : ''}
+        </div>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
           <button onclick="approveWrite(${r.id})" style="padding:0.3rem 0.75rem;background:#10b981;color:white;border:none;border-radius:5px;cursor:pointer;font-size:0.78rem">&#10003; Freigeben</button>
+          <button onclick="deferWrite(${r.id})" style="padding:0.3rem 0.75rem;background:#f59e0b;color:white;border:none;border-radius:5px;cursor:pointer;font-size:0.78rem">&#8987; Verschieben</button>
           <button onclick="rejectWrite(${r.id})" style="padding:0.3rem 0.75rem;background:#ef4444;color:white;border:none;border-radius:5px;cursor:pointer;font-size:0.78rem">&#10007; Ablehnen</button>
         </div>
       </div>`;
@@ -167,10 +186,42 @@ function render(data) {
     '<div style="' + grid + '">' + card('Letzte Entscheidungen', decBody) + card('Ziel-Hierarchie', hierBody) + '</div>';
 }
 
+async function loadHistory() {
+  const res = await fetch('/api/write-requests/history');
+  const rows = await res.json();
+  const statusColors = {
+    'pending':'#fef3c7|#92400e', 'approved':'#d1fae5|#065f46',
+    'executed':'#dbeafe|#1e40af', 'rejected':'#fee2e2|#991b1b',
+    'deferred':'#f3f4f6|#6b7280', 'expired':'#f9fafb|#9ca3af', 'failed':'#fee2e2|#991b1b'
+  };
+  let html = rows.map(r => {
+    const [sbg, sc] = (statusColors[r.approval_status]||'#f3f4f6|#6b7280').split('|');
+    const ts = new Date(r.created_at).toLocaleString('de',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+    return `<div style="padding:0.6rem 0;border-bottom:1px solid var(--border);font-size:0.8rem;display:flex;align-items:center;gap:0.5rem">
+      <span style="background:${sbg};color:${sc};font-size:0.65rem;padding:0.1rem 0.35rem;border-radius:3px;font-weight:600">${r.approval_status}</span>
+      <span style="flex:1">${r.action_key} ${r.target_ref ? '→ '+r.target_ref.substring(0,20) : ''}</span>
+      ${r.preview_text ? `<span style="font-size:0.72rem;color:var(--text-muted)">${r.preview_text.substring(0,40)}</span>` : ''}
+      <span style="font-size:0.68rem;color:var(--text-muted)">${ts}</span>
+    </div>`;
+  }).join('') || '<div style="font-size:0.8rem;color:var(--text-muted)">Keine Eintraege.</div>';
+  document.getElementById('history-content').innerHTML = html;
+  document.getElementById('history-section').style.display = 'block';
+}
+
 async function approveWrite(reqId) {
   await fetch(`/api/write-requests/${reqId}/action`, {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({action: 'approve'})
+  });
+  loadPlanner();
+}
+
+async function deferWrite(reqId) {
+  const hours = prompt('Um wie viele Stunden verschieben? (Standard: 24)') || '24';
+  const reason = prompt('Grund (optional):') || '';
+  await fetch(`/api/write-requests/${reqId}/action`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({action: 'defer', hours: parseInt(hours), reason})
   });
   loadPlanner();
 }

@@ -336,6 +336,11 @@ def _build_situation(candidates: dict) -> dict:
             ts = task.get("status","")
             if ts in ("active","new","planned"):
                 running_todos.append(todo)
+            elif ts == "waiting_user_decision":
+                # 5.3: explizit wartet auf Freigabe -- eigene Kategorie
+                todo["_wait_type"] = BLOCKER_WAITING_USER
+                todo["_approval_pending"] = True
+                waiting_todos.append(todo)
             elif ts == "waiting_feedback":
                 todo["_wait_type"] = BLOCKER_WAITING_FEEDBACK
                 waiting_todos.append(todo)
@@ -850,23 +855,38 @@ def choose_worklines(candidates: dict, scored: list,
     start_cands    = [s for s in scored if s["decision"] == START_LINE]
 
     # waiting feiner differenzieren:
-    # waiting_feedback → fortsetzbar (F-Kognition laeuft)
-    # waiting_external → bewusst warten, nicht als Hauptlinie fuehren wenn startbare da
-    active_waiting   = [s for s in continue_cands
-                        if s.get("blocker_type") != BLOCKER_WAITING_EXTERNAL]
-    passive_waiting  = [s for s in continue_cands
+    # 5.3: waiting_user_decision -- Linie haelt Fokus, aber Nebenlinie kann springen
+    approval_waiting = [s for s in continue_cands
+                        if s.get("blocker_type") == BLOCKER_WAITING_USER]
+    feedback_waiting = [s for s in continue_cands
+                        if s.get("blocker_type") == BLOCKER_WAITING_FEEDBACK]
+    external_waiting = [s for s in continue_cands
                         if s.get("blocker_type") == BLOCKER_WAITING_EXTERNAL]
+    active_waiting   = [s for s in continue_cands
+                        if s.get("blocker_type") not in (BLOCKER_WAITING_EXTERNAL,
+                                                          BLOCKER_WAITING_USER)]
+
+    if approval_waiting:
+        # Hauptlinie wartet auf Freigabe -- Fokus halten, Nebenlinie aktivieren
+        primary = approval_waiting[0]
+        secondary = (start_cands[0] if start_cands
+                     else feedback_waiting[0] if feedback_waiting
+                     else None)
+        return _build_result(
+            primary, secondary, scored,
+            "Hauptlinie wartet auf Freigabe -- Nebenlinie aktiv.",
+            CONTINUE_LINE, replan_trigger
+        )
 
     # Aktiv fortsetzbare Linien bevorzugen
-    primary_pool = active_waiting if active_waiting else continue_cands
+    primary_pool = active_waiting if active_waiting else (feedback_waiting or continue_cands)
 
     if primary_pool:
         primary = primary_pool[0]
-        # Nebenlinie: zweite aktive Linie oder erste startbare
         secondary_pool = [s for s in primary_pool[1:]] + start_cands
         secondary = secondary_pool[0] if secondary_pool else None
         reason = "Laufende Arbeit fortsetzen."
-        if passive_waiting and not active_waiting:
+        if external_waiting and not active_waiting:
             reason = "Warte auf externe Bedingung -- Nebenlinie starten falls moeglich."
         return _build_result(primary, secondary, scored, reason, CONTINUE_LINE, replan_trigger)
 

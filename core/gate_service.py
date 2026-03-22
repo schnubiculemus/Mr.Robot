@@ -398,9 +398,10 @@ def approve_write_request(req_id: int, approved_by: str = "user") -> dict:
 
 
 def reject_write_request(req_id: int, reason: str = "", rejected_by: str = "user") -> bool:
-    """Lehnt einen Write-Request ab."""
+    """Lehnt einen Write-Request ab und reaktiviert den Task."""
     try:
         from core.database import get_connection
+        req = get_write_request(req_id)
         conn = get_connection()
         try:
             conn.execute(
@@ -412,12 +413,117 @@ def reject_write_request(req_id: int, reason: str = "", rejected_by: str = "user
             )
             conn.commit()
             logger.info(f"write_request #{req_id} abgelehnt: {reason[:60]}")
-            return True
         finally:
             conn.close()
+
+        # Task aus waiting_user_decision auf failed -- Planner soll umplanen
+        if req and req.get("task_id"):
+            try:
+                import orbit as _orbit
+                _orbit.update_task(req["task_id"], status="active")
+                # Rejection als Observation speichern
+                from core.todo_service import record_observation
+                from config import OWNER_ID
+                record_observation(
+                    owner_id=req.get("owner_id", OWNER_ID),
+                    content=f"Write-Request #{req_id} abgelehnt: {reason[:100] or 'kein Grund'}",
+                    obs_type="blocker",
+                    task_id=req["task_id"],
+                )
+                logger.info(f"reject: Task {req['task_id'][:8]} -> active (Planner soll umplanen)")
+            except Exception as e:
+                logger.debug(f"reject: Task-Reaktivierung fehlgeschlagen: {e}")
+        return True
     except Exception as e:
         logger.warning(f"reject_write_request fehlgeschlagen: {e}")
         return False
+
+
+def defer_write_request(req_id: int, defer_hours: int = 24,
+                         reason: str = "", deferred_by: str = "user") -> bool:
+    """
+    5.3: Verschiebt einen Write-Request -- Entscheidung spaeter.
+    Linie bleibt offen aber wird nicht hektisch neu vorgeschlagen.
+    """
+    try:
+        import datetime
+        from core.database import get_connection
+        req = get_write_request(req_id)
+        deferred_until = (datetime.datetime.now(datetime.timezone.utc)
+                          + datetime.timedelta(hours=defer_hours)).isoformat()
+        conn = get_connection()
+        try:
+            conn.execute(
+                """UPDATE write_requests SET
+                   approval_status='deferred', rejected_reason=?,
+                   approved_by=?, approved_at=?, expires_at=?
+                   WHERE id=?""",
+                (f"deferred: {reason}"[:300], deferred_by, to_iso(), deferred_until, req_id)
+            )
+            conn.commit()
+            logger.info(f"write_request #{req_id} deferred bis {deferred_until[:16]}")
+        finally:
+            conn.close()
+
+        # Task auf waiting setzen (nicht waiting_user_decision -- weniger urgent)
+        if req and req.get("task_id"):
+            try:
+                import orbit as _orbit
+                _orbit.update_task(req["task_id"], status="waiting")
+                from core.todo_service import record_observation
+                from config import OWNER_ID
+                record_observation(
+                    owner_id=req.get("owner_id", OWNER_ID),
+                    content=f"Write-Request #{req_id} verschoben fuer {defer_hours}h: {reason[:80]}",
+                    obs_type="state_change",
+                    task_id=req["task_id"],
+                )
+            except Exception as e:
+                logger.debug(f"defer: Task-Status fehlgeschlagen: {e}")
+        return True
+    except Exception as e:
+        logger.warning(f"defer_write_request fehlgeschlagen: {e}")
+        return False
+
+
+def expire_stale_write_requests(owner_id: str) -> int:
+    """
+    5.3: Markiert abgelaufene Write-Requests als expired.
+    Gibt Anzahl abgelaufener Requests zurueck.
+    """
+    try:
+        import datetime
+        from core.database import get_connection
+        now = to_iso()
+        conn = get_connection()
+        try:
+            rows = conn.execute(
+                """SELECT id, task_id, owner_id FROM write_requests
+                   WHERE owner_id=? AND approval_status='pending'
+                   AND expires_at IS NOT NULL AND expires_at < ?""",
+                (owner_id, now)
+            ).fetchall()
+            for r in rows:
+                conn.execute(
+                    "UPDATE write_requests SET approval_status='expired' WHERE id=?",
+                    (r["id"],)
+                )
+                # Task reaktivieren
+                if r.get("task_id"):
+                    try:
+                        import orbit as _orbit
+                        _orbit.update_task(r["task_id"], status="active")
+                    except Exception:
+                        pass
+            conn.commit()
+            if rows:
+                logger.info(f"expire_stale: {len(rows)} Write-Requests abgelaufen")
+            return len(rows)
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.warning(f"expire_stale_write_requests fehlgeschlagen: {e}")
+        return 0
 
 
 def build_calendar_preview(action: str, params: dict) -> str:
