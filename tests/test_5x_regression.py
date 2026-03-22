@@ -358,9 +358,53 @@ class TestArtifactSystem:
     def test_delete_verify_checks_archived_not_file_exists(self):
         """artifact_delete Verify muss pruefen: archived + Datei weg, nicht Datei da."""
         from core.gate_service import verify_artifact_write
+
         # Ohne artifact_id: ok
         ok, msg = verify_artifact_write("artifact_delete", {}, {})
         assert ok is True
+
+    def test_delete_verify_different_from_create_verify(self):
+        """Delete und Create muessen semantisch unterschiedliche Verify-Logik haben."""
+        from core.gate_service import verify_artifact_write
+        import inspect
+        src = inspect.getsource(verify_artifact_write)
+        # Delete-Branch muss existieren
+        assert "artifact_delete" in src, "Kein delete-spezifischer Verify-Pfad"
+        # Muss pruefen ob Datei NICHT existiert (nicht: verify_artifact)
+        assert "os.path.exists" in src or "archived" in src,             "Delete-Verify muss archived/nicht-existenz pruefen"
+
+    def test_delete_verify_rejects_file_still_present(self):
+        """Delete-Verify muss fehlschlagen wenn Datei noch da ist (gemockt)."""
+        from core.gate_service import verify_artifact_write
+        import unittest.mock as mock
+
+        fake_art = {
+            "id": 99, "status": "archived",
+            "relative_path": "lines/todo_99/artifacts/test.md"
+        }
+        # Datei noch vorhanden -> Verify muss False zurueckgeben
+        with mock.patch("core.workspace_artifact_service.get_artifact", return_value=fake_art):
+            with mock.patch("core.workspace_artifact_service._full_path",
+                            return_value="/tmp/fake_exists.md"):
+                with mock.patch("os.path.exists", return_value=True):
+                    ok, msg = verify_artifact_write("artifact_delete", {"artifact_id": 99}, {})
+                    assert ok is False, "Datei noch vorhanden nach Delete muss False sein"
+
+    def test_delete_verify_passes_when_file_gone(self):
+        """Delete-Verify muss True sein wenn Datei weg und Status archived."""
+        from core.gate_service import verify_artifact_write
+        import unittest.mock as mock
+
+        fake_art = {
+            "id": 99, "status": "archived",
+            "relative_path": "lines/todo_99/artifacts/test.md"
+        }
+        with mock.patch("core.workspace_artifact_service.get_artifact", return_value=fake_art):
+            with mock.patch("core.workspace_artifact_service._full_path",
+                            return_value="/tmp/definitely_gone.md"):
+                with mock.patch("os.path.exists", return_value=False):
+                    ok, msg = verify_artifact_write("artifact_delete", {"artifact_id": 99}, {})
+                    assert ok is True, "Datei weg + archived muss True sein"
 
     def test_create_verify_checks_file_exists(self):
         """artifact_create Verify muss Datei-Existenz pruefen."""

@@ -2556,16 +2556,33 @@ def _execute_step(step: dict, task_id: str) -> None:
                     linked_todo = t_obj.get("linked_todo_id") if t_obj else None
                     if linked_todo:
                         record_meaningful_execution(int(linked_todo), action_key, step_type)
-                        # 7.5: Ergebnis als Execution-Artefakt materialisieren
+                        # 7.5: Ergebnis als Execution-Artefakt -- ueber execute_write (5.x-Disziplin)
                         try:
-                            from core.workspace_artifact_service import materialize_execution_artifact
                             result_text = str(result.get("result",""))[:2000]
                             if result_text and result_text.strip():
-                                materialize_execution_artifact(
-                                    owner_id=_owner_id,
-                                    line_id=f"todo:{linked_todo}",
-                                    content=f"# Erster Vollzug\n\n**Aktion:** {action_key}\n\n**Ergebnis:**\n{result_text}",
-                                    format="md",
+                                from core.gate_service import execute_write
+                                line_id = f"todo:{linked_todo}"
+                                mat_params = {
+                                    "action": "materialize_execution",
+                                    "line_id": line_id,
+                                    "content": f"# Erster Vollzug\n\n**Aktion:** {action_key}\n\n**Ergebnis:**\n{result_text}",
+                                    "format": "md",
+                                }
+                                def _do_materialize(p):
+                                    from core.workspace_artifact_service import materialize_execution_artifact
+                                    art = materialize_execution_artifact(
+                                        owner_id=_owner_id,
+                                        line_id=p["line_id"],
+                                        content=p["content"],
+                                        format=p.get("format","md"),
+                                        task_id=task_id, step_id=step_id,
+                                    )
+                                    return {"success": bool(art),
+                                            "result": f"Artifact #{art['id']}" if art else "Fehler",
+                                            "artifact_id": art["id"] if art else None}
+                                execute_write(
+                                    "workspace.materialize_execution",
+                                    mat_params, _owner_id, _do_materialize,
                                     task_id=task_id, step_id=step_id,
                                 )
                         except Exception:
