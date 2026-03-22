@@ -36,6 +36,18 @@ BLOCKER_WAITING_FEEDBACK  = "waiting_for_internal_feedback"
 BLOCKER_WAITING_EXTERNAL  = "waiting_for_external_condition"
 BLOCKER_NEEDS_UNBLOCK     = "needs_unblock_line"
 
+# Neue Entscheidungsklassen 4.x
+PROPOSAL_AS_LINE   = "proposal_as_line"    # Proposal ist aktive Hauptlinie
+NOT_NOW            = "not_now"             # bewusste Nicht-Auswahl
+
+# Waiting-Klassen 4.x (feinere Differenzierung)
+BLOCKER_WAITING_USER      = "waiting_user_decision"
+BLOCKER_WAITING_RETRY     = "waiting_retry_window"
+BLOCKER_WAITING_FOLLOWUP  = "waiting_internal_followup"
+
+# Fokusbindung -- Mindeststunden bevor Fokus gewechselt wird
+FOCUS_MIN_HOURS = 1.5
+
 # Score-Gewichte
 W_CONTINUITY        = 6.0
 W_PROGRESS_NEAR     = 3.0
@@ -158,6 +170,37 @@ def pause_focus(owner_id: str, reason: str = "") -> None:
             paused=True,
         )
         logger.info(f"Planner-Fokus pausiert: {reason}")
+
+
+def get_line_stats(owner_id: str, line_id: int, line_type: str = "todo") -> dict:
+    """
+    4.4: Verlaufs-Stats fuer eine Arbeitslinie.
+    Wie oft gestartet, wie oft stagniert, wie oft erfolgreich.
+    """
+    try:
+        from core.database import get_connection
+        conn = get_connection()
+        try:
+            rows = conn.execute(
+                """SELECT action, decided_at FROM planner_decisions
+                   WHERE owner_id=? AND primary_line_id=? AND primary_line_type=?
+                   ORDER BY decided_at DESC LIMIT 20""",
+                (owner_id, line_id, line_type)
+            ).fetchall()
+            decisions = [dict(r) for r in rows]
+
+            stagnation_count = sum(1 for d in decisions if "stagniert" in (d.get("action") or ""))
+            started_count = sum(1 for d in decisions if d.get("action") in (START_LINE, CONTINUE_LINE))
+            return {
+                "total_decisions": len(decisions),
+                "started_count":   started_count,
+                "stagnation_count": stagnation_count,
+                "repeated_stagnation": stagnation_count >= 2,
+            }
+        finally:
+            conn.close()
+    except Exception:
+        return {"total_decisions": 0, "started_count": 0, "stagnation_count": 0, "repeated_stagnation": False}
 
 
 def record_decision(owner_id: str, action: str, primary_type: str = None,
@@ -391,11 +434,28 @@ def _detect_stagnation(todo: dict, task: dict | None,
 
 def _classify_blocker(todo: dict, task: dict | None,
                        recent_obs: dict) -> str:
-    """Gibt Blocker-Typ zurueck."""
+    """
+    4.2: Erweiterter Blocker-Klassifizierer.
+    Unterscheidet: hard / soft / waiting_feedback / waiting_external /
+                   waiting_user / waiting_retry / waiting_followup
+    """
     wait_type = todo.get("_wait_type","")
 
     if wait_type == BLOCKER_WAITING_FEEDBACK:
         return BLOCKER_WAITING_FEEDBACK
+
+    if wait_type == BLOCKER_WAITING_EXTERNAL:
+        # Genauer unterscheiden
+        if task:
+            obs = recent_obs.get(task["id"], [])
+            # Mehrfach gleicher Fehler → retry_window
+            error_contents = [o["content"][:60] for o in obs if o["type"] == "error"]
+            if len(error_contents) >= 2 and len(set(error_contents)) <= 1:
+                return BLOCKER_WAITING_RETRY
+            # Reflexion vorhanden → followup
+            if any(o["type"] == "reflection" for o in obs):
+                return BLOCKER_WAITING_FOLLOWUP
+        return BLOCKER_WAITING_EXTERNAL
 
     if task:
         obs = recent_obs.get(task["id"], [])
@@ -403,6 +463,8 @@ def _classify_blocker(todo: dict, task: dict | None,
             c = o.get("content","").lower()
             if "permission" in c or "zugriff" in c or "access denied" in c:
                 return BLOCKER_HARD
+            if "tommy" in c or "entscheidung" in c or "freigabe" in c:
+                return BLOCKER_WAITING_USER
             if "nicht gefunden" in c or "missing" in c or "fehlt" in c:
                 return BLOCKER_SOFT
 
@@ -410,6 +472,22 @@ def _classify_blocker(todo: dict, task: dict | None,
         return BLOCKER_NEEDS_UNBLOCK
 
     return BLOCKER_SOFT
+
+
+def _blocker_is_plannable(blocker_type: str) -> bool:
+    """
+    4.2: Entscheidet ob ein Blocker-Typ planerisch aktiv behandelt werden soll.
+    waiting_feedback + waiting_followup → continue_line
+    waiting_retry + waiting_external → bewusst warten
+    waiting_user → melden, nicht weiter pushen
+    hard → nicht anfassen
+    """
+    return blocker_type in (
+        BLOCKER_WAITING_FEEDBACK,
+        BLOCKER_WAITING_FOLLOWUP,
+        BLOCKER_SOFT,
+        BLOCKER_NEEDS_UNBLOCK,
+    )
 
 
 # =============================================================================
@@ -465,7 +543,7 @@ def _staleness_days(obj: dict) -> float:
         return 0.0
 
 
-def score_candidates(candidates: dict, situation: dict) -> list:
+def score_candidates(candidates: dict, situation: dict, owner_id: str = "") -> list:
     active_goal_ids = {g["id"] for g in candidates["goals"]}
     active_task_ids = {t["id"] for t in candidates["active_tasks"]}
     recent_obs = candidates.get("recent_obs", {})
@@ -540,8 +618,29 @@ def score_candidates(candidates: dict, situation: dict) -> list:
                  + leverage + staleness + prio
                  - loop_pen - stag_penalty)
 
+        # 4.4: Wiederholte Stagnation bestrafen (direkte DB-Abfrage, kein circular import)
+        try:
+            from core.database import get_connection as _gc
+            _c = _gc()
+            _stag_rows = _c.execute(
+                "SELECT COUNT(*) as n FROM planner_decisions WHERE owner_id=? AND primary_line_id=? AND stagnation_flags!=?",
+                (owner_id, todo["id"], "[]")
+            ).fetchone()
+            _c.close()
+            stats = {"repeated_stagnation": (_stag_rows["n"] if _stag_rows else 0) >= 2}
+        except Exception:
+            stats = {}
+        if stats.get("repeated_stagnation"):
+            score -= W_STAGNATION_PENALTY
+            details["repeated_stagnation_penalty"] = W_STAGNATION_PENALTY
+
         # Blocker-Typ
         blocker_type = _classify_blocker(todo, task, recent_obs) if base_decision in (UNBLOCK_LINE, DEFER) else None
+
+        # 4.2: Nicht-planbare Blocker auf DEFER setzen
+        if blocker_type and not _blocker_is_plannable(blocker_type):
+            if base_decision == CONTINUE_LINE:
+                base_decision = DEFER  # nicht weiter pushen
 
         return {
             "type":           "todo",
@@ -652,13 +751,20 @@ def should_replan(owner_id: str, situation: dict,
     if primary_stagnating:
         return True, "hauptlinie_stagniert"
 
-    # Neue hochrelevante Linie?
+    # 4.5: Fokusbindung -- Mindeststunden halten
+    focus_hours = get_focus_duration_hours(owner_id)
+    if focus_hours < FOCUS_MIN_HOURS:
+        # Fokus ist noch jung -- nur bei hartem Trigger replanen
+        if not primary_blocked and not primary_stagnating:
+            return False, ""
+
+    # Neue hochrelevante Linie -- aber nur wenn Fokus lang genug gehalten hat
     high_relevance_new = any(
         s["decision"] == START_LINE and s["score"] > 8.0
         and s["id"] != primary_id
         for s in scored
     )
-    if high_relevance_new:
+    if high_relevance_new and focus_hours >= FOCUS_MIN_HOURS:
         return True, "neue_hochrelevante_linie"
 
     # Fokus zu lange ohne echten Fortschritt?
@@ -759,29 +865,40 @@ def choose_worklines(candidates: dict, scored: list,
                             scored, "Blocker aufloesen hat Vorrang.", UNBLOCK_LINE, replan_trigger)
 
     if not start_cands:
-        # Kein startbares Todo -- aber proposal_ready_for_work kann als Hinweis-Linie dienen
+        # 4.1: Proposal als echte planbare Hauptlinie wenn bereit
         ready_proposals = [s for s in scored
                           if s["type"] == "proposal"
-                          and s.get("proposal_class") == "proposal_ready_for_work"]
+                          and s.get("proposal_class") in ("proposal_ready_for_work",)
+                          and s["score"] > 0]
         if ready_proposals:
             p = ready_proposals[0]
-            return {
+            # Vorarbeit-Todo aus Proposal ableiten
+            followup = _derive_followup_from_proposal(p, candidates, owner_id)
+            result = {
                 "primary_line":     _format_line(p),
-                "secondary_line":   None,
+                "secondary_line":   _format_line(followup) if followup else None,
                 "blocked_lines":    _format_blocked(scored),
                 "deferred_lines":   _format_deferred(scored),
                 "stagnation_flags": _format_stagnation(scored),
-                "action":           "proposal_ready",
-                "reasoning":        f"Proposal '{p['title'][:50]}' ist bereit -- braucht Genehmigung.",
+                "action":           PROPOSAL_AS_LINE,
+                "reasoning":        (
+                    f"Proposal '{p['title'][:50]}' ist bereit und hat hohen Hebel. "
+                    + ("Vorarbeit-Todo wird als Nebenlinie gestartet." if followup else
+                       "Wartet auf Genehmigung.")
+                ),
                 "replan_trigger":   replan_trigger,
-                "chosen":           [],  # Proposal wird nicht gestartet
+                "chosen":           [followup] if followup else [],
             }
+            return result
+
+        # Bewusste Nicht-Auswahl
         return {
             "primary_line": None, "secondary_line": None,
             "blocked_lines": _format_blocked(scored),
             "deferred_lines": _format_deferred(scored),
             "stagnation_flags": _format_stagnation(scored),
-            "action": "idle", "reasoning": "Keine startbaren Kandidaten.",
+            "action": NOT_NOW,
+            "reasoning": "Keine sinnvolle Arbeitslinie gerade. Bewusst nichts starten.",
             "replan_trigger": replan_trigger, "chosen": [],
         }
 
@@ -828,6 +945,37 @@ def choose_worklines(candidates: dict, scored: list,
         logger.debug(f"LLM Feinauswahl fehlgeschlagen, Fallback: {e}")
         return _build_result(top[0], top[1] if len(top) > 1 else None,
                             scored, "Fallback: Top-Kandidaten", START_LINE, replan_trigger)
+
+
+def _derive_followup_from_proposal(proposal: dict, candidates: dict,
+                                    owner_id: str) -> dict | None:
+    """
+    4.1: Leitet aus einem proposal_ready_for_work ein Vorarbeit-Todo ab.
+    Wenn noch kein Todo zum Proposal existiert: neues kimi-Todo erstellen.
+    Gibt ein scored-artiges Dict zurueck oder None.
+    """
+    proposal_id = proposal["id"]
+    # Gibt es schon ein Todo zum Proposal?
+    for todo in candidates["todos"]:
+        if todo.get("proposal_id") == proposal_id:
+            return {
+                "type":           "todo",
+                "id":             todo["id"],
+                "title":          todo.get("title",""),
+                "decision":       START_LINE,
+                "score":          proposal["score"],
+                "execution_mode": todo.get("execution_mode","orbit_internal"),
+                "release_mode":   todo.get("release_mode","summarize"),
+                "task_template":  todo.get("task_template","analysis"),
+                "goal_id":        todo.get("goal_id") or proposal.get("goal_id"),
+                "proposal_id":    proposal_id,
+                "has_task":       False,
+                "stagnating":     False,
+                "blocked":        False,
+            }
+    # Kein Todo vorhanden -- als Vorarbeit-Suggestion zurueckgeben (kein Auto-Create)
+    # Auto-Create waere zu aggressiv ohne explizite Genehmigung
+    return None
 
 
 def _build_situation_from_scored(scored: list) -> dict:
@@ -986,7 +1134,7 @@ def run_planner(owner_id: str, force: bool = False) -> dict:
         logger.info("Planner V3: Start")
         candidates = collect_candidates(owner_id)
         situation  = _build_situation(candidates)
-        scored     = score_candidates(candidates, situation)
+        scored     = score_candidates(candidates, situation, owner_id)
 
         logger.info(
             f"Lagebild: running={len(situation['running'])}, "

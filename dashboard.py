@@ -338,11 +338,35 @@ def api_planner_state():
     finally:
         conn.close()
 
+    # Goal/Proposal/Todo Hierarchie
+    hierarchy = []
+    try:
+        from core.database import get_connection as _gc2
+        _c2 = _gc2()
+        goals = [dict(r) for r in _c2.execute(
+            "SELECT id, title, status, progress FROM kimi_goals WHERE owner_id=? AND status='active' ORDER BY priority DESC LIMIT 5",
+            (user_id,)
+        ).fetchall()]
+        for g in goals:
+            g_proposals = [dict(r) for r in _c2.execute(
+                "SELECT id, title, status FROM kimi_proposals WHERE goal_id=? AND status='pending' LIMIT 3",
+                (g["id"],)
+            ).fetchall()]
+            g_todos = [dict(r) for r in _c2.execute(
+                "SELECT id, title, status, execution_mode FROM todos WHERE goal_id=? AND status IN ('open','in_progress') LIMIT 3",
+                (g["id"],)
+            ).fetchall()]
+            hierarchy.append({"goal": g, "proposals": g_proposals, "todos": g_todos})
+        _c2.close()
+    except Exception:
+        hierarchy = []
+
     return jsonify({
         "focus":        focus,
         "focus_hours":  round(focus_hours, 1),
         "decisions":    decisions,
         "lagebild":     lagebild,
+        "hierarchy":    hierarchy,
     })
 
 
