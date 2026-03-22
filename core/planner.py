@@ -513,6 +513,12 @@ def _blocker_is_plannable(blocker_type: str) -> bool:
 
 def _classify_proposal(p: dict, active_goal_ids: set,
                         active_task_ids: set) -> str:
+    # 5.5: bereits entschiedene Proposals nicht mehr aktiv planen
+    status = p.get("status", "pending")
+    if status in ("approved", "rejected"):
+        return "proposal_low_value"  # bereits entschieden
+    if status == "deferred":
+        return "proposal_waiting_approval"  # bewusst verschoben
     """
     5 Proposal-Klassen:
     proposal_ready_for_work        -- konkret, Zielbezug, kleiner Aufwand

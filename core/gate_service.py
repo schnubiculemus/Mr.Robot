@@ -46,6 +46,11 @@ RISK_MATRIX = {
     "calendar.change":  {"class": "B", "gate": "needs_approval", "verify": True,  "reversible": True,  "approval": True},
     "calendar.delete":  {"class": "C", "gate": "blocked",        "verify": False, "reversible": False, "approval": True},
 
+    # Klasse B -- Proposal-Statusaenderungen (5.5)
+    "proposal.approve": {"class": "B", "gate": "needs_approval", "verify": True,  "reversible": True,  "approval": True},
+    "proposal.reject":  {"class": "B", "gate": "needs_approval", "verify": True,  "reversible": True,  "approval": True},
+    "proposal.defer":   {"class": "B", "gate": "needs_approval", "verify": True,  "reversible": True,  "approval": True},
+
     # Klasse C -- weiter gesperrt
     "mail.send":        {"class": "C", "gate": "blocked",        "verify": False, "reversible": False, "approval": True},
     "external.write":   {"class": "C", "gate": "blocked",        "verify": False, "reversible": False, "approval": True},
@@ -378,9 +383,12 @@ def approve_write_request(req_id: int, approved_by: str = "user") -> dict:
 
     # Execute-Funktion je Tool
     tool_ref = req["tool_ref"]
+    action = action_key.split(".", 1)[1] if "." in action_key else action_key
     def _execute_fn(p):
         if tool_ref == "calendar":
             return _execute_calendar_write(action_key, p)
+        elif tool_ref == "proposal":
+            return execute_proposal_action(action, p)
         return {"success": False, "error": f"Kein Execute-Handler fuer {tool_ref}"}
 
     # Write ausfuehren
@@ -407,6 +415,49 @@ def approve_write_request(req_id: int, approved_by: str = "user") -> dict:
         conn.close()
     except Exception as e:
         logger.warning(f"approve_write_request: Status-Update fehlgeschlagen: {e}")
+
+    # 5.5: Proposal-Approve -> Todo ableiten
+    if result["ok"] and tool_ref == "proposal" and action == "approve":
+        try:
+            import json as _j
+            params_raw = _j.loads(req.get("preview_payload") or "{}")
+            proposal_id = params_raw.get("id") or params_raw.get("proposal_id")
+            if proposal_id:
+                from core.database import get_connection as _gc_p
+                _cp = _gc_p()
+                prop = _cp.execute(
+                    "SELECT * FROM kimi_proposals WHERE id=?", (int(proposal_id),)
+                ).fetchone()
+                _cp.close()
+                if prop:
+                    prop = dict(prop)
+                    # Todo anlegen falls noch keines verknuepft
+                    existing = None
+                    try:
+                        _cp2 = _gc_p()
+                        existing = _cp2.execute(
+                            "SELECT id FROM todos WHERE proposal_id=?",
+                            (proposal_id,)
+                        ).fetchone()
+                        _cp2.close()
+                    except Exception:
+                        pass
+                    if not existing:
+                        from core.todo_service import create_todo
+                        from config import OWNER_ID
+                        create_todo(
+                            owner_id=req.get("owner_id", OWNER_ID),
+                            title=f"[Approved] {prop.get('title','')[:80]}",
+                            category="kimi",
+                            execution_mode="orbit_internal",
+                            release_mode="summarize",
+                            task_template="implementation",
+                            proposal_id=int(proposal_id),
+                            goal_id=prop.get("goal_id"),
+                        )
+                        logger.info(f"approve proposal #{proposal_id}: Todo angelegt")
+        except Exception as e:
+            logger.debug(f"approve proposal -> Todo-Ableitung fehlgeschlagen: {e}")
 
     # 5.4: Differenzierte Approve-Folge
     after_approve = req.get("after_approve_action", "continue_line")
@@ -718,8 +769,141 @@ def _execute_calendar_write(action_key: str, params: dict) -> dict:
 
 def verify_calendar(action: str, params: dict) -> tuple[bool, str]:
     """Verifiziert Kalender-Write -- best-effort."""
-    # Kalender-Verify ist komplex (externe API) -- vorerst soft
     return True, "Kalender-Verify: best-effort (extern)"
+
+
+# =============================================================================
+# Proposal-Familie (5.5)
+# =============================================================================
+
+def preflight_proposal(action: str, params: dict, owner_id: str) -> tuple[bool, str]:
+    """Preflight fuer Proposal-Statusaenderungen."""
+    from core.database import get_connection
+    proposal_id = params.get("id") or params.get("proposal_id")
+
+    if not proposal_id:
+        return False, "Keine Proposal-ID angegeben"
+
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT * FROM kimi_proposals WHERE id=?", (int(proposal_id),)
+        ).fetchone()
+        if not row:
+            return False, f"Proposal #{proposal_id} nicht gefunden"
+        proposal = dict(row)
+
+        # Zulässige Statusübergänge
+        valid_transitions = {
+            "approve": {"pending", "deferred"},
+            "reject":  {"pending", "deferred"},
+            "defer":   {"pending"},
+        }
+        current = proposal.get("status", "pending")
+        if action not in valid_transitions:
+            return False, f"Unbekannte Proposal-Aktion: {action}"
+        if current not in valid_transitions[action]:
+            return False, f"Proposal ist bereits '{current}' -- {action} nicht erlaubt"
+
+    finally:
+        conn.close()
+
+    return True, "ok"
+
+
+def execute_proposal_action(action: str, params: dict) -> dict:
+    """Fuehrt eine Proposal-Statusaenderung aus."""
+    from core.database import get_connection
+    import datetime
+    proposal_id = int(params.get("id") or params.get("proposal_id", 0))
+    if not proposal_id:
+        return {"success": False, "error": "Keine Proposal-ID"}
+
+    conn = get_connection()
+    try:
+        status_map = {
+            "approve": "approved",
+            "reject":  "rejected",
+            "defer":   "deferred",
+        }
+        new_status = status_map.get(action)
+        if not new_status:
+            return {"success": False, "error": f"Unbekannte Aktion: {action}"}
+
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        conn.execute(
+            "UPDATE kimi_proposals SET status=?, updated_at=? WHERE id=?",
+            (new_status, now, proposal_id)
+        )
+        conn.commit()
+        return {"success": True, "result": f"Proposal #{proposal_id} -> {new_status}",
+                "id": proposal_id, "new_status": new_status}
+    except Exception as e:
+        return {"success": False, "error": str(e)[:200]}
+    finally:
+        conn.close()
+
+
+def verify_proposal(action: str, params: dict, write_result: dict) -> tuple[bool, str]:
+    """Verifiziert Proposal-Statusaenderung."""
+    from core.database import get_connection
+    proposal_id = params.get("id") or params.get("proposal_id") or (write_result or {}).get("id")
+    if not proposal_id:
+        return True, "ok (kein Verify ohne ID)"
+
+    expected = {"approve": "approved", "reject": "rejected", "defer": "deferred"}.get(action)
+    if not expected:
+        return True, "ok"
+
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT status FROM kimi_proposals WHERE id=?", (int(proposal_id),)
+        ).fetchone()
+        if not row:
+            return False, f"Proposal #{proposal_id} nach Write nicht gefunden"
+        actual = row["status"]
+        if actual != expected:
+            return False, f"Status nicht geaendert: erwartet {expected}, ist {actual}"
+        return True, f"Proposal #{proposal_id} verifiziert: status={actual}"
+    finally:
+        conn.close()
+
+
+def build_proposal_preview(action: str, params: dict) -> str:
+    """Erzeugt lesbaren Preview-Text fuer Proposal-Statusaenderungen."""
+    from core.database import get_connection
+    proposal_id = params.get("id") or params.get("proposal_id")
+    title = params.get("title", f"#{proposal_id}")
+    if proposal_id:
+        try:
+            conn = get_connection()
+            row = conn.execute(
+                "SELECT title, status FROM kimi_proposals WHERE id=?",
+                (int(proposal_id),)
+            ).fetchone()
+            conn.close()
+            if row:
+                title = row["title"][:60]
+                current = row["status"]
+        except Exception:
+            current = "pending"
+    else:
+        current = "pending"
+
+    labels = {
+        "approve": f"Proposal '{title}' genehmigen ({current} → approved)",
+        "reject":  f"Proposal '{title}' ablehnen ({current} → rejected)",
+        "defer":   f"Proposal '{title}' zurueckstellen ({current} → deferred)",
+    }
+    base = labels.get(action, f"Proposal-Aktion: {action}")
+    if action == "approve":
+        base += " -- daraus koennte ein Todo entstehen."
+    elif action == "reject":
+        base += " -- Linie wird umgeplant oder geschlossen."
+    elif action == "defer":
+        base += " -- Wiedervorlage spaeter."
+    return base
 
 
 # =============================================================================
@@ -770,6 +954,8 @@ def execute_write(action_key: str, params: dict, owner_id: str,
         preview_text = ""
         if tool_ref == "calendar":
             preview_text = build_calendar_preview(action, params)
+        elif tool_ref == "proposal":
+            preview_text = build_proposal_preview(action, params)
         else:
             preview_text = f"{action_key} auf {params.get('event_id') or params.get('id','?')}"
 
@@ -803,6 +989,8 @@ def execute_write(action_key: str, params: dict, owner_id: str,
             preflight_ok, preflight_msg = preflight_workspace(action, params)
         elif tool_ref == "todos":
             preflight_ok, preflight_msg = preflight_todo(action, params, owner_id)
+        elif tool_ref == "proposal":
+            preflight_ok, preflight_msg = preflight_proposal(action, params, owner_id)
         else:
             preflight_msg = f"kein Preflight fuer {tool_ref}"
 
@@ -852,6 +1040,8 @@ def execute_write(action_key: str, params: dict, owner_id: str,
             verify_ok, verify_msg = verify_todo(action, params, write_result)
         elif tool_ref == "calendar":
             verify_ok, verify_msg = verify_calendar(action, params)
+        elif tool_ref == "proposal":
+            verify_ok, verify_msg = verify_proposal(action, params, write_result)
 
         if not verify_ok:
             audit_id = write_audit(

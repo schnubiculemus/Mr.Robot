@@ -203,10 +203,16 @@ async function loadHistory() {
   let html = rows.map(r => {
     const [sbg, sc] = (statusColors[r.approval_status]||'#f3f4f6|#6b7280').split('|');
     const ts = new Date(r.created_at).toLocaleString('de',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+    const familyIcon = r.action_key.startsWith('proposal') ? '&#128161;'
+                     : r.action_key.startsWith('calendar') ? '&#128197;'
+                     : r.action_key.startsWith('todos') ? '&#9989;'
+                     : r.action_key.startsWith('workspace') ? '&#128196;' : '&#9998;';
     return `<div style="padding:0.6rem 0;border-bottom:1px solid var(--border);font-size:0.8rem;display:flex;align-items:center;gap:0.5rem">
       <span style="background:${sbg};color:${sc};font-size:0.65rem;padding:0.1rem 0.35rem;border-radius:3px;font-weight:600">${r.approval_status}</span>
+      <span>${familyIcon}</span>
       <span style="flex:1">${r.action_key} ${r.target_ref ? '→ '+r.target_ref.substring(0,20) : ''}</span>
-      ${r.preview_text ? `<span style="font-size:0.72rem;color:var(--text-muted)">${r.preview_text.substring(0,40)}</span>` : ''}
+      ${r.preview_text ? `<span style="font-size:0.72rem;color:var(--text-muted)">${r.preview_text.substring(0,35)}</span>` : ''}
+      ${r.line_status && r.line_status !== r.approval_status ? `<span style="font-size:0.65rem;color:var(--text-muted)">[${r.line_status}]</span>` : ''}
       <span style="font-size:0.68rem;color:var(--text-muted)">${ts}</span>
     </div>`;
   }).join('') || '<div style="font-size:0.8rem;color:var(--text-muted)">Keine Eintraege.</div>';

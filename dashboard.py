@@ -496,6 +496,36 @@ def api_write_request_action(req_id):
     return jsonify({"error": "Unbekannte Aktion"}), 400
 
 
+@app.route("/api/proposals/<int:proposal_id>/write", methods=["POST"])
+@require_auth
+def api_proposal_write(proposal_id):
+    """
+    5.5: Erzeugt einen Write-Request fuer eine Proposal-Statusaenderung.
+    Erwartet: {"action": "approve"|"reject"|"defer", "reason": "..."}
+    """
+    from core.gate_service import execute_write, build_proposal_preview, create_write_request, get_policy
+    from config import USER_CONTEXTS
+    user_id = list(USER_CONTEXTS.keys())[0]
+    data = request.json or {}
+    action = data.get("action")
+    if action not in ("approve", "reject", "defer"):
+        return jsonify({"error": "Ungueltige Aktion"}), 400
+
+    action_key = f"proposal.{action}"
+    params = {"id": proposal_id, "action": action, "reason": data.get("reason","")}
+    preview = build_proposal_preview(action, params)
+
+    # execute_write -> erzeugt Write-Request (needs_approval)
+    result = execute_write(
+        action_key, params, user_id,
+        lambda p: {"success": False, "error": "Direktausfuehrung nicht erlaubt"},
+    )
+    if result.get("pending"):
+        return jsonify({"ok": True, "write_request_id": result.get("write_request_id"),
+                        "preview": preview})
+    return jsonify({"ok": False, "error": result.get("error","Fehler")}), 400
+
+
 @app.route("/api/write-requests/history")
 @require_auth
 def api_write_requests_history():
@@ -1984,7 +2014,30 @@ def api_proposals_get():
 def api_proposal_action(proposal_id):
     data = request.get_json()
     action = data.get("action")
-    from config import OWNER_ID
+    via_gate = data.get("via_gate", False)  # 5.5: optional ueber Write-Request-Gate
+    from config import OWNER_ID, USER_CONTEXTS
+    user_id = list(USER_CONTEXTS.keys())[0]
+
+    # 5.5: Wenn via_gate=True, Write-Request erzeugen statt direkt ausfuehren
+    if via_gate and action in ("approve", "reject", "defer"):
+        try:
+            from core.gate_service import execute_write, build_proposal_preview
+            action_key = f"proposal.{action}"
+            params = {"id": proposal_id, "action": action,
+                      "reason": data.get("reason", "")}
+            preview = build_proposal_preview(action, params)
+            result = execute_write(
+                action_key, params, user_id,
+                lambda p: {"success": False, "error": "Direktausfuehrung nicht erlaubt"},
+            )
+            if result.get("pending"):
+                return jsonify({"ok": True, "via_gate": True,
+                                "write_request_id": result.get("write_request_id"),
+                                "preview": preview})
+        except Exception as e:
+            pass  # Fallback auf direkten Pfad
+
+    # Direkter Pfad (Tommy-Aktion aus Dashboard)
     try:
         from core.proposal_service import approve_proposal, reject_proposal, defer_proposal
         if action == "approve":

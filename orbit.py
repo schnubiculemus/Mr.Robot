@@ -387,7 +387,7 @@ def count_hot_tasks() -> int:
 # =============================================================================
 
 # Schreibende Tools -- erfordern automatisch commit_point=True
-_WRITE_TOOLS = {"workspace", "todos_write", "calendar_write"}
+_WRITE_TOOLS = {"workspace", "todos_write", "calendar_write", "proposal_write"}
 
 
 def create_step(task_id: str, step_type: str, description: str = None,
@@ -1420,6 +1420,16 @@ def _e_append_next_step(task_id: str, next_step_hint: str, user_id: str, loop_co
             tool_ref = "calendar_read"
             action = "list"
             description = "{}"
+        elif any(w in hint_lower for w in ["proposal", "vorschlag", "genehmigen", "ablehnen"]):
+            # 5.5: Proposal-Statusaenderung via Gate
+            import json as _j55
+            tool_ref = "proposal_write"
+            action = "approve"
+            if any(w in hint_lower for w in ["ablehnen", "reject"]):
+                action = "reject"
+            elif any(w in hint_lower for w in ["verschieben", "defer", "spaeter"]):
+                action = "defer"
+            description = _j55.dumps({"action": action})
         elif any(w in hint_lower for w in ["blockiert", "block", "feststeckt", "gesperrt"]):
             # 5.1: Todo-Status auf blocked setzen via Gate
             import json as _j
@@ -3450,6 +3460,7 @@ TOOL_REGISTRY = {
     # Kalender
     "calendar_read":      {"criticality": "kontextkritisch", "usage": ["read"],           "type": "extern",        "write_indirect": False},
     "calendar_write":     {"criticality": "kritisch",        "usage": ["write"],          "type": "extern",        "write_indirect": False},
+    "proposal_write":     {"criticality": "kritisch",        "usage": ["write"],          "type": "intern",        "write_indirect": False},
     "calendar_change":    {"criticality": "kritisch",        "usage": ["change"],         "type": "extern",        "write_indirect": False},
     "calendar_delete":    {"criticality": "kritisch",        "usage": ["delete"],         "type": "extern",        "write_indirect": False},
     # Todos/Listen
@@ -3674,6 +3685,38 @@ def _dispatch_tool(tool_ref: str, action: str, params: dict) -> object:
             "error": gresult.get("error"),
             "audit_id": gresult.get("audit_id"),
         }
+
+
+    # Proposals -- 5.5: proposal_write via Gate
+    if tool_ref == "proposal_write":
+        action_type = params.get("action", action)
+        if action_type not in ("approve", "reject", "defer"):
+            return {"success": False, "error": f"Unbekannte proposal_write action: {action_type}"}
+
+        from core.gate_service import execute_write, build_proposal_preview
+        action_key = f"proposal.{action_type}"
+        write_params = dict(params)
+        write_params["owner_id"] = _owner_id
+
+        def _do_proposal(p):
+            from core.gate_service import execute_proposal_action
+            return execute_proposal_action(action_type, p)
+
+        gresult = execute_write(action_key, write_params, _owner_id, _do_proposal,
+                                task_id=task_id, step_id=step_id)
+
+        if gresult.get("pending"):
+            if task_id:
+                update_task(task_id, status="waiting_user_decision")
+            return {"success": False, "pending": True,
+                    "result": gresult.get("message", "Proposal-Write-Request angelegt"),
+                    "write_request_id": gresult.get("write_request_id"),
+                    "preview": gresult.get("preview")}
+
+        return {"success": gresult["ok"],
+                "result": gresult.get("result") or gresult.get("error"),
+                "error": gresult.get("error"),
+                "audit_id": gresult.get("audit_id")}
 
     # Web Search
     if tool_ref == "websearch":
