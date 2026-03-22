@@ -3879,32 +3879,71 @@ def _dispatch_tool(tool_ref: str, action: str, params: dict) -> object:
         workspace = os.path.join(PROJECT_DIR, "kimi_workspace")
         os.makedirs(workspace, exist_ok=True)
 
-        # 7.x: Semantische Artifact-Actions
-        if action_type == "artifact_create":
-            from core.workspace_artifact_service import create_artifact
-            line_id = params.get("line_id") or (f"todo:{task_id}" if task_id else "general")
-            art = create_artifact(
-                owner_id=_owner_id,
-                line_id=line_id,
-                artifact_type=params.get("artifact_type", "analysis"),
-                format=params.get("format", "md"),
-                content=params.get("content", ""),
-                purpose=params.get("purpose", "working_state"),
-                task_id=task_id, step_id=step_id,
-            )
-            if art:
-                return {"success": True, "result": f"Artifact #{art['id']} erstellt",
-                        "artifact_id": art["id"], "path": art["relative_path"]}
-            return {"success": False, "error": "Artifact-Erstellung fehlgeschlagen"}
+        # 7.x: Semantische Artifact-Actions via Gate
+        if action_type in ("artifact_create", "artifact_update", "worklog_append",
+                           "materialize_execution", "artifact_delete"):
+            from core.gate_service import execute_write
 
-        elif action_type == "artifact_update":
-            from core.workspace_artifact_service import update_artifact_content
-            ok = update_artifact_content(
-                artifact_id=int(params.get("artifact_id", 0)),
-                content=params.get("content", ""),
-                status=params.get("status"),
-            )
-            return {"success": ok, "result": "Artifact aktualisiert" if ok else "Fehler"}
+            action_key = f"workspace.{action_type}"
+
+            def _do_artifact(p):
+                _at = p.get("action", action_type)
+                if _at == "artifact_create":
+                    from core.workspace_artifact_service import create_artifact
+                    lid = p.get("line_id") or (f"todo:{task_id}" if task_id else "general")
+                    art = create_artifact(
+                        owner_id=_owner_id, line_id=lid,
+                        artifact_type=p.get("artifact_type","analysis"),
+                        format=p.get("format","md"),
+                        content=p.get("content",""),
+                        purpose=p.get("purpose","working_state"),
+                        task_id=task_id, step_id=step_id,
+                    )
+                    if art:
+                        return {"success": True, "result": f"Artifact #{art['id']} erstellt",
+                                "artifact_id": art["id"]}
+                    return {"success": False, "error": "Artifact-Erstellung fehlgeschlagen"}
+                elif _at == "artifact_update":
+                    from core.workspace_artifact_service import update_artifact_content
+                    ok = update_artifact_content(
+                        artifact_id=int(p.get("artifact_id",0)),
+                        content=p.get("content",""), status=p.get("status"))
+                    return {"success": ok, "result": "Artifact aktualisiert" if ok else "Fehler",
+                            "artifact_id": p.get("artifact_id")}
+                elif _at == "worklog_append":
+                    from core.workspace_artifact_service import append_worklog_entry
+                    lid = p.get("line_id") or (f"todo:{task_id}" if task_id else "general")
+                    ok = append_worklog_entry(lid, p.get("content",""), task_id=task_id)
+                    return {"success": ok, "result": "Worklog aktualisiert" if ok else "Fehler",
+                            "artifact_id": None}
+                elif _at == "materialize_execution":
+                    from core.workspace_artifact_service import materialize_execution_artifact
+                    lid = p.get("line_id") or (f"todo:{task_id}" if task_id else "general")
+                    art = materialize_execution_artifact(
+                        owner_id=_owner_id, line_id=lid,
+                        content=p.get("content",""),
+                        format=p.get("format","md"),
+                        task_id=task_id, step_id=step_id,
+                    )
+                    return {"success": bool(art),
+                            "result": f"Materialisiert: Artifact #{art['id']}" if art else "Fehler",
+                            "artifact_id": art["id"] if art else None}
+                elif _at == "artifact_delete":
+                    from core.workspace_artifact_service import delete_artifact
+                    ok = delete_artifact(int(p.get("artifact_id",0)))
+                    return {"success": ok, "result": "Artifact geloescht" if ok else "Fehler",
+                            "artifact_id": p.get("artifact_id")}
+                return {"success": False, "error": f"Unbekannte Artifact-Aktion: {_at}"}
+
+            write_params = dict(params)
+            write_params["action"] = action_type
+            gresult = execute_write(action_key, write_params, _owner_id, _do_artifact,
+                                    task_id=task_id, step_id=step_id)
+            return {"success": gresult["ok"],
+                    "result": gresult.get("result") or gresult.get("error"),
+                    "error": gresult.get("error"),
+                    "artifact_id": (gresult.get("result") or {}).get("artifact_id") if isinstance(gresult.get("result"), dict) else None,
+                    "audit_id": gresult.get("audit_id")}
 
         elif action_type == "artifact_read":
             from core.workspace_artifact_service import get_artifact, read_artifact_content

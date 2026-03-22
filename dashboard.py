@@ -640,6 +640,30 @@ def api_workspace_stats():
     })
 
 
+@app.route("/api/workspace/artifacts/recent")
+@require_auth
+def api_workspace_artifacts_recent():
+    """Letzte N Artefakte optional gefiltert."""
+    from core.database import get_connection
+    limit = int(request.args.get("limit", 30))
+    atype = request.args.get("type")
+    status = request.args.get("status")
+    conn = get_connection()
+    try:
+        q = "SELECT * FROM workspace_artifacts WHERE 1=1"
+        p = []
+        if atype:
+            q += " AND artifact_type=?"; p.append(atype)
+        if status:
+            q += " AND status=?"; p.append(status)
+        q += " ORDER BY created_at DESC LIMIT ?"
+        p.append(limit)
+        rows = [dict(r) for r in conn.execute(q, p).fetchall()]
+    finally:
+        conn.close()
+    return jsonify(rows)
+
+
 @app.route("/api/write-control")
 @require_auth
 def api_write_control():

@@ -75,6 +75,13 @@ RISK_MATRIX = {
     "proposal.reject":  {"class": "B", "gate": "needs_approval", "verify": True,  "reversible": True,  "approval": True,  "compensation": "Proposal manuell ablehnen oder Status zuruecksetzen"},
     "proposal.defer":   {"class": "B", "gate": "needs_approval", "verify": True,  "reversible": True,  "approval": True,  "compensation": "Proposal manuell zurueckstellen"},
 
+    # 7.x -- Workspace Artifact Actions (Klasse A)
+    "workspace.artifact_create":      {"class": "A", "gate": "soft", "verify": True,  "reversible": True,  "approval": False, "compensation": "Artefakt manuell anlegen"},
+    "workspace.artifact_update":      {"class": "A", "gate": "soft", "verify": True,  "reversible": True,  "approval": False, "compensation": "Inhalt manuell korrigieren"},
+    "workspace.worklog_append":       {"class": "A", "gate": "soft", "verify": True,  "reversible": False, "approval": False, "compensation": "Worklog-Eintrag manuell ergaenzen"},
+    "workspace.materialize_execution":{"class": "A", "gate": "soft", "verify": True,  "reversible": True,  "approval": False, "compensation": "Artefakt manuell materialisieren"},
+    "workspace.artifact_delete":      {"class": "B", "gate": "soft", "verify": True,  "reversible": False, "approval": False, "compensation": "Artefakt ist archiviert -- kein Restore"},
+
     # Klasse C -- weiter gesperrt
     "mail.send":        {"class": "C", "gate": "blocked",        "verify": False, "reversible": False, "approval": True,  "compensation": None},
     "external.write":   {"class": "C", "gate": "blocked",        "verify": False, "reversible": False, "approval": True,  "compensation": None},
@@ -914,6 +921,67 @@ def verify_proposal(action: str, params: dict, write_result: dict) -> tuple[bool
         conn.close()
 
 
+# =============================================================================
+# 7.x Artifact Preflight + Verify
+# =============================================================================
+
+def preflight_artifact(action: str, params: dict) -> tuple[bool, str]:
+    """Preflight fuer Workspace-Artifact-Writes."""
+    from core.workspace_artifact_service import (
+        ARTIFACT_TYPES, ALLOWED_FORMATS, ARTIFACT_STATUSES, get_artifact
+    )
+    if action in ("artifact_create", "materialize_execution"):
+        atype = params.get("artifact_type", "result" if action == "materialize_execution" else "")
+        if atype and atype not in ARTIFACT_TYPES:
+            return False, f"Ungueltiger artifact_type: '{atype}'"
+        fmt = params.get("format", "md")
+        if fmt not in ALLOWED_FORMATS:
+            return False, f"Ungueltiges Format: '{fmt}'"
+        if not params.get("content", "").strip():
+            return False, "Inhalt darf nicht leer sein"
+        if not params.get("line_id", ""):
+            return False, "line_id fehlt"
+
+    elif action == "artifact_update":
+        artifact_id = params.get("artifact_id")
+        if not artifact_id:
+            return False, "artifact_id fehlt"
+        art = get_artifact(int(artifact_id))
+        if not art:
+            return False, f"Artifact #{artifact_id} nicht gefunden"
+        status = params.get("status")
+        if status and status not in ARTIFACT_STATUSES:
+            return False, f"Ungueltiger Status: '{status}'"
+
+    elif action == "artifact_delete":
+        artifact_id = params.get("artifact_id")
+        if not artifact_id:
+            return False, "artifact_id fehlt"
+        art = get_artifact(int(artifact_id))
+        if not art:
+            return False, f"Artifact #{artifact_id} nicht gefunden"
+
+    elif action == "worklog_append":
+        if not params.get("content", "").strip():
+            return False, "Worklog-Inhalt darf nicht leer sein"
+        if not params.get("line_id", ""):
+            return False, "line_id fehlt"
+
+    return True, "ok"
+
+
+def verify_artifact_write(action: str, params: dict, write_result: dict) -> tuple[bool, str]:
+    """Verifiziert Artifact-Write -- DB-Eintrag + Datei."""
+    artifact_id = (write_result or {}).get("artifact_id") or params.get("artifact_id")
+    if not artifact_id:
+        return True, "ok (kein artifact_id -- kein Verify)"
+    try:
+        from core.workspace_artifact_service import verify_artifact
+        return verify_artifact(int(artifact_id))
+    except Exception as e:
+        return False, f"Verify fehlgeschlagen: {e}"
+
+
 def build_proposal_preview(action: str, params: dict) -> str:
     """Erzeugt lesbaren Preview-Text fuer Proposal-Statusaenderungen."""
     from core.database import get_connection
@@ -1026,7 +1094,11 @@ def execute_write(action_key: str, params: dict, owner_id: str,
     preflight_msg = "skipped"
     if gate in ("soft", "hard"):
         if tool_ref == "workspace":
-            preflight_ok, preflight_msg = preflight_workspace(action, params)
+            # 7.x: artifact-Aktionen haben eigenen Preflight
+            if action.startswith("artifact") or action in ("worklog_append", "materialize_execution"):
+                preflight_ok, preflight_msg = preflight_artifact(action, params)
+            else:
+                preflight_ok, preflight_msg = preflight_workspace(action, params)
         elif tool_ref == "todos":
             preflight_ok, preflight_msg = preflight_todo(action, params, owner_id)
         elif tool_ref == "proposal":
@@ -1073,7 +1145,10 @@ def execute_write(action_key: str, params: dict, owner_id: str,
     verify_msg = "skipped"
     if policy.get("verify"):
         if tool_ref == "workspace":
-            verify_ok, verify_msg = verify_workspace(action, params)
+            if action.startswith("artifact") or action in ("worklog_append", "materialize_execution"):
+                verify_ok, verify_msg = verify_artifact_write(action, params, write_result)
+            else:
+                verify_ok, verify_msg = verify_workspace(action, params)
         elif tool_ref == "todos":
             verify_ok, verify_msg = verify_todo(action, params, write_result)
         elif tool_ref == "calendar":

@@ -3,248 +3,180 @@
 
 {% block content %}
 <div class="page-header" style="display:flex;align-items:center;justify-content:space-between">
-    <div>
-        <h1>Workspace</h1>
-        <p>Kimis Skripte — selbst entwickelt, selbst ausgeführt</p>
-    </div>
-    <button class="btn btn-primary" onclick="openNew()">+ Neu</button>
+  <div>
+    <h1>Workspace</h1>
+    <p style="color:var(--text-3);font-size:13px">Kimis Artefakt-Werkbank — linienbasiert, versioniert, auditiert</p>
+  </div>
+  <div style="display:flex;gap:8px">
+    <button class="btn btn-primary" onclick="showTab('artifacts')" id="tab-artifacts">Artefakte</button>
+    <button class="btn btn-secondary" onclick="showTab('lines')" id="tab-lines">Linien</button>
+    <button class="btn btn-secondary" onclick="showTab('legacy')" id="tab-legacy">Legacy</button>
+  </div>
 </div>
 
-<!-- Stats -->
 <div id="ws-stats" style="display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap"></div>
 
-<!-- Dateiliste -->
-<div id="file-list">
-    <div class="loading">Lade Workspace...</div>
+<div id="tab-content-artifacts">
+  <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">
+    <select id="filter-type" onchange="loadArtifacts()" style="padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text-1);font-size:13px">
+      <option value="">Alle Typen</option>
+      <option value="brief">Brief</option><option value="analysis">Analysis</option>
+      <option value="plan">Plan</option><option value="implementation">Implementation</option>
+      <option value="result">Result</option><option value="report">Report</option>
+    </select>
+    <select id="filter-status" onchange="loadArtifacts()" style="padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text-1);font-size:13px">
+      <option value="">Alle Status</option>
+      <option value="active">Active</option><option value="draft">Draft</option><option value="final">Final</option>
+    </select>
+  </div>
+  <div id="artifact-list"><div class="loading">Lade Artefakte...</div></div>
 </div>
 
-<!-- Editor Modal -->
+<div id="tab-content-lines" style="display:none">
+  <div id="lines-list"><div class="loading">Lade Linien...</div></div>
+</div>
+
+<div id="tab-content-legacy" style="display:none">
+  <div style="padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:16px;font-size:13px;color:var(--text-3)">
+    Legacy-Dateien (flacher Workspace). Neue Writes laufen ueber Artefakte.
+  </div>
+  <div id="legacy-list"></div>
+</div>
+
 <div id="modal-backdrop" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:100;align-items:center;justify-content:center">
-    <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:24px;width:800px;max-width:96vw;max-height:90vh;display:flex;flex-direction:column;gap:16px;box-shadow:var(--shadow-lg)">
-        <div style="display:flex;align-items:center;justify-content:space-between">
-            <div style="font-size:15px;font-weight:600;color:var(--text-1)" id="modal-title">Neue Datei</div>
-            <button onclick="closeModal()" style="background:none;border:none;cursor:pointer;font-size:18px;color:var(--text-3)">✕</button>
-        </div>
-        <input id="editor-filename" placeholder="dateiname.py" style="padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text-1);font-size:13px;font-family:var(--font-mono)">
-        <textarea id="editor-code" style="flex:1;min-height:320px;padding:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text-1);font-size:13px;font-family:var(--font-mono);resize:vertical;line-height:1.5" placeholder="# Python-Code hier..."></textarea>
-        <div style="display:flex;gap:8px;justify-content:space-between;align-items:center">
-            <div id="run-output" style="font-size:12px;color:var(--text-3);font-family:var(--font-mono);max-width:500px;white-space:pre-wrap;max-height:80px;overflow:auto"></div>
-            <div style="display:flex;gap:8px">
-                <button class="btn btn-secondary" onclick="runCode()" id="run-btn">▶ Ausführen</button>
-                <button class="btn btn-primary" onclick="saveFile()" id="save-btn">Speichern</button>
-            </div>
-        </div>
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:24px;width:800px;max-width:96vw;max-height:90vh;display:flex;flex-direction:column;gap:12px;box-shadow:var(--shadow-lg)">
+    <div style="display:flex;align-items:center;justify-content:space-between">
+      <div style="font-size:15px;font-weight:600" id="modal-title"></div>
+      <button onclick="closeModal()" style="background:none;border:none;cursor:pointer;font-size:18px;color:var(--text-3)">x</button>
     </div>
+    <div id="modal-meta" style="font-size:12px;color:var(--text-3)"></div>
+    <textarea id="modal-content" style="flex:1;min-height:300px;padding:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text-1);font-size:13px;font-family:var(--font-mono);resize:vertical;line-height:1.5" readonly></textarea>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <select id="modal-status" style="padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text-1);font-size:13px">
+        <option value="draft">Draft</option><option value="active">Active</option>
+        <option value="final">Final</option><option value="archived">Archived</option>
+      </select>
+      <button class="btn btn-primary" onclick="saveStatus()">Status setzen</button>
+    </div>
+  </div>
 </div>
-
-<style>
-.file-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    padding: 16px 18px;
-    margin-bottom: 10px;
-    display: flex;
-    align-items: flex-start;
-    gap: 14px;
-    cursor: pointer;
-    transition: border-color .15s;
-}
-.file-card:hover { border-color: var(--border-2); }
-.file-icon {
-    width: 36px; height: 36px;
-    background: var(--bg);
-    border-radius: var(--radius);
-    display: flex; align-items: center; justify-content: center;
-    font-size: 16px; flex-shrink: 0;
-}
-.file-name { font-size: 14px; font-weight: 500; color: var(--text-1); font-family: var(--font-mono); }
-.file-meta { font-size: 12px; color: var(--text-3); margin-top: 2px; }
-.file-preview { font-size: 11px; color: var(--text-4); font-family: var(--font-mono); margin-top: 6px; white-space: pre-wrap; line-height: 1.4; max-height: 48px; overflow: hidden; }
-.file-actions { display: flex; gap: 6px; margin-left: auto; flex-shrink: 0; }
-.stat-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    padding: 12px 18px;
-    min-width: 120px;
-}
-.stat-label { font-size: 11px; color: var(--text-3); text-transform: uppercase; letter-spacing: .06em; }
-.stat-value { font-size: 22px; font-weight: 600; color: var(--text-1); margin-top: 2px; }
-.idea-badge {
-    font-size: 10px; font-weight: 500;
-    padding: 2px 6px;
-    border-radius: 99px;
-    background: color-mix(in srgb, var(--accent) 15%, transparent);
-    color: var(--accent);
-    margin-left: 6px;
-}
-</style>
 
 <script>
-let allFiles = [];
+const TYPE_COLORS = {
+  brief:'#dbeafe|#1e40af',analysis:'#ede9fe|#5b21b6',plan:'#fef3c7|#92400e',
+  implementation:'#d1fae5|#065f46',result:'#dcfce7|#166534',report:'#f3f4f6|#374151',
+  worklog:'#fce7f3|#9d174d',patch:'#ffedd5|#c2410c',test:'#e0f2fe|#0369a1',review:'#fef9c3|#854d0e'
+};
+const STATUS_COLORS = {
+  draft:'#f3f4f6|#6b7280',active:'#d1fae5|#065f46',final:'#dbeafe|#1e40af',
+  superseded:'#fef3c7|#92400e',archived:'#f9fafb|#9ca3af'
+};
+let currentArtifactId = null;
 
-async function loadFiles() {
+function typeBadge(t) {
+  const [bg,c]=(TYPE_COLORS[t]||'#f3f4f6|#6b7280').split('|');
+  return '<span style="font-size:10px;font-weight:600;padding:2px 7px;border-radius:99px;text-transform:uppercase;background:'+bg+';color:'+c+'">'+t+'</span>';
+}
+function statusBadge(s) {
+  const [bg,c]=(STATUS_COLORS[s]||'#f3f4f6|#6b7280').split('|');
+  return '<span style="font-size:10px;padding:2px 6px;border-radius:4px;font-weight:500;background:'+bg+';color:'+c+'">'+s+'</span>';
+}
+
+async function loadStats() {
+  const res = await fetch('/api/workspace/stats');
+  const d = await res.json();
+  const byType = Object.fromEntries((d.by_type||[]).map(x=>[x.artifact_type,x.n]));
+  const cards = [
+    ['Gesamt', d.total||0, ''],
+    ['Vollzug', d.materialized||0, 'color:#10b981'],
+  ].concat(Object.entries(byType).slice(0,3).map(([t,n])=>[t,n,'']));
+  document.getElementById('ws-stats').innerHTML = cards.map(([l,v,s])=>
+    '<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:12px 18px;min-width:100px"><div style="font-size:11px;color:var(--text-3);text-transform:uppercase">'+l+'</div><div style="font-size:22px;font-weight:600;'+s+'">'+v+'</div></div>'
+  ).join('');
+}
+
+async function loadArtifacts() {
+  const type = document.getElementById('filter-type').value;
+  const status = document.getElementById('filter-status').value;
+  let url = '/api/workspace/artifacts/recent?limit=30';
+  if (type) url += '&type='+type;
+  if (status) url += '&status='+status;
+  const res = await fetch(url);
+  const arts = await res.json();
+  const el = document.getElementById('artifact-list');
+  if (!arts.length) { el.innerHTML = '<div style="color:var(--text-3);font-size:13px;padding:16px">Keine Artefakte.</div>'; return; }
+  el.innerHTML = arts.map(a => {
+    const ts = new Date(a.created_at).toLocaleString('de',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+    return '<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:14px 16px;margin-bottom:8px;cursor:pointer" onclick="openArtifact('+a.id+')">'+
+      '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;flex-wrap:wrap">'+typeBadge(a.artifact_type)+statusBadge(a.status)+
+      (a.is_materialized_execution ? '<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:#d1fae5;color:#065f46;font-weight:500">Vollzug</span>' : '')+
+      '<span style="font-size:12px;color:var(--text-3)">#'+a.id+' v'+a.version+'</span></div>'+
+      '<div style="font-size:13px;font-weight:500">'+a.filename+'</div>'+
+      '<div style="font-size:12px;color:var(--text-3);margin-top:2px">'+a.line_id+' &middot; '+(a.purpose||'')+' &middot; '+ts+'</div></div>';
+  }).join('');
+}
+
+async function loadLines() {
+  const res = await fetch('/api/workspace/lines');
+  const lines = await res.json();
+  const el = document.getElementById('lines-list');
+  if (!lines.length) { el.innerHTML = '<div style="color:var(--text-3);font-size:13px;padding:16px">Keine Linien.</div>'; return; }
+  el.innerHTML = lines.map(l => {
+    const ts = l.last_workspace_write_at ? new Date(l.last_workspace_write_at).toLocaleString('de',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '-';
+    return '<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:14px 16px;margin-bottom:8px">'+
+      '<div style="display:flex;justify-content:space-between"><span style="font-size:13px;font-weight:500">'+l.line_id+'</span>'+
+      '<span style="font-size:12px;color:var(--text-3)">'+l.artifact_count+' Artefakte &middot; '+ts+'</span></div>'+
+      (l.latest_materialized_artifact_id ? '<div style="font-size:11px;color:#10b981;margin-top:3px">Vollzug materialisiert</div>' : '')+
+      '</div>';
+  }).join('');
+}
+
+async function loadLegacy() {
+  try {
     const res = await fetch('/api/workspace/files');
-    allFiles = await res.json();
-    renderStats();
-    renderFiles();
+    const files = await res.json();
+    const el = document.getElementById('legacy-list');
+    el.innerHTML = files.map(f =>
+      '<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:10px 14px;margin-bottom:6px;display:flex;align-items:center;gap:10px">'+
+      '<span style="font-family:var(--font-mono);font-size:13px;flex:1">'+f.name+'</span>'+
+      '<span style="font-size:12px;color:var(--text-3)">'+f.lines+' Zeilen</span></div>'
+    ).join('') || '<div style="color:var(--text-3);font-size:13px">Keine Legacy-Dateien.</div>';
+  } catch(e) { document.getElementById('legacy-list').innerHTML = '<div style="color:var(--text-3);font-size:13px">Legacy nicht verfuegbar.</div>'; }
 }
 
-function renderStats() {
-    const ideas = allFiles.filter(f => f.name.startsWith('idea_')).length;
-    const tools = allFiles.filter(f => !f.name.startsWith('idea_')).length;
-    const totalLines = allFiles.reduce((s, f) => s + f.lines, 0);
-    document.getElementById('ws-stats').innerHTML = `
-        <div class="stat-card"><div class="stat-label">Skripte gesamt</div><div class="stat-value">${allFiles.length}</div></div>
-        <div class="stat-card"><div class="stat-label">Ideen-Stubs</div><div class="stat-value">${ideas}</div></div>
-        <div class="stat-card"><div class="stat-label">Werkzeuge</div><div class="stat-value">${tools}</div></div>
-        <div class="stat-card"><div class="stat-label">Zeilen gesamt</div><div class="stat-value">${totalLines}</div></div>
-    `;
+async function openArtifact(id) {
+  currentArtifactId = id;
+  const res = await fetch('/api/workspace/artifacts/'+id);
+  const d = await res.json();
+  const a = d.artifact;
+  document.getElementById('modal-title').textContent = a.filename;
+  document.getElementById('modal-meta').innerHTML = typeBadge(a.artifact_type)+' '+statusBadge(a.status)+'&nbsp; Linie: '+a.line_id+'&nbsp; v'+a.version+'&nbsp; '+(a.created_at||'').substring(0,16);
+  document.getElementById('modal-content').value = d.content || '(leer)';
+  document.getElementById('modal-status').value = a.status;
+  document.getElementById('modal-backdrop').style.display = 'flex';
 }
 
-function renderFiles() {
-    const container = document.getElementById('file-list');
-    if (!allFiles.length) {
-        container.innerHTML = '<div class="loading">Noch keine Skripte — Kimi entwickelt sie aus eigenen Ideen oder du kannst neue anlegen.</div>';
-        return;
-    }
-
-    // Sortierung: Werkzeuge zuerst, Ideen-Stubs danach; innerhalb: nach Änderungsdatum
-    const sorted = [...allFiles].sort((a, b) => {
-        const aIdea = a.name.startsWith('idea_');
-        const bIdea = b.name.startsWith('idea_');
-        if (aIdea !== bIdea) return aIdea ? 1 : -1;
-        return b.modified - a.modified;
-    });
-
-    container.innerHTML = sorted.map(f => {
-        const isIdea = f.name.startsWith('idea_');
-        const date = new Date(f.modified * 1000).toLocaleString('de-DE', {
-            day: '2-digit', month: '2-digit', year: '2-digit',
-            hour: '2-digit', minute: '2-digit'
-        });
-        const preview = f.preview.replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        return `
-        <div class="file-card" onclick="openEdit('${esc(f.name)}')">
-            <div class="file-icon">${isIdea ? '💡' : '🔧'}</div>
-            <div style="flex:1;min-width:0">
-                <div style="display:flex;align-items:center">
-                    <span class="file-name">${esc(f.name)}</span>
-                    ${isIdea ? '<span class="idea-badge">Idee</span>' : ''}
-                </div>
-                <div class="file-meta">${f.lines} Zeilen · ${f.size} Bytes · ${date}</div>
-                <div class="file-preview">${preview}</div>
-            </div>
-            <div class="file-actions" onclick="event.stopPropagation()">
-                <button class="btn btn-secondary" style="padding:5px 10px;font-size:12px" onclick="runFile('${esc(f.name)}')">▶</button>
-                <button class="btn btn-secondary" style="padding:5px 10px;font-size:12px" onclick="openEdit('${esc(f.name)}')">✏</button>
-                <button class="btn btn-secondary" style="padding:5px 10px;font-size:12px;color:var(--red)" onclick="deleteFile('${esc(f.name)}')">🗑</button>
-            </div>
-        </div>`;
-    }).join('');
+async function saveStatus() {
+  const status = document.getElementById('modal-status').value;
+  await fetch('/api/workspace/artifacts/'+currentArtifactId+'/status', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({status})
+  });
+  closeModal(); loadArtifacts(); loadStats();
 }
 
-function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function closeModal() { document.getElementById('modal-backdrop').style.display='none'; }
+document.getElementById('modal-backdrop').addEventListener('click',e=>{if(e.target===e.currentTarget)closeModal();});
 
-function openNew() {
-    document.getElementById('modal-title').textContent = 'Neue Datei';
-    document.getElementById('editor-filename').value = '';
-    document.getElementById('editor-code').value = '# Kimis neues Skript\n\n';
-    document.getElementById('run-output').textContent = '';
-    showModal();
+function showTab(tab) {
+  ['artifacts','lines','legacy'].forEach(t=>{
+    document.getElementById('tab-content-'+t).style.display=t===tab?'':'none';
+    document.getElementById('tab-'+t).className='btn '+(t===tab?'btn-primary':'btn-secondary');
+  });
+  if(tab==='lines') loadLines();
+  if(tab==='legacy') loadLegacy();
 }
 
-function openEdit(filename) {
-    const f = allFiles.find(x => x.name === filename);
-    if (!f) return;
-    document.getElementById('modal-title').textContent = filename;
-    document.getElementById('editor-filename').value = filename;
-    document.getElementById('editor-code').value = f.content;
-    document.getElementById('run-output').textContent = '';
-    showModal();
-}
-
-async function runFile(filename) {
-    const btn = event.target;
-    btn.disabled = true; btn.textContent = '...';
-    try {
-        const res = await fetch('/api/workspace/run', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({filename})
-        });
-        const data = await res.json();
-        alert(`Output:\n${data.output || data.error || '(leer)'}`);
-    } finally {
-        btn.disabled = false; btn.textContent = '▶';
-    }
-}
-
-async function runCode() {
-    const code = document.getElementById('editor-code').value;
-    const out = document.getElementById('run-output');
-    const btn = document.getElementById('run-btn');
-    btn.disabled = true; btn.textContent = '...';
-    out.textContent = 'Läuft...';
-    try {
-        const res = await fetch('/api/workspace/run', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({code})
-        });
-        const data = await res.json();
-        out.textContent = data.output || data.error || '(kein Output)';
-    } finally {
-        btn.disabled = false; btn.textContent = '▶ Ausführen';
-    }
-}
-
-async function saveFile() {
-    const filename = document.getElementById('editor-filename').value.trim();
-    const code     = document.getElementById('editor-code').value;
-    const btn      = document.getElementById('save-btn');
-    if (!filename) { alert('Dateiname fehlt'); return; }
-    btn.disabled = true; btn.textContent = '...';
-    try {
-        const res = await fetch('/api/workspace/save', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({filename, code})
-        });
-        const data = await res.json();
-        if (data.result && !data.result.startsWith('Fehler')) {
-            closeModal();
-            await loadFiles();
-        } else {
-            alert(data.result || data.error);
-        }
-    } finally {
-        btn.disabled = false; btn.textContent = 'Speichern';
-    }
-}
-
-async function deleteFile(filename) {
-    if (!confirm(`'${filename}' löschen?`)) return;
-    await fetch('/api/workspace/delete', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({filename})
-    });
-    await loadFiles();
-}
-
-function showModal() {
-    const bd = document.getElementById('modal-backdrop');
-    bd.style.display = 'flex';
-}
-function closeModal() {
-    document.getElementById('modal-backdrop').style.display = 'none';
-}
-document.getElementById('modal-backdrop').addEventListener('click', e => {
-    if (e.target === e.currentTarget) closeModal();
-});
-
-loadFiles();
+loadStats(); loadArtifacts();
 </script>
 {% endblock %}

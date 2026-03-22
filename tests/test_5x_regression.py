@@ -240,3 +240,132 @@ class TestGIntegrity:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+# =============================================================================
+# E: 7.x Artifact-System Tests
+# =============================================================================
+
+class TestArtifactSystem:
+
+    def test_artifact_whitelists_defined(self):
+        """Alle Whitelists muessen definiert und nicht leer sein."""
+        from core.workspace_artifact_service import (
+            ARTIFACT_TYPES, ALLOWED_FORMATS, ARTIFACT_STATUSES, ARTIFACT_PURPOSES
+        )
+        assert len(ARTIFACT_TYPES) >= 6, "Mindestens 6 Artifact-Typen"
+        assert len(ALLOWED_FORMATS) >= 5, "Mindestens 5 Formate"
+        assert len(ARTIFACT_STATUSES) == 5, "Genau 5 Status"
+        assert "draft" in ARTIFACT_STATUSES
+        assert "active" in ARTIFACT_STATUSES
+        assert "final" in ARTIFACT_STATUSES
+
+    def test_artifact_required_types_present(self):
+        """Pflicht-Typen muessen vorhanden sein."""
+        from core.workspace_artifact_service import ARTIFACT_TYPES
+        required = {"brief", "analysis", "plan", "implementation", "result", "report"}
+        assert required.issubset(ARTIFACT_TYPES), f"Fehlende Typen: {required - ARTIFACT_TYPES}"
+
+    def test_normalize_line_id_safe(self):
+        """line_id-Normalisierung muss Path-Traversal verhindern."""
+        from core.workspace_artifact_service import normalize_line_id
+        assert "/" not in normalize_line_id("todo:42")
+        assert "\\" not in normalize_line_id("todo:42")
+        assert ".." not in normalize_line_id("../evil")
+        assert normalize_line_id("todo:42") == "todo_42"
+
+    def test_build_filename_deterministic(self):
+        """Dateiname muss deterministisch und sicher sein."""
+        from core.workspace_artifact_service import _build_filename
+        fn = _build_filename(42, "analysis", "md", 1)
+        assert fn.endswith(".md")
+        assert "analysis" in fn
+        assert "42" in fn or "000042" in fn
+        assert "/" not in fn
+        assert ".." not in fn
+
+    def test_build_relative_path_safe(self):
+        """Relativer Pfad muss im lines/-Verzeichnis bleiben."""
+        from core.workspace_artifact_service import _build_relative_path
+        path = _build_relative_path("todo:42", "test.md")
+        assert path.startswith("lines/")
+        assert "todo_42" in path
+        assert ".." not in path
+
+    def test_7x_risk_matrix_entries(self):
+        """7.x-Aktionen muessen in der Risk Matrix sein."""
+        from core.gate_service import RISK_MATRIX
+        required_7x = {
+            "workspace.artifact_create", "workspace.artifact_update",
+            "workspace.worklog_append", "workspace.materialize_execution",
+        }
+        for key in required_7x:
+            assert key in RISK_MATRIX, f"7.x-Aktion fehlt in Risk Matrix: {key}"
+
+    def test_7x_artifact_actions_class_a(self):
+        """Artifact-Create/Update/Worklog muessen Klasse A sein."""
+        from core.gate_service import get_policy
+        for action in ("workspace.artifact_create", "workspace.artifact_update",
+                       "workspace.worklog_append"):
+            p = get_policy(action)
+            assert p["class"] == "A", f"{action} sollte Klasse A sein"
+            assert p["verify"] is True, f"{action} braucht Verify"
+
+    def test_7x_artifact_delete_class_b(self):
+        """Artifact-Delete muss Klasse B sein."""
+        from core.gate_service import get_policy
+        p = get_policy("workspace.artifact_delete")
+        assert p["class"] == "B"
+
+    def test_artifact_preflight_rejects_empty_content(self):
+        """Artifact-Create ohne Inhalt muss fehlschlagen."""
+        from core.gate_service import preflight_artifact
+        ok, msg = preflight_artifact("artifact_create", {
+            "line_id": "todo:1", "content": "", "artifact_type": "analysis", "format": "md"
+        })
+        assert ok is False
+
+    def test_artifact_preflight_rejects_invalid_type(self):
+        """Ungueltiger artifact_type muss abgelehnt werden."""
+        from core.gate_service import preflight_artifact
+        ok, msg = preflight_artifact("artifact_create", {
+            "line_id": "todo:1", "content": "test", "artifact_type": "UNKNOWN", "format": "md"
+        })
+        assert ok is False
+
+    def test_artifact_preflight_rejects_invalid_format(self):
+        """Ungueltiges Format muss abgelehnt werden."""
+        from core.gate_service import preflight_artifact
+        ok, msg = preflight_artifact("artifact_create", {
+            "line_id": "todo:1", "content": "test", "artifact_type": "analysis", "format": "exe"
+        })
+        assert ok is False
+
+    def test_artifact_preflight_rejects_missing_line_id(self):
+        """Fehlende line_id muss abgelehnt werden."""
+        from core.gate_service import preflight_artifact
+        ok, msg = preflight_artifact("artifact_create", {
+            "content": "test", "artifact_type": "analysis", "format": "md"
+        })
+        assert ok is False
+
+    def test_worklog_preflight_rejects_empty_content(self):
+        """Leerer Worklog-Eintrag muss abgelehnt werden."""
+        from core.gate_service import preflight_artifact
+        ok, msg = preflight_artifact("worklog_append", {"line_id": "todo:1", "content": "  "})
+        assert ok is False
+
+    def test_soft_gate_includes_artifact_actions(self):
+        """Artifact-Actions muessen preflight-faehig sein."""
+        from core.gate_service import RISK_MATRIX
+        # workspace-Artifact-Actions haben gate=soft
+        for key, policy in RISK_MATRIX.items():
+            if key.startswith("workspace.artifact") or key in (
+                "workspace.worklog_append", "workspace.materialize_execution"
+            ):
+                assert policy["gate"] == "soft", f"{key} muss soft gate haben"
+
+
+if __name__ == "__main__":
+    import pytest
+    pytest.main([__file__, "-v"])

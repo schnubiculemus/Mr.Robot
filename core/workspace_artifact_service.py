@@ -147,11 +147,29 @@ def create_artifact(owner_id: str, line_id: str, artifact_type: str,
         finally:
             conn.close()
 
-        # Datei schreiben
+        # Datei ZUERST in temporaeren Pfad schreiben -- dann DB committen
         full_path = _full_path(relative_path)
+        tmp_path = full_path + ".tmp"
         os.makedirs(os.path.dirname(full_path), exist_ok=True)
-        with open(full_path, "w", encoding="utf-8") as f:
-            f.write(content)
+        try:
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            # Nur wenn Datei erfolgreich: umbenennen (atomar)
+            os.replace(tmp_path, full_path)
+        except Exception as write_err:
+            # Datei fehlgeschlagen -> DB-Eintrag kompensieren
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+            try:
+                from core.database import get_connection as _gc_comp
+                _c_comp = _gc_comp()
+                _c_comp.execute("DELETE FROM workspace_artifacts WHERE id=?", (artifact_id,))
+                _c_comp.commit()
+                _c_comp.close()
+            except Exception:
+                pass
+            logger.error(f"create_artifact: Datei-Write fehlgeschlagen, DB kompensiert: {write_err}")
+            return None
 
         # Verify
         if not os.path.exists(full_path) or (content and os.path.getsize(full_path) == 0):
@@ -167,6 +185,11 @@ def create_artifact(owner_id: str, line_id: str, artifact_type: str,
 
         artifact = get_artifact(artifact_id)
         logger.info(f"Artifact #{artifact_id} erstellt: {artifact_type} v{version} fuer Linie {line_id}")
+        # Prio 2: Manifest automatisch rebuilden
+        try:
+            rebuild_artifact_index(line_id)
+        except Exception:
+            pass
         return artifact
 
     except Exception as e:
@@ -206,6 +229,19 @@ def update_artifact_content(artifact_id: int, content: str,
 
         _write_event(artifact_id, "updated", actor,
                      {"status": new_status, "size": len(content)})
+        # line_workspace_state: last_write aktualisieren
+        try:
+            from core.database import get_connection as _gc_u
+            _cu = _gc_u()
+            row = _cu.execute("SELECT owner_id FROM workspace_artifacts WHERE id=?",
+                              (artifact_id,)).fetchone()
+            _cu.close()
+            if row:
+                art_full = get_artifact(artifact_id)
+                if art_full:
+                    _touch_line_state(art_full["owner_id"], art_full["line_id"])
+        except Exception:
+            pass
         return True
     except Exception as e:
         logger.error(f"update_artifact_content fehlgeschlagen: {e}")
@@ -228,6 +264,12 @@ def set_artifact_status(artifact_id: int, status: str, actor: str = "kimi") -> b
         finally:
             conn.close()
         _write_event(artifact_id, "status_changed", actor, {"status": status})
+        try:
+            art = get_artifact(artifact_id)
+            if art:
+                _touch_line_state(art["owner_id"], art["line_id"])
+        except Exception:
+            pass
         return True
     except Exception as e:
         logger.error(f"set_artifact_status fehlgeschlagen: {e}")
@@ -476,6 +518,24 @@ def _write_event(artifact_id: int, event_type: str, actor: str, payload: dict) -
             conn.close()
     except Exception as e:
         logger.debug(f"_write_event fehlgeschlagen: {e}")
+
+
+def _touch_line_state(owner_id: str, line_id: str) -> None:
+    """Aktualisiert last_workspace_write_at ohne artifact_count zu erhoehen."""
+    try:
+        from core.database import get_connection
+        conn = get_connection()
+        now = to_iso()
+        try:
+            conn.execute(
+                "UPDATE line_workspace_state SET last_workspace_write_at=?, updated_at=? WHERE line_id=?",
+                (now, now, line_id)
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.debug(f"_touch_line_state fehlgeschlagen: {e}")
 
 
 def _update_line_state(owner_id: str, line_id: str,
