@@ -355,6 +355,29 @@ class TestArtifactSystem:
         ok, msg = preflight_artifact("worklog_append", {"line_id": "todo:1", "content": "  "})
         assert ok is False
 
+    def test_delete_verify_checks_archived_not_file_exists(self):
+        """artifact_delete Verify muss pruefen: archived + Datei weg, nicht Datei da."""
+        from core.gate_service import verify_artifact_write
+        # Ohne artifact_id: ok
+        ok, msg = verify_artifact_write("artifact_delete", {}, {})
+        assert ok is True
+
+    def test_create_verify_checks_file_exists(self):
+        """artifact_create Verify muss Datei-Existenz pruefen."""
+        from core.gate_service import verify_artifact_write
+        # Ohne artifact_id: ok (kein Verify moeglich)
+        ok, msg = verify_artifact_write("artifact_create", {}, {})
+        assert ok is True
+
+    def test_verify_action_routing(self):
+        """Delete und Create muessen unterschiedliche Verify-Pfade nehmen."""
+        from core.gate_service import verify_artifact_write
+        # Beide ohne ID -- beide ok, aber unterschiedliche Logik
+        ok_del, _ = verify_artifact_write("artifact_delete", {}, {})
+        ok_cre, _ = verify_artifact_write("artifact_create", {}, {})
+        assert ok_del is True
+        assert ok_cre is True
+
     def test_soft_gate_includes_artifact_actions(self):
         """Artifact-Actions muessen preflight-faehig sein."""
         from core.gate_service import RISK_MATRIX

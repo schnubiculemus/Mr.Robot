@@ -200,7 +200,10 @@ def create_artifact(owner_id: str, line_id: str, artifact_type: str,
 def update_artifact_content(artifact_id: int, content: str,
                              status: str = None,
                              actor: str = "kimi") -> bool:
-    """Aktualisiert Inhalt und optional Status eines Artefakts."""
+    """
+    Aktualisiert Inhalt und optional Status eines Artefakts.
+    7.x: Datei zuerst in tmp schreiben, dann DB commit -- transaktionssauber.
+    """
     try:
         from core.database import get_connection
         conn = get_connection()
@@ -211,21 +214,36 @@ def update_artifact_content(artifact_id: int, content: str,
             if not row:
                 return False
             art = dict(row)
-
-            new_status = status if status in ARTIFACT_STATUSES else art["status"]
-            now = to_iso()
-            conn.execute(
-                "UPDATE workspace_artifacts SET status=?, updated_at=? WHERE id=?",
-                (new_status, now, artifact_id)
-            )
-            conn.commit()
         finally:
             conn.close()
 
-        # Datei ueberschreiben
+        new_status = status if status in ARTIFACT_STATUSES else art["status"]
         full_path = _full_path(art["relative_path"])
-        with open(full_path, "w", encoding="utf-8") as f:
-            f.write(content)
+        tmp_path = full_path + ".tmp"
+
+        # Datei ZUERST in tmp schreiben
+        try:
+            os.makedirs(os.path.dirname(full_path), exist_ok=True)
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            os.replace(tmp_path, full_path)
+        except Exception as write_err:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+            logger.error(f"update_artifact_content: Datei-Write fehlgeschlagen: {write_err}")
+            return False
+
+        # Datei erfolgreich -> DB commit
+        now = to_iso()
+        conn2 = get_connection()
+        try:
+            conn2.execute(
+                "UPDATE workspace_artifacts SET status=?, updated_at=? WHERE id=?",
+                (new_status, now, artifact_id)
+            )
+            conn2.commit()
+        finally:
+            conn2.close()
 
         _write_event(artifact_id, "updated", actor,
                      {"status": new_status, "size": len(content)})
@@ -321,6 +339,16 @@ def delete_artifact(artifact_id: int, actor: str = "kimi") -> bool:
             os.remove(full_path)
 
         _write_event(artifact_id, "deleted", actor, {})
+
+        # Prio 2: line_state + Index nach Delete aktualisieren
+        try:
+            art_for_state = get_artifact(artifact_id)
+            if art_for_state:
+                _touch_line_state(art_for_state["owner_id"], art_for_state["line_id"])
+                rebuild_artifact_index(art_for_state["line_id"])
+        except Exception:
+            pass
+
         return True
     except Exception as e:
         logger.error(f"delete_artifact fehlgeschlagen: {e}")
@@ -443,7 +471,16 @@ def materialize_execution_artifact(owner_id: str, line_id: str,
 
 def append_worklog_entry(line_id: str, entry_text: str,
                           actor: str = "kimi", task_id: str = None) -> bool:
-    """Haengt Eintrag an worklog.md der Linie an."""
+    """
+    Haengt Eintrag an worklog.md der Linie an.
+
+    Worklog ist bewusst als Sonderkanal definiert:
+    - kein workspace_artifacts-Eintrag (kein Versionierungs-Overhead)
+    - kein Status-Lifecycle
+    - nur append, nie ueberschreiben
+    - Zweck: schnelles laufendes Protokoll fuer eine Linie
+    - fuer strukturierte Zwischenstände -> create_artifact(artifact_type="worklog")
+    """
     try:
         ensure_line_structure(line_id)
         wl_path = os.path.join(get_line_root(line_id), "worklog", "worklog.md")
