@@ -1421,15 +1421,44 @@ def _e_append_next_step(task_id: str, next_step_hint: str, user_id: str, loop_co
             action = "list"
             description = "{}"
         elif any(w in hint_lower for w in ["proposal", "vorschlag", "genehmigen", "ablehnen"]):
-            # 5.5: Proposal-Statusaenderung via Gate
-            import json as _j55
+            # 5.5: Proposal-Statusaenderung via Gate -- Proposal-ID aus Task-Kontext
+            import json as _j55, re as _re55
             tool_ref = "proposal_write"
             action = "approve"
             if any(w in hint_lower for w in ["ablehnen", "reject"]):
                 action = "reject"
             elif any(w in hint_lower for w in ["verschieben", "defer", "spaeter"]):
                 action = "defer"
-            description = _j55.dumps({"action": action})
+
+            # Proposal-ID aus Hinweistext extrahieren (#N oder "Proposal N")
+            proposal_id = None
+            m = _re55.search(r'(?:proposal|vorschlag)\s*[#:]?\s*(\d+)', next_step_hint.lower())
+            if m:
+                proposal_id = int(m.group(1))
+            else:
+                # Aus verknuepftem Todo ableiten
+                try:
+                    task_obj = get_task(task_id)
+                    linked_todo_id = task_obj.get("linked_todo_id") if task_obj else None
+                    if linked_todo_id:
+                        from core.database import get_connection as _gc_p55
+                        _cp55 = _gc_p55()
+                        _row = _cp55.execute(
+                            "SELECT proposal_id FROM todos WHERE id=?", (linked_todo_id,)
+                        ).fetchone()
+                        _cp55.close()
+                        if _row and _row["proposal_id"]:
+                            proposal_id = _row["proposal_id"]
+                except Exception:
+                    pass
+
+            if proposal_id:
+                description = _j55.dumps({"action": action, "id": proposal_id})
+            else:
+                # Kein Proposal-Bezug gefunden -- fallback auf Observation
+                tool_ref = ""
+                action = "observe"
+                description = next_step_hint[:200]
         elif any(w in hint_lower for w in ["blockiert", "block", "feststeckt", "gesperrt"]):
             # 5.1: Todo-Status auf blocked setzen via Gate
             import json as _j
@@ -3708,6 +3737,19 @@ def _dispatch_tool(tool_ref: str, action: str, params: dict) -> object:
         if gresult.get("pending"):
             if task_id:
                 update_task(task_id, status="waiting_user_decision")
+            # Observation anlegen damit F-Kognition weiss was wartet
+            try:
+                from core.todo_service import record_observation
+                record_observation(
+                    owner_id=_owner_id,
+                    content=(f"Proposal-Write-Request angelegt: "
+                             f"{gresult.get('preview','')[:120]} "
+                             f"[Request #{gresult.get('write_request_id')}]"),
+                    obs_type="state_change",
+                    task_id=task_id,
+                )
+            except Exception:
+                pass
             return {"success": False, "pending": True,
                     "result": gresult.get("message", "Proposal-Write-Request angelegt"),
                     "write_request_id": gresult.get("write_request_id"),

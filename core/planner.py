@@ -1162,14 +1162,53 @@ def maybe_start_task(chosen: list, owner_id: str) -> list:
 
     started = []
     for line in chosen:
-        # 4.x: auch Proposals mit START_LINE koennen einen Task starten
+        # 4.x/5.5: Proposals als Linie starten
         if line["type"] == "proposal" and line["decision"] == START_LINE:
-            # Proposal-Task anlegen -- Vorarbeits-Todo suchen oder direkt starten
+            proposal_class = line.get("proposal_class", "")
+
+            # 5.5: proposal_ready_for_work -> direkten proposal_write-Task starten
+            if proposal_class == "proposal_ready_for_work":
+                try:
+                    import json as _jp55
+                    task_id_new = _orbit.create_task(
+                        task_type="action",
+                        goal=f"Proposal bewerten: {line['title'][:80]}",
+                        primary_origin=f"planner:proposal:{line['id']}",
+                        mode="internal",
+                        release_mode="summarize",
+                        priority="medium",
+                        linked_todo_id=None,
+                        goal_id=line.get("goal_id"),
+                        proposal_id=line["id"],
+                    )
+                    # Step 1: Proposal-Kontext lesen
+                    _orbit.create_step(
+                        task_id=task_id_new,
+                        step_type="todos_read",
+                        description=_jp55.dumps({"action": "list", "project": "kimi"}),
+                        tool_ref="todos_read",
+                        interruptible=True,
+                    )
+                    # Step 2: proposal_write -- ID explizit rein
+                    _orbit.create_step(
+                        task_id=task_id_new,
+                        step_type="proposal_write",
+                        description=_jp55.dumps({"action": "approve", "id": line["id"],
+                                                 "reason": "Planner: proposal_ready_for_work"}),
+                        tool_ref="proposal_write",
+                        interruptible=False,
+                    )
+                    started.append(line["id"])
+                    logger.info(f"Planner 5.5: Proposal-Task fuer Proposal #{line['id']} angelegt")
+                except Exception as _ep55:
+                    logger.warning(f"Planner 5.5: Proposal-Task fehlgeschlagen: {_ep55}")
+                continue
+
+            # Vorarbeits-Todo suchen (alte Logik)
             followup = _derive_followup_from_proposal(line, {"todos": []}, owner_id)
             if followup:
-                line = followup  # Todo aus Proposal verwenden
+                line = followup
             else:
-                # Kein Todo vorhanden -- Proposal nur als Planungshinweis, nicht starten
                 logger.info(f"Planner: Proposal #{line['id']} bereit aber kein Todo -- kein Auto-Start")
                 continue
         if line["type"] != "todo":
