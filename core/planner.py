@@ -674,7 +674,7 @@ def score_candidates(candidates: dict, situation: dict, owner_id: str = "") -> l
     for t in situation["low_value"]:
         scored.append(_score_todo(t, DEFER))
 
-    # Proposals
+    # Proposals -- 4.x: proposal_ready_for_work in dieselbe Auswahlmatrix wie Todos
     for p in candidates["proposals"]:
         cls = _classify_proposal(p, active_goal_ids, active_task_ids)
         goal_rel = W_GOAL_RELEVANCE * 0.4 if p.get("goal_id") and p["goal_id"] in active_goal_ids else 0.0
@@ -682,8 +682,17 @@ def score_candidates(candidates: dict, situation: dict, owner_id: str = "") -> l
                        "gross": W_EFFORT_PENALTY, "groß": W_EFFORT_PENALTY}
         effort_pen = effort_map2.get((p.get("effort") or "mittel").lower(), W_EFFORT_PENALTY * 0.5)
         staleness = min(W_STALENESS * 0.5, _staleness_days(p) * 0.05)
-        score = goal_rel + staleness - effort_pen
-        decision = DROP_OR_PAUSE if cls == "proposal_low_value" else DEFER
+
+        # proposal_ready_for_work: voller Score wie ein startbares Todo
+        if cls == "proposal_ready_for_work":
+            full_goal_rel = W_GOAL_RELEVANCE if p.get("goal_id") and p["goal_id"] in active_goal_ids else W_GOAL_RELEVANCE * 0.3
+            leverage = W_LEVERAGE if full_goal_rel > 0 else W_LEVERAGE * 0.3
+            score = full_goal_rel + leverage + staleness - effort_pen
+            decision = START_LINE  # kann gegen Todos konkurrieren
+        else:
+            score = goal_rel + staleness - effort_pen
+            decision = DROP_OR_PAUSE if cls == "proposal_low_value" else DEFER
+
         scored.append({
             "type":           "proposal",
             "id":             p["id"],
@@ -693,7 +702,9 @@ def score_candidates(candidates: dict, situation: dict, owner_id: str = "") -> l
             "proposal_class": cls,
             "blocked":        False,
             "has_task":       False,
-            "execution_mode": "none",
+            "execution_mode": "orbit_internal" if cls == "proposal_ready_for_work" else "none",
+            "release_mode":   "summarize",
+            "task_template":  "analysis",
             "goal_id":        p.get("goal_id"),
             "entblockbar":    True,
             "stagnating":     False,
@@ -865,33 +876,7 @@ def choose_worklines(candidates: dict, scored: list,
                             scored, "Blocker aufloesen hat Vorrang.", UNBLOCK_LINE, replan_trigger)
 
     if not start_cands:
-        # 4.1: Proposal als echte planbare Hauptlinie wenn bereit
-        ready_proposals = [s for s in scored
-                          if s["type"] == "proposal"
-                          and s.get("proposal_class") in ("proposal_ready_for_work",)
-                          and s["score"] > 0]
-        if ready_proposals:
-            p = ready_proposals[0]
-            # Vorarbeit-Todo aus Proposal ableiten
-            followup = _derive_followup_from_proposal(p, candidates, owner_id)
-            result = {
-                "primary_line":     _format_line(p),
-                "secondary_line":   _format_line(followup) if followup else None,
-                "blocked_lines":    _format_blocked(scored),
-                "deferred_lines":   _format_deferred(scored),
-                "stagnation_flags": _format_stagnation(scored),
-                "action":           PROPOSAL_AS_LINE,
-                "reasoning":        (
-                    f"Proposal '{p['title'][:50]}' ist bereit und hat hohen Hebel. "
-                    + ("Vorarbeit-Todo wird als Nebenlinie gestartet." if followup else
-                       "Wartet auf Genehmigung.")
-                ),
-                "replan_trigger":   replan_trigger,
-                "chosen":           [followup] if followup else [],
-            }
-            return result
-
-        # Bewusste Nicht-Auswahl
+        # Bewusste Nicht-Auswahl -- Proposals sind jetzt bereits in start_cands wenn ready
         return {
             "primary_line": None, "secondary_line": None,
             "blocked_lines": _format_blocked(scored),
@@ -1072,6 +1057,16 @@ def maybe_start_task(chosen: list, owner_id: str) -> list:
 
     started = []
     for line in chosen:
+        # 4.x: auch Proposals mit START_LINE koennen einen Task starten
+        if line["type"] == "proposal" and line["decision"] == START_LINE:
+            # Proposal-Task anlegen -- Vorarbeits-Todo suchen oder direkt starten
+            followup = _derive_followup_from_proposal(line, {"todos": []}, owner_id)
+            if followup:
+                line = followup  # Todo aus Proposal verwenden
+            else:
+                # Kein Todo vorhanden -- Proposal nur als Planungshinweis, nicht starten
+                logger.info(f"Planner: Proposal #{line['id']} bereit aber kein Todo -- kein Auto-Start")
+                continue
         if line["type"] != "todo":
             continue
         if line["decision"] in (CONTINUE_LINE, DEFER, DROP_OR_PAUSE):

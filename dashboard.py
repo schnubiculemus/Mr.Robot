@@ -1861,6 +1861,12 @@ def api_proposal_action(proposal_id):
 # ORBIT: Seite
 # =============================================================================
 
+@app.route("/planner")
+@require_auth
+def planner_page():
+    return render_template("planner.html")
+
+
 @app.route("/orbit")
 @require_auth
 def orbit_page():
