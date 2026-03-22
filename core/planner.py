@@ -691,6 +691,74 @@ def score_candidates(candidates: dict, situation: dict, owner_id: str = "") -> l
     for t in situation["low_value"]:
         scored.append(_score_todo(t, DEFER))
 
+    # Write-Requests -- 5.4: als echte Linienobjekte im Scoring
+    import datetime as _dt54
+    now_utc = _dt54.datetime.now(_dt54.timezone.utc)
+    for wr in candidates.get("write_request_lines", []):
+        ls = wr.get("line_status", "pending_approval")
+        status = wr.get("approval_status", "pending")
+
+        # Deferred: Wiedervorlage noch nicht erreicht -> score=0, DEFER
+        if status == "deferred" and wr.get("deferred_until"):
+            try:
+                def_until = _dt54.datetime.fromisoformat(
+                    wr["deferred_until"].replace("Z", "+00:00"))
+                if now_utc < def_until:
+                    scored.append({
+                        "type": "write_request", "id": wr["id"],
+                        "title": f"[Freigabe verschoben] {wr.get('action_key','')}",
+                        "score": 0.0, "decision": DEFER,
+                        "line_status": ls, "approval_status": status,
+                        "blocked": False, "stagnating": False,
+                        "blocker_type": BLOCKER_WAITING_USER,
+                        "execution_mode": "none", "goal_id": wr.get("origin_goal_id"),
+                        "origin_todo_id": wr.get("origin_todo_id"),
+                        "task_id": wr.get("task_id"),
+                        "after_approve": wr.get("after_approve_action","continue_line"),
+                        "after_reject": wr.get("after_reject_action","replan"),
+                        "deferred_until": wr.get("deferred_until"),
+                        "decision_due_at": wr.get("decision_due_at"),
+                    })
+                    continue
+            except Exception:
+                pass
+
+        # Überfällig (decision_due_at überschritten)
+        overdue = False
+        if wr.get("decision_due_at"):
+            try:
+                due = _dt54.datetime.fromisoformat(
+                    wr["decision_due_at"].replace("Z", "+00:00"))
+                overdue = now_utc > due
+            except Exception:
+                pass
+
+        # Score: Goal-Relevanz + Überfälligkeit
+        goal_rel = W_GOAL_RELEVANCE * 0.5 if wr.get("origin_goal_id") and                    wr["origin_goal_id"] in active_goal_ids else W_GOAL_RELEVANCE * 0.2
+        overdue_bonus = W_STALENESS if overdue else 0.0
+        score = goal_rel + overdue_bonus
+
+        scored.append({
+            "type":            "write_request",
+            "id":              wr["id"],
+            "title":           f"[Freigabe] {wr.get('action_key','')}",
+            "score":           round(score, 2),
+            "decision":        CONTINUE_LINE,  # aktive Approval-Linie
+            "line_status":     ls,
+            "approval_status": status,
+            "blocked":         False,
+            "stagnating":      False,
+            "blocker_type":    BLOCKER_WAITING_USER,
+            "execution_mode":  "none",
+            "goal_id":         wr.get("origin_goal_id"),
+            "origin_todo_id":  wr.get("origin_todo_id"),
+            "task_id":         wr.get("task_id"),
+            "after_approve":   wr.get("after_approve_action","continue_line"),
+            "after_reject":    wr.get("after_reject_action","replan"),
+            "overdue":         overdue,
+            "decision_due_at": wr.get("decision_due_at"),
+        })
+
     # Proposals -- 4.x: proposal_ready_for_work in dieselbe Auswahlmatrix wie Todos
     for p in candidates["proposals"]:
         cls = _classify_proposal(p, active_goal_ids, active_task_ids)
@@ -879,16 +947,15 @@ def choose_worklines(candidates: dict, scored: list,
                                                           BLOCKER_WAITING_USER)]
 
     if approval_waiting:
-        # Hauptlinie wartet auf Freigabe -- Fokus halten, Nebenlinie aktivieren
+        # 5.4: Write-Request als echte Hauptlinie -- Fokus halten, Nebenlinie springt ein
         primary = approval_waiting[0]
         secondary = (start_cands[0] if start_cands
-                     else feedback_waiting[0] if feedback_waiting
-                     else None)
-        return _build_result(
-            primary, secondary, scored,
-            "Hauptlinie wartet auf Freigabe -- Nebenlinie aktiv.",
-            CONTINUE_LINE, replan_trigger
-        )
+                     else [s for s in feedback_waiting if s["id"] != primary["id"]][0]
+                     if feedback_waiting else None)
+        # Reason je nach Überfälligkeit
+        reason = ("Freigabe überfällig -- bitte entscheiden." if primary.get("overdue")
+                  else "Hauptlinie wartet auf Freigabe -- Nebenlinie aktiv.")
+        return _build_result(primary, secondary, scored, reason, CONTINUE_LINE, replan_trigger)
 
     # Aktiv fortsetzbare Linien bevorzugen
     primary_pool = active_waiting if active_waiting else (feedback_waiting or continue_cands)

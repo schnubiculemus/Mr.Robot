@@ -323,15 +323,27 @@ def api_planner_state():
         cands = collect_candidates(user_id)
         sit = _build_situation(cands)
         scored = score_candidates(cands, sit)
+        # Write-Requests im Lagebild zaehlen
+        wr_pending = len([s for s in scored if s.get("type") == "write_request"
+                          and s.get("approval_status") == "pending"])
+        wr_overdue = len([s for s in scored if s.get("type") == "write_request"
+                          and s.get("overdue")])
+
         lagebild = {
             "running":   len(sit["running"]),
             "waiting":   len(sit["waiting"]),
             "blocked":   len(sit["blocked"]),
             "startable": len(sit["startable"]),
+            "write_requests_pending": wr_pending,
+            "write_requests_overdue": wr_overdue,
             "top_candidates": [
                 {"id": s["id"], "type": s["type"], "title": s["title"][:50],
                  "decision": s["decision"], "score": s["score"],
-                 "stagnating": s.get("stagnating", False)}
+                 "stagnating": s.get("stagnating", False),
+                 "line_status": s.get("line_status"),
+                 "overdue": s.get("overdue", False),
+                 "decision_due_at": s.get("decision_due_at"),
+                 "blocker_type": s.get("blocker_type")}
                 for s in scored[:8]
             ],
         }

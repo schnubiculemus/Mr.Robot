@@ -109,8 +109,9 @@ function render(data) {
 
   const lbStats = ['running','waiting','blocked','startable'];
   const lbLabels = ['Laufend','Wartend','Blockiert','Startbar'];
-  let lbBody = `<div style="display:flex;gap:1.2rem;margin-bottom:0.75rem">` +
-    lbStats.map((k,i) => `<div style="text-align:center"><div style="font-size:1.3rem;font-weight:700">${lb[k]||0}</div><div style="font-size:0.68rem;color:var(--text-muted);text-transform:uppercase">${lbLabels[i]}</div></div>`).join('') +
+  let lbBody = '<div style="display:flex;gap:1.2rem;margin-bottom:0.75rem">' +
+    lbStats.map((k,i) => '<div style="text-align:center"><div style="font-size:1.3rem;font-weight:700">' + (lb[k]||0) + '</div><div style="font-size:0.68rem;color:var(--text-muted);text-transform:uppercase">' + lbLabels[i] + '</div></div>').join('') +
+    (lb.write_requests_pending ? '<div style="text-align:center"><div style="font-size:1.3rem;font-weight:700;color:' + (lb.write_requests_overdue ? '#ef4444' : '#f59e0b') + '">' + lb.write_requests_pending + '</div><div style="font-size:0.68rem;color:var(--text-muted);text-transform:uppercase">Freigabe' + (lb.write_requests_overdue ? ' ⚠' : '') + '</div></div>' : '') +
     '</div>';
   lbBody += top.slice(0,6).map(c =>
     `<div style="display:flex;align-items:center;gap:0.4rem;padding:0.35rem 0;border-bottom:1px solid var(--border);font-size:0.78rem">
@@ -118,6 +119,7 @@ function render(data) {
       <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.title.substring(0,38)}</span>
       <span style="font-size:0.7rem;font-weight:600;color:var(--text-muted)">${c.score}</span>
       ${c.stagnating?'<span style="color:#ef4444;font-size:0.65rem">&#9888;</span>':''}
+      ${c.overdue?'<span style="color:#ef4444;font-size:0.65rem" title="Freigabe ueberfaellig">&#9203;</span>':''}
     </div>`
   ).join('');
 
