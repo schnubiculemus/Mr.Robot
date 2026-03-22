@@ -100,14 +100,26 @@ def collect_candidates(owner_id: str) -> dict:
             (owner_id,)
         ).fetchall()]
 
-        active_tasks = [dict(r) for r in conn.execute(
+        # owner-bezogen: user: direkt, kimi_todo/planner ueber linked_todo_id Owner pruefen
+        _all_tasks = [dict(r) for r in conn.execute(
             """SELECT * FROM orbit_tasks
                WHERE mode IN ('internal','background')
                AND status NOT IN ('completed','failed','aborted')
-               AND (primary_origin LIKE ? OR primary_origin LIKE ? OR primary_origin LIKE ?)
-               ORDER BY created_at DESC""",
-            (f"user:{owner_id}%", f"kimi_todo:%", f"planner:%")
+               ORDER BY created_at DESC"""
         ).fetchall()]
+        # Todos dieses Owners
+        _owner_todo_ids = {
+            row["id"] for row in conn.execute(
+                "SELECT id FROM todos WHERE user_id=?", (owner_id,)
+            ).fetchall()
+        }
+        active_tasks = [
+            t for t in _all_tasks
+            if t.get("primary_origin","").startswith(f"user:{owner_id}")
+            or t.get("linked_todo_id") in _owner_todo_ids
+            or t.get("primary_origin","").startswith(f"planner:")
+            and t.get("linked_todo_id") in _owner_todo_ids
+        ]
 
         # Letzte Observations pro Task (Fehler/Schleifen erkennen)
         recent_obs = {}
@@ -169,8 +181,25 @@ def _build_situation(candidates: dict) -> dict:
             task_status = task.get("status","")
             if task_status in ("active","new","planned"):
                 running_todos.append(todo)
-            elif task_status in ("waiting_feedback","waiting"):
+            elif task_status == "waiting_feedback":
+                # Aktiv wartet auf F-Kognition -- kann bald weiterlaufen
+                todo["_wait_type"] = "waiting_feedback"
                 waiting_todos.append(todo)
+            elif task_status == "waiting":
+                # Wartet auf externe Ressource oder User
+                loop_count = int(task.get("loop_count") or 0)
+                max_loops = int(task.get("max_loops") or 5)
+                if loop_count >= max_loops - 1:
+                    # Nahe am Schleifenlimit -- eher pausieren
+                    todo["_wait_type"] = "soft_wait_near_limit"
+                    blocked_todos.append(todo)
+                else:
+                    todo["_wait_type"] = "waiting_on_resource"
+                    waiting_todos.append(todo)
+            elif task_status in ("failed","aborted"):
+                # Task fertig/gescheitert -- Todo ist wieder startbar
+                todo["_task"] = None
+                startable_todos.append(todo) if todo.get("execution_mode") in ("orbit_internal","orbit_chat") else low_value_todos.append(todo)
             else:
                 startable_todos.append(todo)
         elif todo.get("execution_mode") in ("orbit_internal","orbit_chat"):
@@ -352,15 +381,25 @@ def score_candidates(candidates: dict, situation: dict) -> list:
         staleness = min(W_STALENESS * 0.5, days * 0.05)
         score = goal_rel + staleness - effort_pen
 
-        # Proposal-Klasse bestimmen
+        # Proposal-Klasse -- 4 Kategorien
         has_desc = bool(p.get("description") and len(p.get("description","")) > 20)
-        if goal_rel > 0 and effort_pen <= W_EFFORT_PENALTY * 0.5 and has_desc:
-            proposal_class = "proposal_ready"        # konkret + Zielbezug + kleiner Aufwand
-            decision = DEFER  # Proposals brauchen Genehmigung, aber als ready markiert
+        has_reason = bool(p.get("reason") and len(p.get("reason","")) > 10)
+        is_concrete = has_desc or has_reason
+
+        if goal_rel > 0 and effort_pen <= W_EFFORT_PENALTY * 0.5 and is_concrete:
+            # Klar formuliert, Zielbezug, kleiner Aufwand -- wartet nur auf Genehmigung
+            proposal_class = "proposal_ready"
+            decision = DEFER
+        elif not is_concrete and goal_rel > 0:
+            # Sinnvoll aber noch konzeptionell -- Vorarbeit noetig
+            proposal_class = "proposal_needs_groundwork"
+            decision = DEFER
         elif goal_rel > 0 or days > 7:
+            # Relevant, aber andere Linie hat Vorrang
             proposal_class = "proposal_relevant_but_not_now"
             decision = DEFER
         else:
+            # Geringe Relevanz, kein klarer Bezug
             proposal_class = "proposal_low_value"
             decision = DROP_OR_PAUSE
 
@@ -661,19 +700,40 @@ def run_planner(owner_id: str, force: bool = False) -> dict:
 
         # Zustand aktualisieren
         primary = result.get("primary_line")
+        secondary = result.get("secondary_line")
         _update_state(
             focus_todo_id=primary["id"] if primary and primary.get("kind") == "todo" else None,
             focus_goal_id=primary.get("goal_id") if primary else None,
             choice=result["action"],
-            deferred_ids={s["id"] for s in scored if s["decision"] == DEFER},
+            deferred_ids={s["id"] for s in scored if s["decision"] in (DEFER, DROP_OR_PAUSE)},
         )
 
         logger.info(
-            f"Planner V2: {result['action']} | "
+            f"Planner V2x: {result['action']} | "
             f"primary={primary['id'] if primary else None} | "
+            f"secondary={secondary['id'] if secondary else None} | "
             f"started={result['started_tasks']} | "
             f"reason={result['reasoning'][:60]}"
         )
+
+        # Planner-State als Observation speichern -- lesbar im Dashboard
+        try:
+            from core.todo_service import record_observation
+            state_summary = (
+                f"Planner: {result['action']} | "
+                f"Fokus: {primary['title'][:40] if primary else 'keins'} | "
+                f"Gestartet: {len(result['started_tasks'])} Tasks | "
+                f"Grund: {result['reasoning'][:80]}"
+            )
+            record_observation(
+                owner_id=owner_id,
+                content=state_summary,
+                obs_type="state_change",
+                task_id=None,
+            )
+        except Exception as _obs_e:
+            logger.debug(f"Planner-State Observation fehlgeschlagen (unkritisch): {_obs_e}")
+
         return result
 
     except Exception as e:
