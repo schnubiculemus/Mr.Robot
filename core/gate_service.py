@@ -385,6 +385,15 @@ def approve_write_request(req_id: int, approved_by: str = "user") -> dict:
     except Exception as e:
         logger.warning(f"approve_write_request: Status-Update fehlgeschlagen: {e}")
 
+    # Task aus waiting_user_decision loesen
+    if req.get("task_id") and result["ok"]:
+        try:
+            import orbit as _orbit
+            _orbit.update_task(req["task_id"], status="active")
+            logger.info(f"approve_write_request: Task {req['task_id'][:8]} -> active")
+        except Exception as e:
+            logger.debug(f"approve_write_request: Task-Status-Update fehlgeschlagen: {e}")
+
     return result
 
 

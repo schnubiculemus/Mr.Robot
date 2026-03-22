@@ -2104,7 +2104,8 @@ TASK_TRANSITIONS = {
     "planned":          {"active", "paused", "aborted"},
     "active":           {"waiting", "waiting_feedback", "paused", "completed", "failed", "aborted"},
     "waiting":          {"active", "paused", "aborted"},
-    "waiting_feedback": {"active", "completed", "failed", "aborted"},  # F: nach Kognitionszyklus
+    "waiting_feedback":        {"active", "completed", "failed", "aborted"},  # F: nach Kognitionszyklus
+    "waiting_user_decision":   {"active", "completed", "failed", "aborted"},  # 5.2: wartet auf Approval
     "paused":           {"active", "aborted"},
     "completed":        set(),
     "failed":           set(),
@@ -2668,6 +2669,11 @@ def run_scheduler() -> None:
         # F: waiting_feedback = F-Kognitionszyklus läuft noch -- nicht anfassen
         if status == "waiting_feedback":
             logger.debug(f"Scheduler: Task {task_id[:8]} wartet auf F-Feedback -- skip")
+            continue
+
+        # 5.2: waiting_user_decision = wartet auf Approval -- nicht anfassen
+        if status == "waiting_user_decision":
+            logger.debug(f"Scheduler: Task {task_id[:8]} wartet auf User-Freigabe -- skip")
             continue
 
         if status not in ("active", "planned", "new"):
@@ -3594,9 +3600,9 @@ def _dispatch_tool(tool_ref: str, action: str, params: dict) -> object:
                                 task_id=task_id, step_id=step_id)
 
         if gresult.get("pending"):
-            # Write-Request angelegt -- Task auf waiting_user_decision
+            # Write-Request angelegt -- Task explizit auf waiting_user_decision
             if task_id:
-                update_task(task_id, status="waiting")
+                update_task(task_id, status="waiting_user_decision")
             return {"success": False, "pending": True,
                     "result": gresult.get("message","Write-Request angelegt"),
                     "write_request_id": gresult.get("write_request_id"),

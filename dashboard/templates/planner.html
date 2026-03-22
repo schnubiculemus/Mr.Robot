@@ -137,9 +137,51 @@ function render(data) {
 
   const grid = "display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;margin-bottom:1.5rem";
   const focusTitle = 'Aktueller Fokus <span style="float:right;font-size:0.72rem;color:var(--text-muted)">' + focusHours.toFixed(1) + 'h</span>';
+  // Pending Write-Requests
+  const pendingWrites = data.pending_writes || [];
+  let writesHtml = '';
+  if (pendingWrites.length > 0) {
+    const riskColors = {'A': '#d1fae5|#065f46', 'B': '#fef3c7|#92400e', 'C': '#fee2e2|#991b1b'};
+    let wreqBody = pendingWrites.map(r => {
+      const [rbg, rc] = (riskColors[r.risk_class] || '#f3f4f6|#6b7280').split('|');
+      return `<div style="border:1px solid var(--border);border-radius:8px;padding:0.75rem;margin-bottom:0.75rem">
+        <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.4rem">
+          <span style="background:${rbg};color:${rc};font-size:0.7rem;padding:0.15rem 0.4rem;border-radius:4px;font-weight:600">Klasse ${r.risk_class}</span>
+          <span style="font-weight:600;font-size:0.85rem">${r.action_key}</span>
+          <span style="font-size:0.72rem;color:var(--text-muted);margin-left:auto">#${r.id}</span>
+        </div>
+        ${r.preview_text ? `<div style="font-size:0.8rem;color:var(--text-muted);margin-bottom:0.5rem;padding:0.4rem 0.5rem;background:var(--bg);border-radius:4px">&#128269; ${r.preview_text}</div>` : ''}
+        ${r.reason ? `<div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:0.5rem">Grund: ${r.reason}</div>` : ''}
+        <div style="display:flex;gap:0.5rem">
+          <button onclick="approveWrite(${r.id})" style="padding:0.3rem 0.75rem;background:#10b981;color:white;border:none;border-radius:5px;cursor:pointer;font-size:0.78rem">&#10003; Freigeben</button>
+          <button onclick="rejectWrite(${r.id})" style="padding:0.3rem 0.75rem;background:#ef4444;color:white;border:none;border-radius:5px;cursor:pointer;font-size:0.78rem">&#10007; Ablehnen</button>
+        </div>
+      </div>`;
+    }).join('');
+    writesHtml = '<div style="margin-bottom:1.5rem">' + card(`&#9888; Freigabe erforderlich <span style="background:#ef4444;color:white;font-size:0.7rem;padding:0.1rem 0.4rem;border-radius:10px;margin-left:0.4rem">${pendingWrites.length}</span>`, wreqBody) + '</div>';
+  }
+
   document.getElementById('planner-content').innerHTML =
+    writesHtml +
     '<div style="' + grid + '">' + card(focusTitle, focusBody) + card('Lagebild', lbBody) + '</div>' +
     '<div style="' + grid + '">' + card('Letzte Entscheidungen', decBody) + card('Ziel-Hierarchie', hierBody) + '</div>';
+}
+
+async function approveWrite(reqId) {
+  await fetch(`/api/write-requests/${reqId}/action`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({action: 'approve'})
+  });
+  loadPlanner();
+}
+
+async function rejectWrite(reqId) {
+  const reason = prompt('Grund fuer Ablehnung (optional):') || '';
+  await fetch(`/api/write-requests/${reqId}/action`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({action: 'reject', reason})
+  });
+  loadPlanner();
 }
 
 loadPlanner();
