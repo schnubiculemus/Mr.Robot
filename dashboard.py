@@ -545,6 +545,84 @@ def api_write_requests_history():
     return jsonify(rows)
 
 
+@app.route("/api/write-control")
+@require_auth
+def api_write_control():
+    """
+    5.6.4: Einheitliche Kontrollschicht -- Request + Audit + Linienkontext zusammen.
+    Zeigt die letzten N Writes mit vollstaendigem Status.
+    """
+    from core.database import get_connection
+    from config import USER_CONTEXTS
+    user_id = list(USER_CONTEXTS.keys())[0]
+    limit = int(request.args.get("limit", 30))
+    family = request.args.get("family")  # optional: workspace/todos/proposal/calendar
+
+    conn = get_connection()
+    try:
+        # Write-Requests
+        wr_query = """
+            SELECT wr.*, wa.verify_result, wa.preflight_result, wa.write_result,
+                   wa.executed_at as audit_executed_at
+            FROM write_requests wr
+            LEFT JOIN write_audit wa ON wa.task_id = wr.task_id
+                AND wa.action_type = SUBSTR(wr.action_key, INSTR(wr.action_key,'.')+1)
+            WHERE wr.owner_id=?
+        """
+        params = [user_id]
+        if family:
+            wr_query += " AND wr.tool_ref=?"
+            params.append(family)
+        wr_query += " ORDER BY wr.created_at DESC LIMIT ?"
+        params.append(limit)
+
+        requests_rows = [dict(r) for r in conn.execute(wr_query, params).fetchall()]
+
+        # Audit-Only-Writes (Klasse A -- kein Request noetig)
+        audit_query = """
+            SELECT * FROM write_audit
+            WHERE owner_id=? AND risk_class='A'
+        """
+        audit_params = [user_id]
+        if family:
+            audit_query += " AND tool_ref=?"
+            audit_params.append(family)
+        audit_query += " ORDER BY executed_at DESC LIMIT ?"
+        audit_params.append(limit // 2)
+
+        audit_rows = [dict(r) for r in conn.execute(audit_query, audit_params).fetchall()]
+
+        # Statistik
+        stats = {
+            "total_requests": conn.execute(
+                "SELECT COUNT(*) FROM write_requests WHERE owner_id=?", (user_id,)
+            ).fetchone()[0],
+            "pending": conn.execute(
+                "SELECT COUNT(*) FROM write_requests WHERE owner_id=? AND approval_status='pending'",
+                (user_id,)
+            ).fetchone()[0],
+            "verify_failed": conn.execute(
+                "SELECT COUNT(*) FROM write_requests WHERE owner_id=? AND verification_status='failed'",
+                (user_id,)
+            ).fetchone()[0],
+            "by_family": {},
+        }
+        for fam in ("workspace","todos","proposal","calendar"):
+            stats["by_family"][fam] = conn.execute(
+                "SELECT COUNT(*) FROM write_requests WHERE owner_id=? AND tool_ref=?",
+                (user_id, fam)
+            ).fetchone()[0]
+
+    finally:
+        conn.close()
+
+    return jsonify({
+        "requests": requests_rows,
+        "audit_class_a": audit_rows,
+        "stats": stats,
+    })
+
+
 @app.route("/api/planner/run", methods=["POST"])
 @require_auth
 def api_planner_run():

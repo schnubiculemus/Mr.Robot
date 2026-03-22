@@ -25,35 +25,59 @@ from core.datetime_utils import to_iso
 
 logger = logging.getLogger(__name__)
 
+
+def _write_result(ok: bool, result=None, error: str = None,
+                  audit_id: int = None, gate: str = "",
+                  verified: bool = False, verify_msg: str = "",
+                  pending: bool = False, write_request_id: int = None,
+                  preview: str = "", message: str = "") -> dict:
+    """
+    5.6.1: Einheitliches Ergebnisobjekt fuer alle execute_write-Rueckgaben.
+    Garantiert dass alle Felder immer vorhanden sind.
+    """
+    return {
+        "ok":               ok,
+        "result":           result,
+        "error":            error,
+        "audit_id":         audit_id,
+        "gate":             gate,
+        "verified":         verified,
+        "verify_msg":       verify_msg,
+        "pending":          pending,
+        "write_request_id": write_request_id,
+        "preview":          preview,
+        "message":          message,
+    }
+
 # =============================================================================
 # Risk Matrix -- 5.1 Policy
 # =============================================================================
 
 RISK_MATRIX = {
     # Klasse A -- Workspace (intern, begrenzt)
-    "workspace.save":   {"class": "A", "gate": "soft",    "verify": True,  "reversible": True,  "approval": False},
-    "workspace.delete": {"class": "A", "gate": "soft",    "verify": True,  "reversible": False, "approval": False},
-    "workspace.list":   {"class": "A", "gate": "none",    "verify": False, "reversible": True,  "approval": False},
-    "workspace.read":   {"class": "A", "gate": "none",    "verify": False, "reversible": True,  "approval": False},
+    "workspace.save":   {"class": "A", "gate": "soft",    "verify": True,  "reversible": True,  "approval": False, "compensation": "Datei erneut schreiben"},
+    "workspace.delete": {"class": "A", "gate": "soft",    "verify": True,  "reversible": False, "approval": False, "compensation": "Datei nicht wiederherstellbar -- Backup pruefen"},
+    "workspace.list":   {"class": "A", "gate": "none",    "verify": False, "reversible": True,  "approval": False, "compensation": None},
+    "workspace.read":   {"class": "A", "gate": "none",    "verify": False, "reversible": True,  "approval": False, "compensation": None},
 
     # Klasse B -- Todos (operativ, kontrollierbar)
-    "todos.create":     {"class": "B", "gate": "soft",    "verify": True,  "reversible": True,  "approval": False},
-    "todos.status":     {"class": "B", "gate": "soft",    "verify": True,  "reversible": True,  "approval": False},
-    "todos.complete":   {"class": "B", "gate": "soft",    "verify": True,  "reversible": False, "approval": False},
+    "todos.create":     {"class": "B", "gate": "soft",    "verify": True,  "reversible": True,  "approval": False, "compensation": "Todo manuell anlegen"},
+    "todos.status":     {"class": "B", "gate": "soft",    "verify": True,  "reversible": True,  "approval": False, "compensation": "Status manuell korrigieren"},
+    "todos.complete":   {"class": "B", "gate": "soft",    "verify": True,  "reversible": False, "approval": False, "compensation": "Todo manuell neu eroeffnen"},
 
     # Klasse B-Erweiterung -- Preview + Soft-Approval (5.2)
-    "calendar.write":   {"class": "B", "gate": "needs_approval", "verify": True,  "reversible": True,  "approval": True},
-    "calendar.change":  {"class": "B", "gate": "needs_approval", "verify": True,  "reversible": True,  "approval": True},
-    "calendar.delete":  {"class": "C", "gate": "blocked",        "verify": False, "reversible": False, "approval": True},
+    "calendar.write":   {"class": "B", "gate": "needs_approval", "verify": True,  "reversible": True,  "approval": True,  "compensation": "Termin manuell anlegen oder Request neu erstellen"},
+    "calendar.change":  {"class": "B", "gate": "needs_approval", "verify": True,  "reversible": True,  "approval": True,  "compensation": "Aenderung manuell ausfuehren"},
+    "calendar.delete":  {"class": "C", "gate": "blocked",        "verify": False, "reversible": False, "approval": True,  "compensation": None},
 
     # Klasse B -- Proposal-Statusaenderungen (5.5)
-    "proposal.approve": {"class": "B", "gate": "needs_approval", "verify": True,  "reversible": True,  "approval": True},
-    "proposal.reject":  {"class": "B", "gate": "needs_approval", "verify": True,  "reversible": True,  "approval": True},
-    "proposal.defer":   {"class": "B", "gate": "needs_approval", "verify": True,  "reversible": True,  "approval": True},
+    "proposal.approve": {"class": "B", "gate": "needs_approval", "verify": True,  "reversible": True,  "approval": True,  "compensation": "Proposal manuell genehmigen"},
+    "proposal.reject":  {"class": "B", "gate": "needs_approval", "verify": True,  "reversible": True,  "approval": True,  "compensation": "Proposal manuell ablehnen oder Status zuruecksetzen"},
+    "proposal.defer":   {"class": "B", "gate": "needs_approval", "verify": True,  "reversible": True,  "approval": True,  "compensation": "Proposal manuell zurueckstellen"},
 
     # Klasse C -- weiter gesperrt
-    "mail.send":        {"class": "C", "gate": "blocked",        "verify": False, "reversible": False, "approval": True},
-    "external.write":   {"class": "C", "gate": "blocked",        "verify": False, "reversible": False, "approval": True},
+    "mail.send":        {"class": "C", "gate": "blocked",        "verify": False, "reversible": False, "approval": True,  "compensation": None},
+    "external.write":   {"class": "C", "gate": "blocked",        "verify": False, "reversible": False, "approval": True,  "compensation": None},
 }
 
 # Gate-Ausgaenge 5.2
@@ -812,36 +836,56 @@ def preflight_proposal(action: str, params: dict, owner_id: str) -> tuple[bool, 
 
 
 def execute_proposal_action(action: str, params: dict) -> dict:
-    """Fuehrt eine Proposal-Statusaenderung aus."""
-    from core.database import get_connection
-    import datetime
+    """
+    5.6.2: Fuehrt eine Proposal-Statusaenderung aus -- ueber proposal_service.
+    Strukturierte Rueckgabe mit ok, state, id.
+    """
     proposal_id = int(params.get("id") or params.get("proposal_id", 0))
     if not proposal_id:
-        return {"success": False, "error": "Keine Proposal-ID"}
+        return {"success": False, "error": "Keine Proposal-ID", "id": None}
 
-    conn = get_connection()
+    status_map = {"approve": "approved", "reject": "rejected", "defer": "deferred"}
+    new_status = status_map.get(action)
+    if not new_status:
+        return {"success": False, "error": f"Unbekannte Aktion: {action}", "id": proposal_id}
+
     try:
-        status_map = {
-            "approve": "approved",
-            "reject":  "rejected",
-            "defer":   "deferred",
-        }
-        new_status = status_map.get(action)
-        if not new_status:
-            return {"success": False, "error": f"Unbekannte Aktion: {action}"}
+        # Service-Layer bevorzugen
+        if action == "approve":
+            from core.proposal_service import approve_proposal
+            from config import OWNER_ID
+            result = approve_proposal(proposal_id, OWNER_ID)
+            ok = result is not None
+        elif action == "reject":
+            from core.proposal_service import reject_proposal
+            ok = reject_proposal(proposal_id)
+        elif action == "defer":
+            from core.proposal_service import defer_proposal
+            ok = defer_proposal(proposal_id)
+        else:
+            ok = False
 
-        now = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        conn.execute(
-            "UPDATE kimi_proposals SET status=?, updated_at=? WHERE id=?",
-            (new_status, now, proposal_id)
-        )
-        conn.commit()
-        return {"success": True, "result": f"Proposal #{proposal_id} -> {new_status}",
-                "id": proposal_id, "new_status": new_status}
+        return {"success": ok,
+                "result": f"Proposal #{proposal_id} -> {new_status}" if ok else "Service-Fehler",
+                "id": proposal_id, "new_status": new_status if ok else None}
+    except ImportError:
+        # Fallback: direkter DB-Write wenn proposal_service nicht verfuegbar
+        logger.warning("proposal_service nicht gefunden -- Fallback auf direkten DB-Write")
+        try:
+            from core.database import get_connection
+            import datetime
+            now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            conn = get_connection()
+            conn.execute("UPDATE kimi_proposals SET status=?, updated_at=? WHERE id=?",
+                         (new_status, now, proposal_id))
+            conn.commit()
+            conn.close()
+            return {"success": True, "result": f"Proposal #{proposal_id} -> {new_status}",
+                    "id": proposal_id, "new_status": new_status}
+        except Exception as e2:
+            return {"success": False, "error": str(e2)[:200], "id": proposal_id}
     except Exception as e:
-        return {"success": False, "error": str(e)[:200]}
-    finally:
-        conn.close()
+        return {"success": False, "error": str(e)[:200], "id": proposal_id}
 
 
 def verify_proposal(action: str, params: dict, write_result: dict) -> tuple[bool, str]:
@@ -946,8 +990,8 @@ def execute_write(action_key: str, params: dict, owner_id: str,
             error=f"{action_key} ist gesperrt",
             success=False, task_id=task_id, step_id=step_id
         )
-        return {"ok": False, "error": f"{action_key} ist gesperrt (Klasse C)",
-                "audit_id": audit_id, "gate": GATE_BLOCKED, "verified": False}
+        return _write_result(False, error=f"{action_key} ist gesperrt (Klasse C)",
+                               audit_id=audit_id, gate=GATE_BLOCKED)
 
     # Gate: needs_approval -> Write-Request anlegen statt sofort ausfuehren (5.2)
     if gate == "needs_approval":
@@ -970,16 +1014,12 @@ def execute_write(action_key: str, params: dict, owner_id: str,
         )
         if req:
             logger.info(f"execute_write: Write-Request #{req['id']} angelegt fuer {action_key}")
-            return {"ok": False, "pending": True,
-                    "error": None,
-                    "write_request_id": req["id"],
-                    "preview": preview_text,
-                    "gate": GATE_NEEDS_APPROVAL,
-                    "verified": False,
-                    "message": f"Write-Request #{req['id']} angelegt -- wartet auf Freigabe"}
+            return _write_result(False, pending=True, gate=GATE_NEEDS_APPROVAL,
+                                   write_request_id=req["id"], preview=preview_text,
+                                   message=f"Write-Request #{req['id']} angelegt -- wartet auf Freigabe")
         else:
-            return {"ok": False, "error": "Write-Request konnte nicht angelegt werden",
-                    "gate": GATE_NEEDS_APPROVAL, "verified": False}
+            return _write_result(False, error="Write-Request konnte nicht angelegt werden",
+                                   gate=GATE_NEEDS_APPROVAL)
 
     # Preflight (bei soft gate erzwungen)
     preflight_ok = True
@@ -1001,8 +1041,8 @@ def execute_write(action_key: str, params: dict, owner_id: str,
                 preflight_result=preflight_msg, error=preflight_msg,
                 success=False, task_id=task_id, step_id=step_id
             )
-            return {"ok": False, "error": f"Preflight fehlgeschlagen: {preflight_msg}",
-                    "audit_id": audit_id, "gate": gate, "verified": False}
+            return _write_result(False, error=f"Preflight fehlgeschlagen: {preflight_msg}",
+                                   audit_id=audit_id, gate=gate)
 
     # Write ausfuehren
     try:
@@ -1015,8 +1055,7 @@ def execute_write(action_key: str, params: dict, owner_id: str,
             preflight_result=preflight_msg, error=err,
             success=False, task_id=task_id, step_id=step_id
         )
-        return {"ok": False, "error": err, "audit_id": audit_id,
-                "gate": gate, "verified": False}
+        return _write_result(False, error=err, audit_id=audit_id, gate=gate)
 
     if not write_result.get("success", False):
         err = write_result.get("error", "Write fehlgeschlagen")
@@ -1027,8 +1066,7 @@ def execute_write(action_key: str, params: dict, owner_id: str,
             write_result=str(write_result.get("result",""))[:200],
             error=err, success=False, task_id=task_id, step_id=step_id
         )
-        return {"ok": False, "error": err, "audit_id": audit_id,
-                "gate": gate, "verified": False}
+        return _write_result(False, error=err, audit_id=audit_id, gate=gate)
 
     # Post-Write-Verifikation
     verify_ok = True
@@ -1052,8 +1090,23 @@ def execute_write(action_key: str, params: dict, owner_id: str,
                 verify_result=verify_msg, error=f"Verifikation fehlgeschlagen: {verify_msg}",
                 success=False, task_id=task_id, step_id=step_id
             )
-            return {"ok": False, "error": f"Write ausgefuehrt aber Verifikation fehlgeschlagen: {verify_msg}",
-                    "audit_id": audit_id, "gate": gate, "verified": False}
+            # 5.6.3: Verify-Fail -> Request-Status explizit auf 'verify_failed' + Compensation
+            compensation = policy.get("compensation")
+            try:
+                from core.database import get_connection as _gc56
+                _c56 = _gc56()
+                _c56.execute(
+                    "UPDATE write_requests SET verification_status='failed', line_status='verify_failed' WHERE task_id=? AND approval_status IN ('pending','executed')",
+                    (task_id,)
+                )
+                _c56.commit()
+                _c56.close()
+            except Exception:
+                pass
+            err_msg = f"Write ausgefuehrt aber Verifikation fehlgeschlagen: {verify_msg}"
+            if compensation:
+                err_msg += f" -- Compensation: {compensation}"
+            return _write_result(False, error=err_msg, audit_id=audit_id, gate=gate)
 
     # Audit -- Erfolg
     result_str = str(write_result.get("result",""))[:300]
@@ -1070,12 +1123,7 @@ def execute_write(action_key: str, params: dict, owner_id: str,
 
     logger.info(f"execute_write OK: {action_key} | audit={audit_id} | {result_str[:60]}")
 
-    return {
-        "ok": True,
-        "result": write_result.get("result"),
-        "error": None,
-        "audit_id": audit_id,
-        "gate": gate,
-        "verified": verify_ok,
-        "verify_msg": verify_msg,
-    }
+    return _write_result(True,
+        result=write_result.get("result"),
+        audit_id=audit_id, gate=gate,
+        verified=verify_ok, verify_msg=verify_msg)
