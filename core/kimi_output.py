@@ -301,7 +301,7 @@ def _run_todo(action: Action, user_id: str, context: dict | None) -> ActionResul
                         step_tool = "todos_read"
                     else:
                         step_desc = '{"action": "list"}'
-                        step_tool = "code_exec"
+                        step_tool = "workspace"
                     _orbit.create_step(
                         task_id=task_id,
                         step_type=step_tool,

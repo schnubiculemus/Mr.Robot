@@ -1078,7 +1078,7 @@ def _f_normalize_result(tool: str, result, success: bool, step: dict | None) -> 
         return {"ok": False, "summary": summary, "obs_type": obs_type, "next_state": next_state, "raw": result}
 
     # Erfolg -- je Tool typisieren
-    if tool == "code_exec":
+    if tool == "workspace":
         if isinstance(result, dict):
             files = result.get("files", [])
             if files:
@@ -1086,11 +1086,11 @@ def _f_normalize_result(tool: str, result, success: bool, step: dict | None) -> 
                 next_state = "workspace_listed"
             else:
                 r = str(result.get("result", ""))[:200]
-                summary = f"code_exec: {r}"
-                next_state = "code_executed"
+                summary = f"workspace: {r}"
+                next_state = "workspace_done"
         else:
             summary = str(result)[:200]
-            next_state = "code_executed"
+            next_state = "workspace_done"
     elif tool in ("calendar_read", "calendar_write", "calendar_change"):
         summary = f"Kalender: {str(result)[:150]}"
         next_state = "calendar_read"
@@ -1388,11 +1388,11 @@ def _e_append_next_step(task_id: str, next_step_hint: str, user_id: str, loop_co
         # Naechsten Schritt aus Kimis Hinweis ableiten
         hint_lower = next_step_hint.lower()
         if any(w in hint_lower for w in ["datei", "lesen", "read", "öffnen", "prüfen", "check"]):
-            tool_ref = "code_exec"
+            tool_ref = "workspace"
             action = "list"
             description = '{"action": "list"}'
         elif any(w in hint_lower for w in ["schreiben", "speichern", "anlegen", "erstellen", "save"]):
-            tool_ref = "code_exec"
+            tool_ref = "workspace"
             action = "save"
             description = '{"action": "save", "filename": "next_step.txt", "content": "' + next_step_hint[:100] + '"}'
         elif any(w in hint_lower for w in ["suchen", "search", "recherche"]):
@@ -3410,7 +3410,7 @@ TOOL_REGISTRY = {
     "moltbook":           {"criticality": "kontextkritisch", "usage": ["consultative"],   "type": "extern",        "write_indirect": False},
     # Whitelist / Server
     # Code-Execution (Kimi Workspace)
-    "code_exec":          {"criticality": "kontextkritisch", "usage": ["write"],          "type": "intern",        "write_indirect": True},
+    "workspace":          {"criticality": "kontextkritisch", "usage": ["write"],          "type": "intern",        "write_indirect": True},
     "server_read":        {"criticality": "kontextkritisch", "usage": ["read"],           "type": "intern",        "write_indirect": False},
 }
 
@@ -3566,7 +3566,7 @@ def _dispatch_tool(tool_ref: str, action: str, params: dict) -> object:
         return read_file(params.get("path", ""))
 
     # Code-Execution (Kimi Workspace)
-    if tool_ref == "code_exec":
+    if tool_ref == "workspace":
         action_type = params.get("action", action)
         workspace = os.path.join(PROJECT_DIR, "kimi_workspace")
         os.makedirs(workspace, exist_ok=True)
@@ -3601,7 +3601,7 @@ def _dispatch_tool(tool_ref: str, action: str, params: dict) -> object:
             return {"success": False, "error": f"Datei nicht gefunden: {fname}"}
 
         else:
-            return {"success": False, "error": f"Unbekannte code_exec action: {action_type}"}
+            return {"success": False, "error": f"Unbekannte workspace action: {action_type}"}
 
     # Mail -- noch nicht implementiert
     if tool_ref in ("mail_read", "mail_draft", "mail_send"):

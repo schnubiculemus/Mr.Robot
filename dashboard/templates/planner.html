@@ -1,224 +1,148 @@
-<!DOCTYPE html>
-<html lang="de">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Planner — SchnuBot</title>
-  <link rel="stylesheet" href="/static/style.css">
-  <style>
-    .planner-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 2rem; }
-    .planner-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 1.25rem; }
-    .planner-card h3 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin: 0 0 0.75rem; }
-    .focus-line { display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem; background: var(--bg); border-radius: 8px; margin-bottom: 0.5rem; }
-    .focus-line .badge { font-size: 0.7rem; padding: 0.2rem 0.5rem; border-radius: 4px; font-weight: 600; white-space: nowrap; }
-    .badge-continue { background: #d1fae5; color: #065f46; }
-    .badge-start    { background: #dbeafe; color: #1e40af; }
-    .badge-proposal { background: #ede9fe; color: #5b21b6; }
-    .badge-unblock  { background: #fef3c7; color: #92400e; }
-    .badge-wait     { background: #f3f4f6; color: #6b7280; }
-    .badge-defer    { background: #f9fafb; color: #9ca3af; }
-    .focus-title { font-weight: 500; font-size: 0.9rem; flex: 1; }
-    .focus-meta  { font-size: 0.75rem; color: var(--text-muted); }
-    .focus-score { font-size: 0.75rem; font-weight: 600; color: var(--text-muted); }
-    .reason-box  { font-size: 0.8rem; color: var(--text-muted); padding: 0.6rem 0.75rem; background: var(--bg); border-radius: 6px; margin-top: 0.5rem; }
-    .decision-row { padding: 0.6rem 0; border-bottom: 1px solid var(--border); font-size: 0.82rem; }
-    .decision-row:last-child { border: none; }
-    .decision-row .action { font-weight: 600; margin-right: 0.5rem; }
-    .decision-row .ts { color: var(--text-muted); font-size: 0.72rem; }
-    .stag-flag { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.75rem; padding: 0.2rem 0.5rem; background: #fef2f2; color: #b91c1c; border-radius: 4px; margin: 0.2rem; }
-    .hierarchy-goal { margin-bottom: 1rem; }
-    .hierarchy-goal .goal-title { font-weight: 600; font-size: 0.88rem; margin-bottom: 0.3rem; }
-    .hierarchy-goal .goal-progress { display: inline-block; font-size: 0.72rem; color: var(--text-muted); margin-left: 0.5rem; }
-    .hierarchy-sub { padding-left: 1rem; font-size: 0.8rem; color: var(--text-muted); }
-    .hierarchy-sub span { display: inline-block; margin: 0.1rem 0.3rem 0.1rem 0; padding: 0.1rem 0.4rem; background: var(--bg); border-radius: 4px; }
-    .run-btn { padding: 0.4rem 1rem; background: var(--accent); color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 0.82rem; }
-    .run-btn:hover { opacity: 0.85; }
-    .lagebild-row { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
-    .lagebild-stat { text-align: center; }
-    .lagebild-stat .num { font-size: 1.4rem; font-weight: 700; }
-    .lagebild-stat .lbl { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; }
-    .cand-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.4rem 0; font-size: 0.8rem; border-bottom: 1px solid var(--border); }
-    .cand-row:last-child { border: none; }
-    .stagnating-icon { color: #ef4444; font-size: 0.7rem; }
-    @media(max-width: 700px) { .planner-grid { grid-template-columns: 1fr; } }
-  </style>
-</head>
-<body>
-  {% include "nav.html" %}
-  <main class="container">
-    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:1.5rem;">
-      <h1 style="margin:0;">Planner</h1>
-      <button class="run-btn" onclick="runPlanner()">▶ Jetzt planen</button>
-    </div>
+{% extends "base.html" %}
+{% block title %}Planner{% endblock %}
 
-    <div id="planner-content">Lade...</div>
-  </main>
+{% block content %}
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem">
+  <div>
+    <h1 style="margin:0;font-size:1.5rem;font-weight:700">Planner</h1>
+    <p style="margin:0.25rem 0 0;font-size:0.85rem;color:var(--text-muted)">Kimis Arbeitssteuerung</p>
+  </div>
+  <button onclick="runPlanner()" style="padding:0.4rem 1rem;background:var(--accent);color:white;border:none;border-radius:6px;cursor:pointer;font-size:0.82rem">&#9654; Jetzt planen</button>
+</div>
 
-  <script>
-    async function loadPlanner() {
-      const res = await fetch('/api/planner/state');
-      const data = await res.json();
-      render(data);
+<div id="planner-content" style="color:var(--text-muted);font-size:0.85rem">Lade...</div>
+
+<script>
+const BADGE = {
+  continue_line:'#d1fae5|#065f46|Fortsetzen',
+  start_line:'#dbeafe|#1e40af|Starten',
+  proposal_as_line:'#ede9fe|#5b21b6|Proposal',
+  unblock_line:'#fef3c7|#92400e|Entblocken',
+  wait:'#f3f4f6|#6b7280|Warten',
+  defer:'#f9fafb|#9ca3af|Zurueck',
+  drop_or_pause:'#f9fafb|#9ca3af|Pause',
+  idle:'#f3f4f6|#6b7280|Nichts',
+  not_now:'#f3f4f6|#6b7280|Nicht jetzt',
+};
+function badge(decision, small) {
+  const [bg, color, label] = (BADGE[decision]||'#f3f4f6|#6b7280|'+decision).split('|');
+  const sz = small ? '0.65rem' : '0.72rem';
+  return `<span style="background:${bg};color:${color};font-size:${sz};padding:0.15rem 0.45rem;border-radius:4px;font-weight:600;white-space:nowrap">${label}</span>`;
+}
+
+function card(title, body, extra='') {
+  return `<div style="background:var(--card-bg);border:1px solid var(--border);border-radius:12px;padding:1.25rem;${extra}">
+    <div style="font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);margin-bottom:0.75rem">${title}</div>
+    ${body}
+  </div>`;
+}
+
+function focusLine(c) {
+  if (!c) return '';
+  return `<div style="display:flex;align-items:center;gap:0.75rem;padding:0.65rem;background:var(--bg);border-radius:8px;margin-bottom:0.4rem">
+    ${badge(c.decision)}
+    <span style="flex:1;font-weight:500;font-size:0.88rem">${c.title||'&mdash;'}</span>
+    <span style="font-size:0.72rem;color:var(--text-muted)">${c.kind==='proposal'?'Proposal':'Todo #'+c.id}</span>
+    ${c.stagnating?'<span style="color:#ef4444;font-size:0.7rem">&#9888;</span>':''}
+  </div>`;
+}
+
+async function loadPlanner() {
+  try {
+    const res = await fetch('/api/planner/state');
+    const data = await res.json();
+    render(data);
+  } catch(e) {
+    document.getElementById('planner-content').innerHTML = '<p style="color:#ef4444">Fehler beim Laden.</p>';
+  }
+}
+
+async function runPlanner() {
+  document.getElementById('planner-content').innerHTML = '<p style="color:var(--text-muted)">Planner laeuft...</p>';
+  await fetch('/api/planner/run', {method:'POST'});
+  loadPlanner();
+}
+
+function render(data) {
+  const focus = data.focus || {};
+  const decisions = data.decisions || [];
+  const lb = data.lagebild || {};
+  const hierarchy = data.hierarchy || [];
+  const top = lb.top_candidates || [];
+  const focusHours = data.focus_hours || 0;
+  const primaryId = focus.primary_line_id;
+  const primaryType = focus.primary_line_type || 'todo';
+  const primaryCand = top.find(c => c.id === primaryId && c.type === primaryType);
+  const secondaryCand = top.find(c => c.id === focus.secondary_line_id);
+  const stagnating = top.filter(c => c.stagnating);
+
+  // --- Zeile 1: Fokus + Lagebild ---
+  let focusBody = '';
+  if (primaryCand) {
+    focusBody += focusLine({...primaryCand, kind: primaryCand.type});
+    if (secondaryCand) focusBody += focusLine({...secondaryCand, kind: secondaryCand.type});
+    if (focus.focus_reason) focusBody += `<div style="font-size:0.78rem;color:var(--text-muted);padding:0.5rem 0.65rem;background:var(--bg);border-radius:6px;margin-top:0.4rem">&#128204; ${focus.focus_reason}</div>`;
+    if (focus.replan_after) {
+      const d = new Date(focus.replan_after);
+      focusBody += `<div style="font-size:0.72rem;color:var(--text-muted);margin-top:0.4rem">Replan: ${d.toLocaleTimeString('de',{hour:'2-digit',minute:'2-digit'})}</div>`;
     }
-
-    async function runPlanner() {
-      document.getElementById('planner-content').innerHTML = '<p>Planner läuft...</p>';
-      await fetch('/api/planner/run', { method: 'POST' });
-      loadPlanner();
+    if (stagnating.length) {
+      focusBody += '<div style="margin-top:0.5rem">' + stagnating.map(s=>`<span style="display:inline-flex;align-items:center;gap:0.2rem;font-size:0.72rem;padding:0.2rem 0.45rem;background:#fef2f2;color:#b91c1c;border-radius:4px;margin:0.15rem">&#9888; ${s.title.substring(0,28)}</span>`).join('') + '</div>';
     }
+  } else {
+    focusBody = `<div style="font-size:0.82rem;color:var(--text-muted)">Noch kein Fokus. <button onclick="runPlanner()" style="margin-left:0.5rem;padding:0.2rem 0.6rem;background:var(--accent);color:white;border:none;border-radius:4px;cursor:pointer;font-size:0.78rem">Planen</button></div>`;
+    if (stagnating.length) focusBody += '<div style="margin-top:0.5rem">' + stagnating.map(s=>`<span style="font-size:0.72rem;padding:0.15rem 0.4rem;background:#fef2f2;color:#b91c1c;border-radius:4px;margin:0.1rem">&#9888; ${s.title.substring(0,28)}</span>`).join('') + '</div>';
+  }
 
-    function badgeClass(decision) {
-      const map = {
-        'continue_line': 'continue', 'start_line': 'start',
-        'proposal_as_line': 'proposal', 'unblock_line': 'unblock',
-        'wait': 'wait', 'defer': 'defer', 'drop_or_pause': 'defer',
-        'idle': 'wait', 'not_now': 'wait',
-      };
-      return 'badge badge-' + (map[decision] || 'defer');
-    }
+  const lbStats = ['running','waiting','blocked','startable'];
+  const lbLabels = ['Laufend','Wartend','Blockiert','Startbar'];
+  let lbBody = `<div style="display:flex;gap:1.2rem;margin-bottom:0.75rem">` +
+    lbStats.map((k,i) => `<div style="text-align:center"><div style="font-size:1.3rem;font-weight:700">${lb[k]||0}</div><div style="font-size:0.68rem;color:var(--text-muted);text-transform:uppercase">${lbLabels[i]}</div></div>`).join('') +
+    '</div>';
+  lbBody += top.slice(0,6).map(c =>
+    `<div style="display:flex;align-items:center;gap:0.4rem;padding:0.35rem 0;border-bottom:1px solid var(--border);font-size:0.78rem">
+      ${badge(c.decision, true)}
+      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.title.substring(0,38)}</span>
+      <span style="font-size:0.7rem;font-weight:600;color:var(--text-muted)">${c.score}</span>
+      ${c.stagnating?'<span style="color:#ef4444;font-size:0.65rem">&#9888;</span>':''}
+    </div>`
+  ).join('');
 
-    function formatAction(action) {
-      const map = {
-        'continue_line': 'Fortsetzen', 'start_line': 'Starten',
-        'proposal_as_line': 'Proposal', 'unblock_line': 'Entblocken',
-        'wait': 'Warten', 'defer': 'Zurückgestellt',
-        'idle': 'Nichts', 'not_now': 'Nicht jetzt',
-      };
-      return map[action] || action;
-    }
+  // --- Zeile 2: Entscheidungen + Hierarchie ---
+  let decBody = '';
+  if (!decisions.length) { decBody = '<div style="font-size:0.8rem;color:var(--text-muted)">Noch keine.</div>'; }
+  else decisions.slice(0,8).forEach(d => {
+    const ts = new Date(d.decided_at).toLocaleString('de',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+    decBody += `<div style="padding:0.5rem 0;border-bottom:1px solid var(--border);font-size:0.8rem">
+      <span style="font-weight:600">${(BADGE[d.action]||'||'+d.action).split('|')[2]}</span>
+      ${d.primary_line_id ? ' #'+d.primary_line_id : ''}
+      ${d.decision_reason ? `<span style="color:var(--text-muted)"> &mdash; ${d.decision_reason.substring(0,45)}</span>` : ''}
+      ${d.replan_trigger ? `<span style="color:#f59e0b;font-size:0.72rem"> [${d.replan_trigger}]</span>` : ''}
+      <span style="float:right;font-size:0.7rem;color:var(--text-muted)">${ts}</span>
+    </div>`;
+  });
 
-    function focusLine(line, label) {
-      if (!line) return '';
-      return `
-        <div class="focus-line">
-          <span class="${badgeClass(line.decision)}">${formatAction(line.decision)}</span>
-          <span class="focus-title">${line.title || '—'}</span>
-          <span class="focus-score">${line.kind === 'proposal' ? 'Proposal' : 'Todo #' + line.id}</span>
-          ${line.stagnating ? '<span class="stagnating-icon">⚠</span>' : ''}
-        </div>`;
-    }
+  let hierBody = '';
+  if (!hierarchy.length) { hierBody = '<div style="font-size:0.8rem;color:var(--text-muted)">Keine aktiven Goals.</div>'; }
+  else hierarchy.forEach(h => {
+    const g = h.goal;
+    hierBody += `<div style="margin-bottom:0.85rem">
+      <div style="font-weight:600;font-size:0.88rem">&#127919; ${g.title.substring(0,50)} <span style="font-size:0.72rem;color:var(--text-muted)">${g.progress||0}%</span></div>
+      <div style="padding-left:1rem;margin-top:0.25rem">
+        ${h.proposals.map(p=>`<span style="display:inline-block;font-size:0.75rem;color:var(--text-muted);padding:0.1rem 0.35rem;background:var(--bg);border-radius:4px;margin:0.1rem">&#128161; ${p.title.substring(0,22)}</span>`).join('')}
+        ${h.todos.map(t=>`<span style="display:inline-block;font-size:0.75rem;color:var(--text-muted);padding:0.1rem 0.35rem;background:var(--bg);border-radius:4px;margin:0.1rem">&#10003; ${t.title.substring(0,22)}</span>`).join('')}
+      </div>
+    </div>`;
+  });
 
-    function render(data) {
-      const focus = data.focus || {};
-      const decisions = data.decisions || [];
-      const lb = data.lagebild || {};
-      const hierarchy = data.hierarchy || [];
+  const grid = "display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;margin-bottom:1.5rem";
+  const focusTitle = 'Aktueller Fokus <span style="float:right;font-size:0.72rem;color:var(--text-muted)">' + focusHours.toFixed(1) + 'h</span>';
+  document.getElementById('planner-content').innerHTML =
+    '<div style="' + grid + '">' + card(focusTitle, focusBody) + card('Lagebild', lbBody) + '</div>' +
+    '<div style="' + grid + '">' + card('Letzte Entscheidungen', decBody) + card('Ziel-Hierarchie', hierBody) + '</div>';
+}
 
-      const primaryId = focus.primary_line_id;
-      const primaryType = focus.primary_line_type || 'todo';
-      const focusHours = data.focus_hours || 0;
-
-      // Hauptlinie aus Lagebild-Kandidaten suchen
-      const top = lb.top_candidates || [];
-      const primaryCand = top.find(c => c.id === primaryId && c.type === primaryType);
-      const secondaryId = focus.secondary_line_id;
-      const secondaryCand = top.find(c => c.id === secondaryId);
-
-      const stagnationFlags = top.filter(c => c.stagnating);
-
-      let html = `<div class="planner-grid">`;
-
-      // Fokus-Karte
-      html += `<div class="planner-card">
-        <h3>Aktueller Fokus <span style="float:right;font-size:0.75rem;color:var(--text-muted)">${focusHours.toFixed(1)}h</span></h3>`;
-
-      if (primaryCand) {
-        html += focusLine({...primaryCand, title: primaryCand.title, kind: primaryCand.type}, 'Hauptlinie');
-        if (secondaryCand) {
-          html += focusLine({...secondaryCand, title: secondaryCand.title, kind: secondaryCand.type}, 'Nebenlinie');
-        }
-        if (focus.focus_reason) {
-          html += `<div class="reason-box">📎 ${focus.focus_reason}</div>`;
-        }
-        if (focus.replan_after) {
-          const replanDate = new Date(focus.replan_after);
-          html += `<div class="focus-meta" style="margin-top:0.5rem;">Replan frühestens: ${replanDate.toLocaleTimeString('de', {hour:'2-digit',minute:'2-digit'})}</div>`;
-        }
-      } else {
-        html += '<div class="focus-meta">Noch kein Fokus gesetzt.</div>';
-      }
-
-      if (stagnationFlags.length > 0) {
-        html += '<div style="margin-top:0.75rem;">';
-        stagnationFlags.forEach(s => {
-          html += `<span class="stag-flag">⚠ ${s.title.substring(0,30)}</span>`;
-        });
-        html += '</div>';
-      }
-      html += '</div>';
-
-      // Lagebild-Karte
-      html += `<div class="planner-card">
-        <h3>Lagebild</h3>
-        <div class="lagebild-row">
-          <div class="lagebild-stat"><div class="num">${lb.running||0}</div><div class="lbl">Laufend</div></div>
-          <div class="lagebild-stat"><div class="num">${lb.waiting||0}</div><div class="lbl">Wartend</div></div>
-          <div class="lagebild-stat"><div class="num">${lb.blocked||0}</div><div class="lbl">Blockiert</div></div>
-          <div class="lagebild-stat"><div class="num">${lb.startable||0}</div><div class="lbl">Startbar</div></div>
-        </div>
-        <div>
-          ${top.slice(0,6).map(c => `
-            <div class="cand-row">
-              <span class="${badgeClass(c.decision)}" style="font-size:0.65rem">${formatAction(c.decision)}</span>
-              <span style="flex:1">${c.title.substring(0,40)}</span>
-              <span class="focus-score">${c.score}</span>
-              ${c.stagnating ? '<span class="stagnating-icon">⚠</span>' : ''}
-            </div>`).join('')}
-        </div>
-      </div>`;
-
-      html += '</div>'; // grid
-
-      // Zweite Zeile: Entscheidungen + Hierarchie
-      html += `<div class="planner-grid">`;
-
-      // Letzte Entscheidungen
-      html += `<div class="planner-card">
-        <h3>Letzte Entscheidungen</h3>`;
-      if (decisions.length === 0) {
-        html += '<div class="focus-meta">Noch keine Entscheidungen.</div>';
-      } else {
-        decisions.slice(0, 8).forEach(d => {
-          const ts = new Date(d.decided_at).toLocaleString('de', {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
-          html += `<div class="decision-row">
-            <span class="action">${formatAction(d.action)}</span>
-            ${d.primary_line_id ? `#${d.primary_line_id}` : ''}
-            ${d.decision_reason ? `<span style="color:var(--text-muted)"> — ${d.decision_reason.substring(0,50)}</span>` : ''}
-            ${d.replan_trigger ? `<span style="color:#f59e0b"> [${d.replan_trigger}]</span>` : ''}
-            <span class="ts" style="float:right">${ts}</span>
-          </div>`;
-        });
-      }
-      html += '</div>';
-
-      // Goal/Proposal/Todo Hierarchie
-      html += `<div class="planner-card">
-        <h3>Ziel-Hierarchie</h3>`;
-      if (hierarchy.length === 0) {
-        html += '<div class="focus-meta">Keine aktiven Goals.</div>';
-      } else {
-        hierarchy.forEach(h => {
-          const g = h.goal;
-          html += `<div class="hierarchy-goal">
-            <div class="goal-title">🎯 ${g.title.substring(0,50)}
-              <span class="goal-progress">${g.progress||0}%</span>
-            </div>
-            <div class="hierarchy-sub">
-              ${h.proposals.map(p => `<span>💡 ${p.title.substring(0,25)}</span>`).join('')}
-              ${h.todos.map(t => `<span>✓ ${t.title.substring(0,25)}</span>`).join('')}
-            </div>
-          </div>`;
-        });
-      }
-      html += '</div>';
-
-      html += '</div>'; // grid
-
-      document.getElementById('planner-content').innerHTML = html;
-    }
-
-    loadPlanner();
-    setInterval(loadPlanner, 30000);
-  </script>
-</body>
-</html>
+loadPlanner();
+setInterval(loadPlanner, 30000);
+</script>
+{% endblock %}

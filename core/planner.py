@@ -1098,7 +1098,7 @@ def maybe_start_task(chosen: list, owner_id: str) -> list:
                 "implementation": ("todos_read", _j.dumps({"action": "list"})),
                 "review":         ("todos_read", _j.dumps({"action": "list", "project": "kimi"})),
                 "unblock":        ("todos_read", _j.dumps({"action": "list", "status": "blocked"})),
-                "maintenance":    ("code_exec",  _j.dumps({"action": "list"})),
+                "maintenance":    ("workspace",  _j.dumps({"action": "list"})),
             }
             step_tool, step_desc = template_steps.get(tmpl, ("todos_read", _j.dumps({"action": "list"})))
 
