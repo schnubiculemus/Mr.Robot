@@ -971,13 +971,35 @@ def preflight_artifact(action: str, params: dict) -> tuple[bool, str]:
 
 
 def verify_artifact_write(action: str, params: dict, write_result: dict) -> tuple[bool, str]:
-    """Verifiziert Artifact-Write -- DB-Eintrag + Datei."""
+    """
+    Verifiziert Artifact-Write -- je Aktion unterschiedliche Semantik.
+    Delete: Datei weg + Status archived.
+    Create/Update/Materialize: Datei da + DB-Eintrag korrekt.
+    """
     artifact_id = (write_result or {}).get("artifact_id") or params.get("artifact_id")
     if not artifact_id:
         return True, "ok (kein artifact_id -- kein Verify)"
     try:
-        from core.workspace_artifact_service import verify_artifact
-        return verify_artifact(int(artifact_id))
+        from core.workspace_artifact_service import get_artifact, _full_path
+        import os
+
+        if action == "artifact_delete":
+            # Delete: Datei muss weg sein, Status muss 'archived' sein
+            art = get_artifact(int(artifact_id))
+            if not art:
+                return True, "ok (Artifact aus DB entfernt)"
+            if art.get("status") != "archived":
+                return False, f"Artifact #{artifact_id} Status nicht 'archived' nach Delete: {art.get('status')}"
+            full_path = _full_path(art["relative_path"])
+            if os.path.exists(full_path):
+                return False, f"Datei noch vorhanden nach Delete: {art['relative_path']}"
+            return True, f"Artifact #{artifact_id} korrekt geloescht (archived, Datei weg)"
+
+        else:
+            # Create/Update/Materialize: Datei muss da sein
+            from core.workspace_artifact_service import verify_artifact
+            return verify_artifact(int(artifact_id))
+
     except Exception as e:
         return False, f"Verify fehlgeschlagen: {e}"
 
