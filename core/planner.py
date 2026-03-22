@@ -1,23 +1,26 @@
 """
-core/planner.py -- Kimi Planner v2
+core/planner.py -- Kimi Planner V3
 
-V2 vs V1:
-- Operatives Lagebild zuerst (laufend / blockiert / startbar / niedrig)
-- Kontinuitaet stark bevorzugt (nicht neu anfangen wenn gutes Laufendes da)
-- Entscheidungsklassen: continue_line | unblock_line | start_line | defer
-- Blocker differenziert: direkt / entblockbar / unvermeidbar
-- Progress-Naehe beruecksichtigt
-- Schleifenschutz / Fehler-Penalty
-- LLM nur fuer Feinauswahl aus bereits guten Kandidaten
-- Kleiner Planner-Zustand fuer Kontinuitaet
+V3 vs V2x:
+- Fokus als echte operative Entitaet (persistent in DB)
+- Replan-Regeln statt Dauer-Neubewertung
+- Blocker-Klassifizierung: hard/soft/waiting/needs_unblock
+- Stagnationserkennung (loop_count, same_error, no_progress)
+- Proposal als echte Planungsinstanz (5 Klassen)
+- Arbeitslinien statt Einzelobjekte
+- Entscheidungen werden erklaert und historisch gespeichert
+- Dashboard-sichtbar
 """
 import logging
+import json
 from core.datetime_utils import to_iso
 
 logger = logging.getLogger(__name__)
 
-# Maximale parallele interne Tasks
 MAX_INTERNAL_TASKS = 2
+STAGNATION_LOOP_THRESHOLD = 3      # ab wann gilt eine Linie als stagnierende
+STAGNATION_DAYS_THRESHOLD = 2.0    # Tage ohne Fortschritt
+REPLAN_AFTER_HOURS_DEFAULT = 4     # Stunden bis naechster Replan-Check
 
 # Entscheidungsklassen
 CONTINUE_LINE  = "continue_line"
@@ -26,48 +29,134 @@ START_LINE     = "start_line"
 DEFER          = "defer"
 DROP_OR_PAUSE  = "drop_or_pause"
 
-# Task-Templates
-TEMPLATES = ("analysis", "implementation", "review", "unblock", "maintenance")
+# Blocker-Typen
+BLOCKER_HARD              = "hard_blocked"
+BLOCKER_SOFT              = "soft_blocked"
+BLOCKER_WAITING_FEEDBACK  = "waiting_for_internal_feedback"
+BLOCKER_WAITING_EXTERNAL  = "waiting_for_external_condition"
+BLOCKER_NEEDS_UNBLOCK     = "needs_unblock_line"
 
-# Score-Gewichte V2
-W_CONTINUITY        = 5.0   # Hoch -- laufende Arbeit bevorzugen
-W_PROGRESS_NEAR     = 3.0   # Nahe am Abschluss
+# Score-Gewichte
+W_CONTINUITY        = 6.0
+W_PROGRESS_NEAR     = 3.0
 W_GOAL_RELEVANCE    = 3.0
 W_ACTIONABLE        = 2.5
 W_LEVERAGE          = 2.0
 W_STALENESS         = 1.5
 W_EFFORT_PENALTY    = 1.0
-W_LOOP_PENALTY      = 2.0   # Schleife / Fehler bestrafen
+W_LOOP_PENALTY      = 2.5
+W_STAGNATION_PENALTY= 3.0
 
 
 # =============================================================================
-# Planner-Zustand (in-memory, wird pro Lauf aktualisiert)
+# Persistenter Planner-State
 # =============================================================================
 
-_planner_state = {
-    "current_focus_todo_id":   None,
-    "current_focus_goal_id":   None,
-    "last_planner_run_at":     None,
-    "last_planner_choice":     None,
-    "deferred_ids":            set(),   # bewusst zurueckgestellt
-}
+def get_planner_focus(owner_id: str) -> dict | None:
+    """Liest aktuellen Fokus aus DB."""
+    try:
+        from core.database import get_connection
+        conn = get_connection()
+        try:
+            row = conn.execute(
+                "SELECT * FROM planner_state WHERE owner_id=? ORDER BY updated_at DESC LIMIT 1",
+                (owner_id,)
+            ).fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.debug(f"get_planner_focus fehlgeschlagen: {e}")
+        return None
 
 
-def get_planner_state() -> dict:
-    return dict(_planner_state)
+def save_planner_focus(owner_id: str, primary_type: str, primary_id: int,
+                       secondary_type: str = None, secondary_id: int = None,
+                       reason: str = "", confidence: float = 1.0,
+                       replan_after_hours: int = REPLAN_AFTER_HOURS_DEFAULT) -> None:
+    """Speichert oder aktualisiert Planner-Fokus."""
+    try:
+        from core.database import get_connection
+        import datetime
+        now = to_iso()
+        replan_dt = (datetime.datetime.now(datetime.timezone.utc)
+                     + datetime.timedelta(hours=replan_after_hours))
+        replan_after = replan_dt.isoformat()
+
+        conn = get_connection()
+        try:
+            existing = conn.execute(
+                "SELECT id, focus_since FROM planner_state WHERE owner_id=?",
+                (owner_id,)
+            ).fetchone()
+
+            if existing:
+                focus_since = existing["focus_since"] if (
+                    existing["primary_line_id"] == primary_id and
+                    existing["primary_line_type"] == primary_type
+                ) else now
+                conn.execute(
+                    """UPDATE planner_state SET
+                       primary_line_type=?, primary_line_id=?,
+                       secondary_line_type=?, secondary_line_id=?,
+                       focus_since=?, focus_reason=?, replan_after=?,
+                       focus_confidence=?, status='active', updated_at=?
+                       WHERE owner_id=?""",
+                    (primary_type, primary_id, secondary_type, secondary_id,
+                     focus_since, reason[:300], replan_after,
+                     confidence, now, owner_id)
+                )
+            else:
+                conn.execute(
+                    """INSERT INTO planner_state
+                       (owner_id, primary_line_type, primary_line_id,
+                        secondary_line_type, secondary_line_id,
+                        focus_since, focus_reason, replan_after,
+                        focus_confidence, status, updated_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,'active',?)""",
+                    (owner_id, primary_type, primary_id,
+                     secondary_type, secondary_id,
+                     now, reason[:300], replan_after,
+                     confidence, now)
+                )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.warning(f"save_planner_focus fehlgeschlagen: {e}")
 
 
-def _update_state(focus_todo_id=None, focus_goal_id=None, choice=None,
-                  deferred_ids: set = None):
-    _planner_state["last_planner_run_at"] = to_iso()
-    if focus_todo_id is not None:
-        _planner_state["current_focus_todo_id"] = focus_todo_id
-    if focus_goal_id is not None:
-        _planner_state["current_focus_goal_id"] = focus_goal_id
-    if choice is not None:
-        _planner_state["last_planner_choice"] = choice
-    if deferred_ids is not None:
-        _planner_state["deferred_ids"] = deferred_ids
+def record_decision(owner_id: str, action: str, primary_type: str = None,
+                    primary_id: int = None, secondary_type: str = None,
+                    secondary_id: int = None, reason: str = "",
+                    replan_trigger: str = None,
+                    deferred_ids: list = None, blocked_ids: list = None,
+                    stagnation_flags: list = None) -> None:
+    """Speichert Planner-Entscheidung historisch."""
+    try:
+        from core.database import get_connection
+        conn = get_connection()
+        try:
+            conn.execute(
+                """INSERT INTO planner_decisions
+                   (owner_id, action, primary_line_type, primary_line_id,
+                    secondary_line_type, secondary_line_id,
+                    decision_reason, replan_trigger,
+                    deferred_ids, blocked_ids, stagnation_flags, decided_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (owner_id, action, primary_type, primary_id,
+                 secondary_type, secondary_id,
+                 reason[:500], replan_trigger,
+                 json.dumps(deferred_ids or []),
+                 json.dumps(blocked_ids or []),
+                 json.dumps(stagnation_flags or []),
+                 to_iso())
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.debug(f"record_decision fehlgeschlagen: {e}")
 
 
 # =============================================================================
@@ -75,10 +164,6 @@ def _update_state(focus_todo_id=None, focus_goal_id=None, choice=None,
 # =============================================================================
 
 def collect_candidates(owner_id: str) -> dict:
-    """
-    Liest vollstaendigen operativen Zustand aus SQLite.
-    Gibt goals, proposals, todos, active_tasks, recent_observations zurueck.
-    """
     from core.database import get_connection
     conn = get_connection()
     try:
@@ -100,14 +185,13 @@ def collect_candidates(owner_id: str) -> dict:
             (owner_id,)
         ).fetchall()]
 
-        # owner-bezogen: user: direkt, kimi_todo/planner ueber linked_todo_id Owner pruefen
+        # Owner-bezogene aktive Tasks
         _all_tasks = [dict(r) for r in conn.execute(
             """SELECT * FROM orbit_tasks
                WHERE mode IN ('internal','background')
                AND status NOT IN ('completed','failed','aborted')
                ORDER BY created_at DESC"""
         ).fetchall()]
-        # Todos dieses Owners
         _owner_todo_ids = {
             row["id"] for row in conn.execute(
                 "SELECT id FROM todos WHERE user_id=?", (owner_id,)
@@ -117,11 +201,9 @@ def collect_candidates(owner_id: str) -> dict:
             t for t in _all_tasks
             if t.get("primary_origin","").startswith(f"user:{owner_id}")
             or t.get("linked_todo_id") in _owner_todo_ids
-            or t.get("primary_origin","").startswith(f"planner:")
-            and t.get("linked_todo_id") in _owner_todo_ids
         ]
 
-        # Letzte Observations pro Task (Fehler/Schleifen erkennen)
+        # Letzte Observations pro Task
         recent_obs = {}
         if active_tasks:
             task_ids = [t["id"] for t in active_tasks]
@@ -136,15 +218,15 @@ def collect_candidates(owner_id: str) -> dict:
                 tid = r["task_id"]
                 if tid not in recent_obs:
                     recent_obs[tid] = []
-                if len(recent_obs[tid]) < 5:
+                if len(recent_obs[tid]) < 10:
                     recent_obs[tid].append({"type": r["type"], "content": r["content"]})
 
         return {
-            "goals":           goals,
-            "proposals":       proposals,
-            "todos":           todos,
-            "active_tasks":    active_tasks,
-            "recent_obs":      recent_obs,
+            "goals":        goals,
+            "proposals":    proposals,
+            "todos":        todos,
+            "active_tasks": active_tasks,
+            "recent_obs":   recent_obs,
         }
     finally:
         conn.close()
@@ -155,20 +237,16 @@ def collect_candidates(owner_id: str) -> dict:
 # =============================================================================
 
 def _build_situation(candidates: dict) -> dict:
-    """
-    Zerlegt Kandidaten in klare Bereiche:
-    running, waiting_feedback, blocked_tasks, startable_todos, low_value_todos
-    """
     active_task_by_todo = {}
     for t in candidates["active_tasks"]:
         if t.get("linked_todo_id"):
             active_task_by_todo[t["linked_todo_id"]] = t
 
-    running_todos       = []  # laufende Arbeit
-    waiting_todos       = []  # waiting_feedback / waiting
-    blocked_todos       = []  # blockiert
-    startable_todos     = []  # offen, kein Task, execution_mode gesetzt
-    low_value_todos     = []  # offen, kein execution_mode
+    running_todos   = []
+    waiting_todos   = []
+    blocked_todos   = []
+    startable_todos = []
+    low_value_todos = []
 
     for todo in candidates["todos"]:
         tid = todo["id"]
@@ -178,28 +256,27 @@ def _build_situation(candidates: dict) -> dict:
         if todo.get("status") == "blocked":
             blocked_todos.append(todo)
         elif task:
-            task_status = task.get("status","")
-            if task_status in ("active","new","planned"):
+            ts = task.get("status","")
+            if ts in ("active","new","planned"):
                 running_todos.append(todo)
-            elif task_status == "waiting_feedback":
-                # Aktiv wartet auf F-Kognition -- kann bald weiterlaufen
-                todo["_wait_type"] = "waiting_feedback"
+            elif ts == "waiting_feedback":
+                todo["_wait_type"] = BLOCKER_WAITING_FEEDBACK
                 waiting_todos.append(todo)
-            elif task_status == "waiting":
-                # Wartet auf externe Ressource oder User
-                loop_count = int(task.get("loop_count") or 0)
-                max_loops = int(task.get("max_loops") or 5)
-                if loop_count >= max_loops - 1:
-                    # Nahe am Schleifenlimit -- eher pausieren
+            elif ts == "waiting":
+                loop = int(task.get("loop_count") or 0)
+                max_l = int(task.get("max_loops") or 5)
+                if loop >= max_l - 1:
                     todo["_wait_type"] = "soft_wait_near_limit"
                     blocked_todos.append(todo)
                 else:
-                    todo["_wait_type"] = "waiting_on_resource"
+                    todo["_wait_type"] = BLOCKER_WAITING_EXTERNAL
                     waiting_todos.append(todo)
-            elif task_status in ("failed","aborted"):
-                # Task fertig/gescheitert -- Todo ist wieder startbar
+            elif ts in ("failed","aborted"):
                 todo["_task"] = None
-                startable_todos.append(todo) if todo.get("execution_mode") in ("orbit_internal","orbit_chat") else low_value_todos.append(todo)
+                if todo.get("execution_mode") in ("orbit_internal","orbit_chat"):
+                    startable_todos.append(todo)
+                else:
+                    low_value_todos.append(todo)
             else:
                 startable_todos.append(todo)
         elif todo.get("execution_mode") in ("orbit_internal","orbit_chat"):
@@ -218,7 +295,127 @@ def _build_situation(candidates: dict) -> dict:
 
 
 # =============================================================================
-# 3. Hilfsfunktionen
+# 3. Stagnationserkennung
+# =============================================================================
+
+def _detect_stagnation(todo: dict, task: dict | None,
+                        recent_obs: dict) -> dict:
+    """
+    Erkennt ob eine Linie stagniert.
+    Gibt {'stagnating': bool, 'reason': str, 'score': float} zurueck.
+    """
+    if not task:
+        return {"stagnating": False, "reason": "", "score": 0.0}
+
+    task_id = task["id"]
+    obs = recent_obs.get(task_id, [])
+    loop_count = int(task.get("loop_count") or 0)
+    score = 0.0
+    reasons = []
+
+    # Schleifenzaehler
+    if loop_count >= STAGNATION_LOOP_THRESHOLD:
+        score += 2.0
+        reasons.append(f"loop_count={loop_count}")
+
+    # Wiederholte Fehler
+    error_obs = [o for o in obs if o["type"] in ("error","blocker")]
+    if len(error_obs) >= 2:
+        score += 1.5
+        reasons.append(f"{len(error_obs)} Fehler-Observations")
+
+    # Gleiche Step-Muster (gleiche Content wiederholt)
+    contents = [o["content"][:50] for o in obs if o["type"] == "tool_result"]
+    if len(contents) >= 3 and len(set(contents)) <= 1:
+        score += 2.0
+        reasons.append("gleiche Step-Ergebnisse wiederholt")
+
+    # Kein Fortschritt (waiting_feedback zu lange)
+    if task.get("status") == "waiting_feedback":
+        import datetime
+        updated = task.get("updated_at","")
+        if updated:
+            try:
+                dt = datetime.datetime.fromisoformat(updated.replace("Z","+00:00"))
+                hours = (datetime.datetime.now(datetime.timezone.utc) - dt).total_seconds() / 3600
+                if hours > 2:
+                    score += 1.0
+                    reasons.append(f"waiting_feedback seit {hours:.1f}h")
+            except Exception:
+                pass
+
+    return {
+        "stagnating": score >= 2.0,
+        "reason": " | ".join(reasons),
+        "score": score,
+    }
+
+
+# =============================================================================
+# 4. Blocker klassifizieren
+# =============================================================================
+
+def _classify_blocker(todo: dict, task: dict | None,
+                       recent_obs: dict) -> str:
+    """Gibt Blocker-Typ zurueck."""
+    wait_type = todo.get("_wait_type","")
+
+    if wait_type == BLOCKER_WAITING_FEEDBACK:
+        return BLOCKER_WAITING_FEEDBACK
+
+    if task:
+        obs = recent_obs.get(task["id"], [])
+        for o in obs:
+            c = o.get("content","").lower()
+            if "permission" in c or "zugriff" in c or "access denied" in c:
+                return BLOCKER_HARD
+            if "nicht gefunden" in c or "missing" in c or "fehlt" in c:
+                return BLOCKER_SOFT
+
+    if todo.get("status") == "blocked":
+        return BLOCKER_NEEDS_UNBLOCK
+
+    return BLOCKER_SOFT
+
+
+# =============================================================================
+# 5. Proposal-Klassifizierung (5 Klassen)
+# =============================================================================
+
+def _classify_proposal(p: dict, active_goal_ids: set,
+                        active_task_ids: set) -> str:
+    """
+    5 Proposal-Klassen:
+    proposal_ready_for_work        -- konkret, Zielbezug, kleiner Aufwand
+    proposal_waiting_approval      -- approved_todo_id schon gesetzt aber wartet
+    proposal_needs_groundwork      -- Zielbezug aber noch konzeptionell
+    proposal_depends_on_other_line -- haengt von laufender Arbeit ab
+    proposal_low_value             -- kein Bezug, geringer Nutzen
+    """
+    has_desc = bool(p.get("description") and len(p.get("description","")) > 20)
+    has_reason = bool(p.get("reason") and len(p.get("reason","")) > 10)
+    is_concrete = has_desc or has_reason
+    goal_relevant = bool(p.get("goal_id") and p["goal_id"] in active_goal_ids)
+    effort_map = {"klein": 0, "mittel": 1, "gross": 2, "groß": 2}
+    effort = effort_map.get((p.get("effort") or "mittel").lower(), 1)
+
+    if p.get("approved_todo_id"):
+        return "proposal_waiting_approval"
+
+    if goal_relevant and is_concrete and effort <= 1:
+        return "proposal_ready_for_work"
+
+    if goal_relevant and not is_concrete:
+        return "proposal_needs_groundwork"
+
+    if goal_relevant and effort > 1:
+        return "proposal_depends_on_other_line"
+
+    return "proposal_low_value"
+
+
+# =============================================================================
+# 6. Scoring
 # =============================================================================
 
 def _staleness_days(obj: dict) -> float:
@@ -227,60 +424,16 @@ def _staleness_days(obj: dict) -> float:
     if not ts:
         return 0.0
     try:
-        dt = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        dt = datetime.datetime.fromisoformat(ts.replace("Z","+00:00"))
         now = datetime.datetime.now(datetime.timezone.utc)
         return max(0.0, (now - dt).total_seconds() / 86400)
     except Exception:
         return 0.0
 
 
-def _loop_penalty(task: dict | None, recent_obs: dict) -> float:
-    """Bestraft Schleifen und Fehler-Haeufen."""
-    if not task:
-        return 0.0
-    loop_count = int(task.get("loop_count") or 0)
-    penalty = min(W_LOOP_PENALTY, loop_count * 0.3)
-    # Fehler-Observations
-    obs = recent_obs.get(task["id"], [])
-    error_count = sum(1 for o in obs if o["type"] in ("error","blocker"))
-    penalty += min(W_LOOP_PENALTY, error_count * 0.5)
-    return penalty
-
-
-def _progress_near_bonus(todo: dict, task: dict | None) -> float:
-    """Bonus wenn Arbeit kurz vor Abschluss steht."""
-    if task and task.get("status") == "waiting_feedback":
-        return W_PROGRESS_NEAR * 0.5  # Nahe dran
-    loop = int(task.get("loop_count", 0)) if task else 0
-    max_l = int(task.get("max_loops", 5)) if task else 5
-    if max_l > 0 and loop / max_l > 0.6:
-        return W_PROGRESS_NEAR * 0.5
-    return 0.0
-
-
-def _is_entblockbar(todo: dict, candidates: dict) -> bool:
-    """Heuristik: ist der Blocker ueberwindbar?"""
-    task = todo.get("_task")
-    if not task:
-        return True  # kein Task = kein bekannter Blocker
-    obs = candidates.get("recent_obs", {}).get(task["id"], [])
-    for o in obs:
-        c = o.get("content","").lower()
-        if "permission" in c or "zugriff" in c:
-            return False  # Systemrechte -- nicht einfach lösbar
-    return True
-
-
-# =============================================================================
-# 4. Scoring
-# =============================================================================
-
 def score_candidates(candidates: dict, situation: dict) -> list:
-    """
-    Bewertet Todos als Arbeitslinien.
-    Gibt sortierte Liste mit decision-Klasse zurueck.
-    """
     active_goal_ids = {g["id"] for g in candidates["goals"]}
+    active_task_ids = {t["id"] for t in candidates["active_tasks"]}
     recent_obs = candidates.get("recent_obs", {})
     scored = []
 
@@ -288,12 +441,24 @@ def score_candidates(candidates: dict, situation: dict) -> list:
         task = todo.get("_task")
         details = {}
 
+        # Stagnation
+        stag = _detect_stagnation(todo, task, recent_obs)
+        stag_penalty = W_STAGNATION_PENALTY if stag["stagnating"] else 0.0
+        details["stagnation"] = stag
+
         # Kontinuitaet
         continuity = W_CONTINUITY if base_decision == CONTINUE_LINE else 0.0
         details["continuity"] = continuity
 
         # Progress-Naehe
-        prog_near = _progress_near_bonus(todo, task)
+        prog_near = 0.0
+        if task and task.get("status") == "waiting_feedback":
+            prog_near = W_PROGRESS_NEAR * 0.5
+        if task:
+            loop = int(task.get("loop_count",0))
+            max_l = int(task.get("max_loops",5))
+            if max_l > 0 and loop / max_l > 0.6:
+                prog_near += W_PROGRESS_NEAR * 0.3
         details["progress_near"] = prog_near
 
         # Goal-Relevanz
@@ -301,14 +466,13 @@ def score_candidates(candidates: dict, situation: dict) -> list:
         details["goal_relevance"] = goal_rel
 
         # Bearbeitbarkeit
-        if base_decision == CONTINUE_LINE:
-            actionable = W_ACTIONABLE
-        elif base_decision == START_LINE:
-            actionable = W_ACTIONABLE
-        elif base_decision == UNBLOCK_LINE:
-            actionable = W_ACTIONABLE * 0.5
-        else:
-            actionable = 0.0
+        actionable_map = {
+            CONTINUE_LINE: W_ACTIONABLE,
+            START_LINE:    W_ACTIONABLE,
+            UNBLOCK_LINE:  W_ACTIONABLE * 0.5,
+            DEFER:         0.0,
+        }
+        actionable = actionable_map.get(base_decision, 0.0)
         details["actionable"] = actionable
 
         # Hebelwirkung
@@ -320,20 +484,31 @@ def score_candidates(candidates: dict, situation: dict) -> list:
         details["leverage"] = leverage
 
         # Vernachlaessigung
-        days = _staleness_days(todo)
-        staleness = min(W_STALENESS, days * 0.1)
+        staleness = min(W_STALENESS, _staleness_days(todo) * 0.1)
         details["staleness"] = staleness
 
-        # Schleife / Fehler
-        loop_pen = _loop_penalty(task, recent_obs)
+        # Loop-Penalty
+        loop_pen = 0.0
+        if task:
+            lc = int(task.get("loop_count") or 0)
+            loop_pen = min(W_LOOP_PENALTY, lc * 0.3)
+            obs = recent_obs.get(task["id"], [])
+            err = sum(1 for o in obs if o["type"] in ("error","blocker"))
+            loop_pen += min(W_LOOP_PENALTY * 0.5, err * 0.4)
         details["loop_penalty"] = loop_pen
 
         # Prioritaet
         prio_map = {"hoch": 1.5, "mittel": 0.5, "niedrig": -0.5, "keine": 0.0}
-        prio_bonus = prio_map.get(todo.get("priority","keine"), 0.0)
-        details["priority"] = prio_bonus
+        prio = prio_map.get(todo.get("priority","keine"), 0.0)
+        details["priority"] = prio
 
-        score = continuity + prog_near + goal_rel + actionable + leverage + staleness + prio_bonus - loop_pen
+        score = (continuity + prog_near + goal_rel + actionable
+                 + leverage + staleness + prio
+                 - loop_pen - stag_penalty)
+
+        # Blocker-Typ
+        blocker_type = _classify_blocker(todo, task, recent_obs) if base_decision in (UNBLOCK_LINE, DEFER) else None
+
         return {
             "type":           "todo",
             "id":             todo["id"],
@@ -341,6 +516,9 @@ def score_candidates(candidates: dict, situation: dict) -> list:
             "score":          round(score, 2),
             "score_details":  details,
             "decision":       base_decision,
+            "blocker_type":   blocker_type,
+            "stagnating":     stag["stagnating"],
+            "stagnation_reason": stag["reason"],
             "blocked":        base_decision in (UNBLOCK_LINE, DEFER),
             "has_task":       task is not None,
             "execution_mode": todo.get("execution_mode","none"),
@@ -348,198 +526,257 @@ def score_candidates(candidates: dict, situation: dict) -> list:
             "task_template":  todo.get("task_template"),
             "goal_id":        todo.get("goal_id"),
             "proposal_id":    todo.get("proposal_id"),
-            "entblockbar":    _is_entblockbar(todo, candidates),
+            "entblockbar":    blocker_type not in (BLOCKER_HARD,),
         }
 
-    # Laufende Arbeit
     for t in situation["running"]:
         scored.append(_score_todo(t, CONTINUE_LINE))
-
-    # Wartende Arbeit (waiting_feedback)
     for t in situation["waiting"]:
         scored.append(_score_todo(t, CONTINUE_LINE))
-
-    # Blockierte Arbeit
     for t in situation["blocked"]:
-        dec = UNBLOCK_LINE if _is_entblockbar(t, candidates) else DEFER
+        dec = UNBLOCK_LINE if _classify_blocker(t, t.get("_task"), recent_obs) != BLOCKER_HARD else DEFER
         scored.append(_score_todo(t, dec))
-
-    # Startbare Arbeit
     for t in situation["startable"]:
         scored.append(_score_todo(t, START_LINE))
-
-    # Niedrig relevante Arbeit
     for t in situation["low_value"]:
         scored.append(_score_todo(t, DEFER))
 
-    # Proposals -- drei Klassen statt immer DEFER
+    # Proposals
     for p in candidates["proposals"]:
+        cls = _classify_proposal(p, active_goal_ids, active_task_ids)
         goal_rel = W_GOAL_RELEVANCE * 0.4 if p.get("goal_id") and p["goal_id"] in active_goal_ids else 0.0
-        effort_map = {"klein": 0.0, "mittel": W_EFFORT_PENALTY * 0.5, "gross": W_EFFORT_PENALTY, "groß": W_EFFORT_PENALTY}
-        effort_pen = effort_map.get((p.get("effort") or "mittel").lower(), W_EFFORT_PENALTY * 0.5)
-        days = _staleness_days(p)
-        staleness = min(W_STALENESS * 0.5, days * 0.05)
+        effort_map2 = {"klein": 0.0, "mittel": W_EFFORT_PENALTY * 0.5,
+                       "gross": W_EFFORT_PENALTY, "groß": W_EFFORT_PENALTY}
+        effort_pen = effort_map2.get((p.get("effort") or "mittel").lower(), W_EFFORT_PENALTY * 0.5)
+        staleness = min(W_STALENESS * 0.5, _staleness_days(p) * 0.05)
         score = goal_rel + staleness - effort_pen
-
-        # Proposal-Klasse -- 4 Kategorien
-        has_desc = bool(p.get("description") and len(p.get("description","")) > 20)
-        has_reason = bool(p.get("reason") and len(p.get("reason","")) > 10)
-        is_concrete = has_desc or has_reason
-
-        if goal_rel > 0 and effort_pen <= W_EFFORT_PENALTY * 0.5 and is_concrete:
-            # Klar formuliert, Zielbezug, kleiner Aufwand -- wartet nur auf Genehmigung
-            proposal_class = "proposal_ready"
-            decision = DEFER
-        elif not is_concrete and goal_rel > 0:
-            # Sinnvoll aber noch konzeptionell -- Vorarbeit noetig
-            proposal_class = "proposal_needs_groundwork"
-            decision = DEFER
-        elif goal_rel > 0 or days > 7:
-            # Relevant, aber andere Linie hat Vorrang
-            proposal_class = "proposal_relevant_but_not_now"
-            decision = DEFER
-        else:
-            # Geringe Relevanz, kein klarer Bezug
-            proposal_class = "proposal_low_value"
-            decision = DROP_OR_PAUSE
-
+        decision = DROP_OR_PAUSE if cls == "proposal_low_value" else DEFER
         scored.append({
             "type":           "proposal",
             "id":             p["id"],
             "title":          p.get("title",""),
             "score":          round(score, 2),
             "decision":       decision,
-            "proposal_class": proposal_class,
+            "proposal_class": cls,
             "blocked":        False,
             "has_task":       False,
             "execution_mode": "none",
             "goal_id":        p.get("goal_id"),
             "entblockbar":    True,
+            "stagnating":     False,
         })
 
-    # Sortierung: CONTINUE/UNBLOCK vor START vor DEFER, dann nach Score
     order = {CONTINUE_LINE: 0, UNBLOCK_LINE: 1, START_LINE: 2, DEFER: 3, DROP_OR_PAUSE: 4}
-    scored.sort(key=lambda x: (order.get(x["decision"], 5), -x["score"]))
+    scored.sort(key=lambda x: (x.get("stagnating", False),
+                                order.get(x["decision"], 5),
+                                -x["score"]))
     return scored
 
 
 # =============================================================================
-# 5. Kimi waehlt Arbeitslinien (LLM nur Feinauswahl)
+# 7. Replan-Entscheidung
 # =============================================================================
 
-def choose_worklines(candidates: dict, scored: list, owner_id: str) -> dict:
+def should_replan(owner_id: str, situation: dict,
+                  scored: list) -> tuple[bool, str]:
     """
-    Stufe 1 deterministisch: continue/unblock pruefen.
-    Stufe 2 LLM: nur fuer Feinauswahl aus Top-3 startbaren Kandidaten.
+    Prueft ob Replan noetig ist.
+    Gibt (should_replan: bool, trigger: str) zurueck.
     """
-    from core.ollama_client import chat_internal
+    focus = get_planner_focus(owner_id)
 
+    if not focus:
+        return True, "kein_fokus"
+
+    # Hauptlinie abgeschlossen?
+    primary_id = focus.get("primary_line_id")
+    primary_type = focus.get("primary_line_type","todo")
+    if primary_type == "todo" and primary_id:
+        # Ist das Todo noch aktiv?
+        still_active = any(
+            s["id"] == primary_id
+            for s in scored
+            if s["decision"] in (CONTINUE_LINE, UNBLOCK_LINE, START_LINE)
+        )
+        if not still_active:
+            return True, "hauptlinie_abgeschlossen"
+
+    # Hauptlinie blockiert?
+    primary_blocked = any(
+        s["id"] == primary_id and s["decision"] in (UNBLOCK_LINE, DEFER)
+        and s.get("blocker_type") == BLOCKER_HARD
+        for s in scored
+    )
+    if primary_blocked:
+        return True, "hauptlinie_hart_blockiert"
+
+    # Hauptlinie stagniert?
+    primary_stagnating = any(
+        s["id"] == primary_id and s.get("stagnating")
+        for s in scored
+    )
+    if primary_stagnating:
+        return True, "hauptlinie_stagniert"
+
+    # Neue hochrelevante Linie?
+    high_relevance_new = any(
+        s["decision"] == START_LINE and s["score"] > 8.0
+        and s["id"] != primary_id
+        for s in scored
+    )
+    if high_relevance_new:
+        return True, "neue_hochrelevante_linie"
+
+    # Replan-Zeitpunkt erreicht?
+    import datetime
+    replan_after = focus.get("replan_after","")
+    if replan_after:
+        try:
+            ra_dt = datetime.datetime.fromisoformat(replan_after.replace("Z","+00:00"))
+            if datetime.datetime.now(datetime.timezone.utc) > ra_dt:
+                return True, "replan_zeitpunkt"
+        except Exception:
+            pass
+
+    return False, ""
+
+
+# =============================================================================
+# 8. Arbeitslinien waehlen
+# =============================================================================
+
+def choose_worklines(candidates: dict, scored: list,
+                     owner_id: str, force_replan: bool = False) -> dict:
+    """
+    V3: Fokus halten wenn moeglich, nur bei echten Triggern replanen.
+    LLM nur fuer Feinauswahl.
+    """
     active_internal = [t for t in candidates["active_tasks"]
                        if t["status"] not in ("completed","failed","aborted")]
     if len(active_internal) >= MAX_INTERNAL_TASKS:
-        logger.info(f"Planner: {len(active_internal)} aktive Tasks -- kein neuer Start")
         return {
-            "primary_line":   None,
-            "secondary_line": None,
-            "blocked_lines":  [],
-            "action":         "wait",
-            "reasoning":      f"{len(active_internal)} interne Tasks aktiv.",
+            "primary_line":     None,
+            "secondary_line":   None,
+            "blocked_lines":    _format_blocked(scored),
+            "deferred_lines":   _format_deferred(scored),
+            "stagnation_flags": _format_stagnation(scored),
+            "action":           "wait",
+            "reasoning":        f"{len(active_internal)} interne Tasks aktiv.",
+            "replan_trigger":   None,
+            "chosen":           [],
         }
 
-    # Stufe 1: Gibt es gute continue_line?
-    continue_candidates = [s for s in scored if s["decision"] == CONTINUE_LINE and not s.get("blocked")]
-    unblock_candidates  = [s for s in scored if s["decision"] == UNBLOCK_LINE and s.get("entblockbar")]
-    start_candidates    = [s for s in scored if s["decision"] == START_LINE]
+    do_replan, replan_trigger = should_replan(owner_id, _build_situation_from_scored(scored), scored)
 
-    # Wenn gutes Laufendes da -- einfach fortsetzen
-    if continue_candidates:
-        primary = continue_candidates[0]
-        secondary = continue_candidates[1] if len(continue_candidates) > 1 else (
-            start_candidates[0] if start_candidates else None
-        )
-        return _build_result(primary, secondary, scored, "Laufende Arbeit fortsetzen.", CONTINUE_LINE)
+    if not do_replan and not force_replan:
+        # Fokus halten -- nur pruefen ob Hauptlinie noch laeuft
+        focus = get_planner_focus(owner_id)
+        if focus and focus.get("primary_line_id"):
+            primary_candidate = next(
+                (s for s in scored if s["id"] == focus["primary_line_id"]
+                 and s["type"] == focus.get("primary_line_type","todo")),
+                None
+            )
+            if primary_candidate and primary_candidate["decision"] in (CONTINUE_LINE, START_LINE):
+                return _build_result(
+                    primary_candidate, None, scored,
+                    f"Fokus gehalten: {primary_candidate['title'][:50]}",
+                    CONTINUE_LINE, replan_trigger=None
+                )
 
-    # Wenn wichtige Entblockung moeglich
-    if unblock_candidates and (not start_candidates or unblock_candidates[0]["score"] > (start_candidates[0]["score"] if start_candidates else 0)):
-        primary = unblock_candidates[0]
-        return _build_result(primary, start_candidates[0] if start_candidates else None,
-                            scored, "Blocker aufloesen hat Vorrang.", UNBLOCK_LINE)
+    # Replan -- neue Linien waehlen
+    continue_cands = [s for s in scored if s["decision"] == CONTINUE_LINE and not s.get("stagnating")]
+    unblock_cands  = [s for s in scored if s["decision"] == UNBLOCK_LINE and s.get("entblockbar")]
+    start_cands    = [s for s in scored if s["decision"] == START_LINE]
 
-    # Stufe 2: LLM fuer Feinauswahl aus startbaren Kandidaten
-    if not start_candidates:
+    if continue_cands:
+        primary = continue_cands[0]
+        secondary = (continue_cands[1] if len(continue_cands) > 1
+                     else start_cands[0] if start_cands else None)
+        return _build_result(primary, secondary, scored,
+                            "Laufende Arbeit fortsetzen.", CONTINUE_LINE, replan_trigger)
+
+    if unblock_cands:
+        primary = unblock_cands[0]
+        return _build_result(primary, start_cands[0] if start_cands else None,
+                            scored, "Blocker aufloesen hat Vorrang.", UNBLOCK_LINE, replan_trigger)
+
+    if not start_cands:
         return {
-            "primary_line":   None,
-            "secondary_line": None,
-            "blocked_lines":  _format_blocked(scored),
-            "action":         "idle",
-            "reasoning":      "Keine startbaren Kandidaten.",
+            "primary_line": None, "secondary_line": None,
+            "blocked_lines": _format_blocked(scored),
+            "deferred_lines": _format_deferred(scored),
+            "stagnation_flags": _format_stagnation(scored),
+            "action": "idle", "reasoning": "Keine startbaren Kandidaten.",
+            "replan_trigger": replan_trigger, "chosen": [],
         }
 
-    top_start = start_candidates[:3]
-    if len(top_start) == 1:
-        # Nur einer -- kein LLM noetig
-        return _build_result(top_start[0], None, scored, "Einziger startbarer Kandidat.", START_LINE)
+    if len(start_cands) == 1:
+        return _build_result(start_cands[0], None, scored,
+                            "Einziger startbarer Kandidat.", START_LINE, replan_trigger)
 
-    # LLM Feinauswahl
+    # LLM Feinauswahl aus Top-3
+    top = start_cands[:3]
     goal_lines = "\n".join(
         f"- Goal #{g['id']}: {g['title'][:60]} ({g.get('progress',0)}%)"
         for g in candidates["goals"][:3]
     ) or "  (keine aktiven Goals)"
 
     cand_lines = "\n".join(
-        f"[TODO #{s['id']}] {s['title'][:60]} | Score: {s['score']} | mode={s['execution_mode']}"
-        for s in top_start
-    )
-
-    prompt = (
-        "Planungsentscheidung. Welche 1-2 Arbeitslinien jetzt?\n\n"
-        "Aktive Goals:\n" + goal_lines + "\n\n"
-        "Startbare Kandidaten:\n" + cand_lines + "\n\n"
-        "Antworte NUR als JSON (kein Markdown):\n"
-        '{"hauptlinie_id": X, "nebenlinie_id": null_oder_Y, "reason": "..."}'
+        f"[TODO #{s['id']}] {s['title'][:60]} | Score:{s['score']} | mode={s['execution_mode']}"
+        for s in top
     )
 
     try:
+        from core.ollama_client import chat_internal
         reply, _ = chat_internal(
             user_id=owner_id,
-            message=prompt,
+            message=(
+                "Planungsentscheidung. Welche 1-2 Arbeitslinien jetzt?\n\n"
+                "Aktive Goals:\n" + goal_lines + "\n\n"
+                "Kandidaten:\n" + cand_lines + "\n\n"
+                "Antworte NUR als JSON:\n"
+                '{"hauptlinie_id": X, "nebenlinie_id": null_oder_Y, "reason": "..."}'
+            ),
             chat_history=[],
             extra_system="Kurze interne Planungsentscheidung. Nur JSON.",
             retrieval_query="Planung Arbeitslinie",
         )
-        import json, re
+        import re
         match = re.search(r'\{.*\}', (reply or "").strip(), re.DOTALL)
-        if not match:
-            raise ValueError("kein JSON")
         data = json.loads(match.group())
-
-        primary = next((s for s in top_start if s["id"] == data.get("hauptlinie_id")), top_start[0])
-        secondary_id = data.get("nebenlinie_id")
-        secondary = next((s for s in top_start if s["id"] == secondary_id), None) if secondary_id else None
-        return _build_result(primary, secondary, scored, data.get("reason",""), START_LINE)
-
+        primary = next((s for s in top if s["id"] == data.get("hauptlinie_id")), top[0])
+        sec_id = data.get("nebenlinie_id")
+        secondary = next((s for s in top if s["id"] == sec_id), None) if sec_id else None
+        return _build_result(primary, secondary, scored,
+                            data.get("reason",""), START_LINE, replan_trigger)
     except Exception as e:
-        logger.debug(f"choose_worklines LLM fehlgeschlagen, Fallback: {e}")
-        return _build_result(top_start[0], top_start[1] if len(top_start) > 1 else None,
-                            scored, "Fallback: Top-Kandidaten", START_LINE)
+        logger.debug(f"LLM Feinauswahl fehlgeschlagen, Fallback: {e}")
+        return _build_result(top[0], top[1] if len(top) > 1 else None,
+                            scored, "Fallback: Top-Kandidaten", START_LINE, replan_trigger)
 
 
-def _build_result(primary: dict, secondary: dict | None,
-                  all_scored: list, reasoning: str, action_type: str) -> dict:
-    chosen_ids = {primary["id"]}
-    if secondary:
-        chosen_ids.add(secondary["id"])
-
-    blocked = _format_blocked(all_scored)
-
+def _build_situation_from_scored(scored: list) -> dict:
+    """Minimales Situation-Dict aus Scored-Liste fuer should_replan."""
     return {
-        "primary_line":   _format_line(primary),
-        "secondary_line": _format_line(secondary) if secondary else None,
-        "blocked_lines":  blocked,
-        "action":         action_type,
-        "reasoning":      reasoning,
-        # Flache chosen-Liste fuer Rueckwaertskompatibilitaet mit maybe_start_task
-        "chosen":         [primary] + ([secondary] if secondary else []),
+        "running":   [s for s in scored if s["decision"] == CONTINUE_LINE],
+        "blocked":   [s for s in scored if s["decision"] in (UNBLOCK_LINE, DEFER)],
+        "startable": [s for s in scored if s["decision"] == START_LINE],
+    }
+
+
+def _build_result(primary, secondary, all_scored, reasoning, action_type,
+                  replan_trigger=None) -> dict:
+    return {
+        "primary_line":     _format_line(primary),
+        "secondary_line":   _format_line(secondary) if secondary else None,
+        "blocked_lines":    _format_blocked(all_scored),
+        "deferred_lines":   _format_deferred(all_scored),
+        "stagnation_flags": _format_stagnation(all_scored),
+        "action":           action_type,
+        "reasoning":        reasoning,
+        "replan_trigger":   replan_trigger,
+        "chosen":           [primary] + ([secondary] if secondary else []),
     }
 
 
@@ -550,53 +787,64 @@ def _format_line(item: dict | None) -> dict | None:
         "kind":           item["type"],
         "id":             item["id"],
         "decision":       item["decision"],
-        "reason":         item.get("reason", ""),
+        "reason":         item.get("reason",""),
         "title":          item.get("title",""),
         "goal_id":        item.get("goal_id"),
         "execution_mode": item.get("execution_mode","none"),
         "task_template":  item.get("task_template"),
+        "stagnating":     item.get("stagnating", False),
+        "blocker_type":   item.get("blocker_type"),
+        "proposal_class": item.get("proposal_class"),
     }
 
 
 def _format_blocked(scored: list) -> list:
-    """
-    Gibt alle Blocker-relevanten Linien zurueck -- differenziert:
-    - UNBLOCK_LINE entblockbar: priorisierbar
-    - UNBLOCK_LINE nicht entblockbar: hart blockiert
-    - DEFER mit Proposal-Klasse: bewusst zurueckgestellt
-    """
     result = []
     for s in scored:
         if s["decision"] == UNBLOCK_LINE:
             result.append({
                 "kind":         s["type"],
                 "id":           s["id"],
-                "decision":     UNBLOCK_LINE,
-                "entblockbar":  s.get("entblockbar", True),
-                "reason":       "entblockbar" if s.get("entblockbar", True) else "hart blockiert",
                 "title":        s.get("title",""),
+                "blocker_type": s.get("blocker_type",""),
+                "entblockbar":  s.get("entblockbar", True),
             })
-        elif s["decision"] == DEFER and s.get("proposal_class") == "proposal_ready":
+        elif s["decision"] == DEFER and s.get("proposal_class") in (
+                "proposal_ready_for_work", "proposal_waiting_approval"):
             result.append({
                 "kind":           s["type"],
                 "id":             s["id"],
-                "decision":       DEFER,
-                "proposal_class": s.get("proposal_class"),
-                "reason":         "Proposal bereit -- wartet auf Genehmigung",
                 "title":          s.get("title",""),
+                "proposal_class": s.get("proposal_class"),
+                "blocker_type":   "proposal_waiting_approval",
             })
     return result[:5]
 
 
+def _format_deferred(scored: list) -> list:
+    return [
+        {"kind": s["type"], "id": s["id"], "title": s.get("title",""),
+         "reason": s.get("proposal_class","niedrige Prioritaet")}
+        for s in scored
+        if s["decision"] in (DEFER, DROP_OR_PAUSE)
+        and s.get("proposal_class","") not in ("proposal_ready_for_work","proposal_waiting_approval")
+    ][:5]
+
+
+def _format_stagnation(scored: list) -> list:
+    return [
+        {"kind": s["type"], "id": s["id"], "title": s.get("title",""),
+         "reason": s.get("stagnation_reason","")}
+        for s in scored
+        if s.get("stagnating")
+    ]
+
+
 # =============================================================================
-# 6. Task starten
+# 9. Task starten
 # =============================================================================
 
 def maybe_start_task(chosen: list, owner_id: str) -> list:
-    """
-    Startet ORBIT-Task nur fuer start_line Entscheidungen mit execution_mode gesetzt.
-    continue_line und unblock_line werden nicht neu gestartet.
-    """
     import orbit as _orbit
     from core.todo_service import start_todo
 
@@ -604,7 +852,6 @@ def maybe_start_task(chosen: list, owner_id: str) -> list:
     for line in chosen:
         if line["type"] != "todo":
             continue
-        # Laufende Arbeit nicht nochmal starten
         if line["decision"] in (CONTINUE_LINE, DEFER, DROP_OR_PAUSE):
             continue
         if line["has_task"]:
@@ -613,6 +860,7 @@ def maybe_start_task(chosen: list, owner_id: str) -> list:
             continue
 
         try:
+            import json as _j
             orbit_mode = "internal" if line["execution_mode"] == "orbit_internal" else "chat"
             tmpl = line.get("task_template") or "analysis"
 
@@ -628,21 +876,14 @@ def maybe_start_task(chosen: list, owner_id: str) -> list:
                 proposal_id=line.get("proposal_id"),
             )
 
-            # Ersten Step je nach Template -- operativ differenziert
-            import json as _json
             template_steps = {
-                # analysis: Kimi-Todos und Kontext lesen, dann bewerten
-                "analysis": ("todos_read", _json.dumps({"action": "list", "project": "kimi"})),
-                # implementation: alle offenen Todos + Workspace
-                "implementation": ("todos_read", _json.dumps({"action": "list"})),
-                # review: Observations und letzte Aktivitaet sichten
-                "review": ("todos_read", _json.dumps({"action": "list", "project": "kimi"})),
-                # unblock: direkt pruefen was blockiert
-                "unblock": ("todos_read", _json.dumps({"action": "list", "status": "blocked"})),
-                # maintenance: Workspace-Zustand pruefen
-                "maintenance": ("code_exec", _json.dumps({"action": "list"})),
+                "analysis":       ("todos_read", _j.dumps({"action": "list", "project": "kimi"})),
+                "implementation": ("todos_read", _j.dumps({"action": "list"})),
+                "review":         ("todos_read", _j.dumps({"action": "list", "project": "kimi"})),
+                "unblock":        ("todos_read", _j.dumps({"action": "list", "status": "blocked"})),
+                "maintenance":    ("code_exec",  _j.dumps({"action": "list"})),
             }
-            step_tool, step_desc = template_steps.get(tmpl, ("todos_read", _json.dumps({"action": "list"})))
+            step_tool, step_desc = template_steps.get(tmpl, ("todos_read", _j.dumps({"action": "list"})))
 
             _orbit.create_step(
                 task_id=task_id,
@@ -655,32 +896,24 @@ def maybe_start_task(chosen: list, owner_id: str) -> list:
             _orbit.set_task_hot(task_id, True)
             start_todo(line["id"], task_id)
             started.append(task_id)
-            logger.info(f"Planner: Task {task_id[:8]} gestartet ({tmpl}) fuer Todo #{line['id']}")
+            logger.info(f"Planner: Task {task_id[:8]} ({tmpl}) fuer Todo #{line['id']}")
         except Exception as e:
-            logger.warning(f"Planner: Task-Start fehlgeschlagen fuer #{line['id']}: {e}")
+            logger.warning(f"Planner: Task-Start fehlgeschlagen #{line['id']}: {e}")
 
     return started
 
 
 # =============================================================================
-# 7. Haupteinstieg
+# 10. Haupteinstieg
 # =============================================================================
 
 def run_planner(owner_id: str, force: bool = False) -> dict:
-    """
-    Vollstaendiger Planner-Lauf V2.
-    """
     try:
-        logger.info("Planner V2: Start")
+        logger.info("Planner V3: Start")
         candidates = collect_candidates(owner_id)
-        logger.info(
-            f"Planner: {len(candidates['goals'])} Goals, "
-            f"{len(candidates['proposals'])} Proposals, "
-            f"{len(candidates['todos'])} Todos, "
-            f"{len(candidates['active_tasks'])} aktive Tasks"
-        )
+        situation  = _build_situation(candidates)
+        scored     = score_candidates(candidates, situation)
 
-        situation = _build_situation(candidates)
         logger.info(
             f"Lagebild: running={len(situation['running'])}, "
             f"waiting={len(situation['waiting'])}, "
@@ -688,55 +921,66 @@ def run_planner(owner_id: str, force: bool = False) -> dict:
             f"startable={len(situation['startable'])}"
         )
 
-        scored = score_candidates(candidates, situation)
-        result = choose_worklines(candidates, scored, owner_id)
+        result = choose_worklines(candidates, scored, owner_id, force_replan=force)
 
-        if result["action"] in (START_LINE, UNBLOCK_LINE, CONTINUE_LINE):
-            chosen = result.get("chosen", [])
-            started = maybe_start_task(chosen, owner_id)
+        if result["action"] in (CONTINUE_LINE, UNBLOCK_LINE, START_LINE):
+            started = maybe_start_task(result.get("chosen",[]), owner_id)
             result["started_tasks"] = started
         else:
             result["started_tasks"] = []
 
-        # Zustand aktualisieren
+        # Fokus persistieren
         primary = result.get("primary_line")
         secondary = result.get("secondary_line")
-        _update_state(
-            focus_todo_id=primary["id"] if primary and primary.get("kind") == "todo" else None,
-            focus_goal_id=primary.get("goal_id") if primary else None,
-            choice=result["action"],
-            deferred_ids={s["id"] for s in scored if s["decision"] in (DEFER, DROP_OR_PAUSE)},
+        if primary:
+            save_planner_focus(
+                owner_id=owner_id,
+                primary_type=primary.get("kind","todo"),
+                primary_id=primary["id"],
+                secondary_type=secondary.get("kind") if secondary else None,
+                secondary_id=secondary["id"] if secondary else None,
+                reason=result["reasoning"],
+                confidence=0.9 if result["action"] == CONTINUE_LINE else 0.7,
+            )
+
+        # Entscheidung historisch speichern
+        record_decision(
+            owner_id=owner_id,
+            action=result["action"],
+            primary_type=primary.get("kind") if primary else None,
+            primary_id=primary["id"] if primary else None,
+            secondary_type=secondary.get("kind") if secondary else None,
+            secondary_id=secondary["id"] if secondary else None,
+            reason=result["reasoning"],
+            replan_trigger=result.get("replan_trigger"),
+            deferred_ids=[d["id"] for d in result.get("deferred_lines",[])],
+            blocked_ids=[b["id"] for b in result.get("blocked_lines",[])],
+            stagnation_flags=[s["id"] for s in result.get("stagnation_flags",[])],
         )
 
-        logger.info(
-            f"Planner V2x: {result['action']} | "
-            f"primary={primary['id'] if primary else None} | "
-            f"secondary={secondary['id'] if secondary else None} | "
-            f"started={result['started_tasks']} | "
-            f"reason={result['reasoning'][:60]}"
-        )
-
-        # Planner-State als Observation speichern -- lesbar im Dashboard
+        # Als Observation speichern
         try:
             from core.todo_service import record_observation
-            state_summary = (
-                f"Planner: {result['action']} | "
+            obs_text = (
+                f"Planner V3: {result['action']} | "
                 f"Fokus: {primary['title'][:40] if primary else 'keins'} | "
-                f"Gestartet: {len(result['started_tasks'])} Tasks | "
-                f"Grund: {result['reasoning'][:80]}"
+                f"Replan-Trigger: {result.get('replan_trigger') or 'keiner'} | "
+                f"Gestartet: {len(result['started_tasks'])} Tasks"
             )
-            record_observation(
-                owner_id=owner_id,
-                content=state_summary,
-                obs_type="state_change",
-                task_id=None,
-            )
-        except Exception as _obs_e:
-            logger.debug(f"Planner-State Observation fehlgeschlagen (unkritisch): {_obs_e}")
+            record_observation(owner_id=owner_id, content=obs_text, obs_type="state_change")
+        except Exception:
+            pass
 
+        logger.info(
+            f"Planner V3: {result['action']} | "
+            f"primary={primary['id'] if primary else None} | "
+            f"trigger={result.get('replan_trigger')} | "
+            f"started={result['started_tasks']}"
+        )
         return result
 
     except Exception as e:
-        logger.warning(f"run_planner V2 fehlgeschlagen: {e}")
+        logger.warning(f"run_planner V3 fehlgeschlagen: {e}")
         return {"action": "error", "error": str(e), "chosen": [], "started_tasks": [],
-                "primary_line": None, "secondary_line": None, "blocked_lines": []}
+                "primary_line": None, "secondary_line": None,
+                "blocked_lines": [], "deferred_lines": [], "stagnation_flags": []}

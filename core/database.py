@@ -835,6 +835,43 @@ def init_kimi_b_schema(conn=None):
         except Exception:
             pass  # Spalte existiert bereits
 
+    # planner_state — persistenter Fokuszustand
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS planner_state (
+            id INTEGER PRIMARY KEY,
+            owner_id TEXT NOT NULL,
+            primary_line_type TEXT,
+            primary_line_id INTEGER,
+            secondary_line_type TEXT,
+            secondary_line_id INTEGER,
+            focus_since TEXT,
+            focus_reason TEXT,
+            replan_after TEXT,
+            focus_confidence REAL DEFAULT 1.0,
+            status TEXT DEFAULT 'active',
+            updated_at TEXT NOT NULL
+        )
+    """)
+
+    # planner_decisions — historische Entscheidungen
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS planner_decisions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_id TEXT NOT NULL,
+            action TEXT NOT NULL,
+            primary_line_type TEXT,
+            primary_line_id INTEGER,
+            secondary_line_type TEXT,
+            secondary_line_id INTEGER,
+            decision_reason TEXT,
+            replan_trigger TEXT,
+            deferred_ids TEXT,
+            blocked_ids TEXT,
+            stagnation_flags TEXT,
+            decided_at TEXT NOT NULL
+        )
+    """)
+
     # Observations — Ergebnisse von Steps und Wahrnehmungen
     conn.execute("""
         CREATE TABLE IF NOT EXISTS kimi_observations (

@@ -300,6 +300,40 @@ def api_todos_update(todo_id):
     return jsonify(get_todo(todo_id))
 
 
+@app.route("/api/planner/state")
+@require_auth
+def api_planner_state():
+    """Gibt aktuellen Planner-Fokus und letzte Entscheidungen zurueck."""
+    from core.planner import get_planner_focus
+    from core.database import get_connection
+    from config import USER_CONTEXTS
+    user_id = list(USER_CONTEXTS.keys())[0]
+
+    focus = get_planner_focus(user_id) or {}
+
+    conn = get_connection()
+    try:
+        decisions = [dict(r) for r in conn.execute(
+            "SELECT * FROM planner_decisions WHERE owner_id=? ORDER BY decided_at DESC LIMIT 10",
+            (user_id,)
+        ).fetchall()]
+    finally:
+        conn.close()
+
+    return jsonify({"focus": focus, "decisions": decisions})
+
+
+@app.route("/api/planner/run", methods=["POST"])
+@require_auth
+def api_planner_run():
+    """Manueller Planner-Lauf."""
+    from core.planner import run_planner
+    from config import USER_CONTEXTS
+    user_id = list(USER_CONTEXTS.keys())[0]
+    result = run_planner(user_id, force=True)
+    return jsonify(result)
+
+
 @app.route("/api/todos/<int:todo_id>", methods=["DELETE"])
 @require_auth
 def api_todos_delete(todo_id):
