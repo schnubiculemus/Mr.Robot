@@ -303,13 +303,14 @@ def api_todos_update(todo_id):
 @app.route("/api/planner/state")
 @require_auth
 def api_planner_state():
-    """Gibt aktuellen Planner-Fokus und letzte Entscheidungen zurueck."""
-    from core.planner import get_planner_focus
+    """Gibt aktuellen Planner-Fokus, Fokusdauer und letzte Entscheidungen zurueck."""
+    from core.planner import get_planner_focus, get_focus_duration_hours, run_planner
     from core.database import get_connection
     from config import USER_CONTEXTS
     user_id = list(USER_CONTEXTS.keys())[0]
 
     focus = get_planner_focus(user_id) or {}
+    focus_hours = get_focus_duration_hours(user_id)
 
     conn = get_connection()
     try:
@@ -317,10 +318,32 @@ def api_planner_state():
             "SELECT * FROM planner_decisions WHERE owner_id=? ORDER BY decided_at DESC LIMIT 10",
             (user_id,)
         ).fetchall()]
+        # Kandidaten-Lagebild
+        from core.planner import collect_candidates, _build_situation, score_candidates
+        cands = collect_candidates(user_id)
+        sit = _build_situation(cands)
+        scored = score_candidates(cands, sit)
+        lagebild = {
+            "running":   len(sit["running"]),
+            "waiting":   len(sit["waiting"]),
+            "blocked":   len(sit["blocked"]),
+            "startable": len(sit["startable"]),
+            "top_candidates": [
+                {"id": s["id"], "type": s["type"], "title": s["title"][:50],
+                 "decision": s["decision"], "score": s["score"],
+                 "stagnating": s.get("stagnating", False)}
+                for s in scored[:8]
+            ],
+        }
     finally:
         conn.close()
 
-    return jsonify({"focus": focus, "decisions": decisions})
+    return jsonify({
+        "focus":        focus,
+        "focus_hours":  round(focus_hours, 1),
+        "decisions":    decisions,
+        "lagebild":     lagebild,
+    })
 
 
 @app.route("/api/planner/run", methods=["POST"])

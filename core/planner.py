@@ -73,7 +73,8 @@ def get_planner_focus(owner_id: str) -> dict | None:
 def save_planner_focus(owner_id: str, primary_type: str, primary_id: int,
                        secondary_type: str = None, secondary_id: int = None,
                        reason: str = "", confidence: float = 1.0,
-                       replan_after_hours: int = REPLAN_AFTER_HOURS_DEFAULT) -> None:
+                       replan_after_hours: int = REPLAN_AFTER_HOURS_DEFAULT,
+                       paused: bool = False) -> None:
     """Speichert oder aktualisiert Planner-Fokus."""
     try:
         from core.database import get_connection
@@ -82,29 +83,32 @@ def save_planner_focus(owner_id: str, primary_type: str, primary_id: int,
         replan_dt = (datetime.datetime.now(datetime.timezone.utc)
                      + datetime.timedelta(hours=replan_after_hours))
         replan_after = replan_dt.isoformat()
+        status = "paused" if paused else "active"
 
         conn = get_connection()
         try:
             existing = conn.execute(
-                "SELECT id, focus_since FROM planner_state WHERE owner_id=?",
+                "SELECT id, focus_since, primary_line_id, primary_line_type FROM planner_state WHERE owner_id=?",
                 (owner_id,)
             ).fetchone()
 
+            # Fokusdauer berechnen
+            same_focus = (existing and
+                          existing["primary_line_id"] == primary_id and
+                          existing["primary_line_type"] == primary_type)
+            focus_since = existing["focus_since"] if same_focus else now
+
             if existing:
-                focus_since = existing["focus_since"] if (
-                    existing["primary_line_id"] == primary_id and
-                    existing["primary_line_type"] == primary_type
-                ) else now
                 conn.execute(
                     """UPDATE planner_state SET
                        primary_line_type=?, primary_line_id=?,
                        secondary_line_type=?, secondary_line_id=?,
                        focus_since=?, focus_reason=?, replan_after=?,
-                       focus_confidence=?, status='active', updated_at=?
+                       focus_confidence=?, status=?, updated_at=?
                        WHERE owner_id=?""",
                     (primary_type, primary_id, secondary_type, secondary_id,
                      focus_since, reason[:300], replan_after,
-                     confidence, now, owner_id)
+                     confidence, status, now, owner_id)
                 )
             else:
                 conn.execute(
@@ -113,17 +117,47 @@ def save_planner_focus(owner_id: str, primary_type: str, primary_id: int,
                         secondary_line_type, secondary_line_id,
                         focus_since, focus_reason, replan_after,
                         focus_confidence, status, updated_at)
-                       VALUES (?,?,?,?,?,?,?,?,?,'active',?)""",
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                     (owner_id, primary_type, primary_id,
                      secondary_type, secondary_id,
-                     now, reason[:300], replan_after,
-                     confidence, now)
+                     focus_since, reason[:300], replan_after,
+                     confidence, status, now)
                 )
             conn.commit()
+            logger.debug(f"Planner-Fokus: {primary_type}#{primary_id} "
+                        f"({'gleich' if same_focus else 'neu'}, seit {focus_since[:10]}, "
+                        f"confidence={confidence})")
         finally:
             conn.close()
     except Exception as e:
         logger.warning(f"save_planner_focus fehlgeschlagen: {e}")
+
+
+def get_focus_duration_hours(owner_id: str) -> float:
+    """Gibt an wie lange der aktuelle Fokus schon haelt (in Stunden)."""
+    focus = get_planner_focus(owner_id)
+    if not focus or not focus.get("focus_since"):
+        return 0.0
+    import datetime
+    try:
+        dt = datetime.datetime.fromisoformat(focus["focus_since"].replace("Z","+00:00"))
+        return (datetime.datetime.now(datetime.timezone.utc) - dt).total_seconds() / 3600
+    except Exception:
+        return 0.0
+
+
+def pause_focus(owner_id: str, reason: str = "") -> None:
+    """Setzt Fokus auf pausiert -- Linie bewusst geparkt."""
+    focus = get_planner_focus(owner_id)
+    if focus:
+        save_planner_focus(
+            owner_id=owner_id,
+            primary_type=focus.get("primary_line_type","todo"),
+            primary_id=focus.get("primary_line_id",0),
+            reason=f"Pausiert: {reason}",
+            paused=True,
+        )
+        logger.info(f"Planner-Fokus pausiert: {reason}")
 
 
 def record_decision(owner_id: str, action: str, primary_type: str = None,
@@ -627,6 +661,15 @@ def should_replan(owner_id: str, situation: dict,
     if high_relevance_new:
         return True, "neue_hochrelevante_linie"
 
+    # Fokus zu lange ohne echten Fortschritt?
+    focus_hours = get_focus_duration_hours(owner_id)
+    if focus_hours > 12 and focus.get("focus_confidence", 1.0) < 0.5:
+        return True, "fokus_zu_lange_ohne_fortschritt"
+
+    # Fokus pausiert?
+    if focus.get("status") == "paused":
+        return True, "fokus_pausiert"
+
     # Replan-Zeitpunkt erreicht?
     import datetime
     replan_after = focus.get("replan_after","")
@@ -689,12 +732,26 @@ def choose_worklines(candidates: dict, scored: list,
     unblock_cands  = [s for s in scored if s["decision"] == UNBLOCK_LINE and s.get("entblockbar")]
     start_cands    = [s for s in scored if s["decision"] == START_LINE]
 
-    if continue_cands:
-        primary = continue_cands[0]
-        secondary = (continue_cands[1] if len(continue_cands) > 1
-                     else start_cands[0] if start_cands else None)
-        return _build_result(primary, secondary, scored,
-                            "Laufende Arbeit fortsetzen.", CONTINUE_LINE, replan_trigger)
+    # waiting feiner differenzieren:
+    # waiting_feedback → fortsetzbar (F-Kognition laeuft)
+    # waiting_external → bewusst warten, nicht als Hauptlinie fuehren wenn startbare da
+    active_waiting   = [s for s in continue_cands
+                        if s.get("blocker_type") != BLOCKER_WAITING_EXTERNAL]
+    passive_waiting  = [s for s in continue_cands
+                        if s.get("blocker_type") == BLOCKER_WAITING_EXTERNAL]
+
+    # Aktiv fortsetzbare Linien bevorzugen
+    primary_pool = active_waiting if active_waiting else continue_cands
+
+    if primary_pool:
+        primary = primary_pool[0]
+        # Nebenlinie: zweite aktive Linie oder erste startbare
+        secondary_pool = [s for s in primary_pool[1:]] + start_cands
+        secondary = secondary_pool[0] if secondary_pool else None
+        reason = "Laufende Arbeit fortsetzen."
+        if passive_waiting and not active_waiting:
+            reason = "Warte auf externe Bedingung -- Nebenlinie starten falls moeglich."
+        return _build_result(primary, secondary, scored, reason, CONTINUE_LINE, replan_trigger)
 
     if unblock_cands:
         primary = unblock_cands[0]
@@ -702,6 +759,23 @@ def choose_worklines(candidates: dict, scored: list,
                             scored, "Blocker aufloesen hat Vorrang.", UNBLOCK_LINE, replan_trigger)
 
     if not start_cands:
+        # Kein startbares Todo -- aber proposal_ready_for_work kann als Hinweis-Linie dienen
+        ready_proposals = [s for s in scored
+                          if s["type"] == "proposal"
+                          and s.get("proposal_class") == "proposal_ready_for_work"]
+        if ready_proposals:
+            p = ready_proposals[0]
+            return {
+                "primary_line":     _format_line(p),
+                "secondary_line":   None,
+                "blocked_lines":    _format_blocked(scored),
+                "deferred_lines":   _format_deferred(scored),
+                "stagnation_flags": _format_stagnation(scored),
+                "action":           "proposal_ready",
+                "reasoning":        f"Proposal '{p['title'][:50]}' ist bereit -- braucht Genehmigung.",
+                "replan_trigger":   replan_trigger,
+                "chosen":           [],  # Proposal wird nicht gestartet
+            }
         return {
             "primary_line": None, "secondary_line": None,
             "blocked_lines": _format_blocked(scored),
