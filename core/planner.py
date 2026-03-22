@@ -309,7 +309,7 @@ def collect_candidates(owner_id: str) -> dict:
                 if len(recent_obs[tid]) < 10:
                     recent_obs[tid].append({"type": r["type"], "content": r["content"]})
 
-        # 7.5: Workspace-Artefaktstand pro Todo lesen
+        # 7.5: Workspace-Artefaktstand pro Todo lesen -- inkl. Artefakttypen
         workspace_states = {}
         try:
             ws_rows = conn.execute(
@@ -317,6 +317,30 @@ def collect_candidates(owner_id: str) -> dict:
             ).fetchall()
             for ws in ws_rows:
                 workspace_states[ws["line_id"]] = dict(ws)
+
+            # Artefakt-Typen pro Linie ermitteln (welche Typen existieren aktiv)
+            art_rows = conn.execute(
+                "SELECT line_id, artifact_type, status FROM workspace_artifacts WHERE status IN ('active','final')"
+            ).fetchall()
+            for ar in art_rows:
+                lid = ar["line_id"]
+                if lid not in workspace_states:
+                    workspace_states[lid] = {}
+                types = workspace_states[lid].get("artifact_types", set())
+                types.add(ar["artifact_type"])
+                workspace_states[lid]["artifact_types"] = types
+
+            # Letzten aktiven Artefakttyp pro Linie
+            latest_rows = conn.execute(
+                """SELECT line_id, artifact_type FROM workspace_artifacts
+                   WHERE status='active'
+                   GROUP BY line_id
+                   HAVING MAX(created_at)"""
+            ).fetchall()
+            for lr in latest_rows:
+                lid = lr["line_id"]
+                if lid in workspace_states:
+                    workspace_states[lid]["latest_active_type"] = lr["artifact_type"]
         except Exception:
             pass
 
@@ -696,11 +720,25 @@ def score_candidates(candidates: dict, situation: dict, owner_id: str = "") -> l
         ws_state = (candidates.get("workspace_states") or {}).get(line_id, {})
         has_materialized = bool(ws_state.get("latest_materialized_artifact_id"))
         has_artifacts = (ws_state.get("artifact_count") or 0) > 0
+        artifact_types = ws_state.get("artifact_types", set())
+        latest_active_type = ws_state.get("latest_active_type", "")
+
+        # 7.5: Naechster empfohlener Artefakttyp aus Linienprogression
+        # brief -> analysis -> plan -> implementation -> result -> report
+        ARTIFACT_PROGRESSION = ["brief","analysis","plan","implementation","result","report"]
+        next_artifact_type = "brief"
+        for t in ARTIFACT_PROGRESSION:
+            if t not in artifact_types:
+                next_artifact_type = t
+                break
+        else:
+            next_artifact_type = "report"  # alle da -- Bericht
+
         workspace_bonus = 0.0
         if has_materialized:
-            workspace_bonus = 1.5  # Hat echten Vollzug -- staerker fortsetzen
+            workspace_bonus = 1.5  # Hat echten Vollzug
         elif has_artifacts:
-            workspace_bonus = 0.5  # Hat Artefakte -- leichter bevorzugen
+            workspace_bonus = 0.5  # Hat Artefakte
         if workspace_bonus > 0:
             score += workspace_bonus
 
@@ -743,9 +781,12 @@ def score_candidates(candidates: dict, situation: dict, owner_id: str = "") -> l
             "execution_required":  execution_required,
             "meta_cycle_count":    todo.get("meta_cycle_count") or 0,
             "first_meaningful_execution": todo.get("first_meaningful_execution"),
-            "workspace_bonus":     workspace_bonus,
-            "has_materialized":    has_materialized,
-            "has_artifacts":       has_artifacts,
+            "workspace_bonus":      workspace_bonus,
+            "has_materialized":     has_materialized,
+            "has_artifacts":        has_artifacts,
+            "artifact_types":       list(artifact_types),
+            "latest_active_type":   latest_active_type,
+            "next_artifact_type":   next_artifact_type,
             "last_workspace_write": ws_state.get("last_workspace_write_at"),
         }
 

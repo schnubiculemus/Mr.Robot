@@ -924,6 +924,148 @@ def no_action(reason: str, context: str = "", trigger_refs: list = None) -> str:
 # =============================================================================
 
 
+def _auto_trigger_brief(task_id: str, owner_id: str, line_id: str, goal: str) -> None:
+    """7.4: Erzeugt automatisch ein brief-Artefakt beim Linienstart."""
+    try:
+        from core.gate_service import execute_write
+        params = {
+            "action": "artifact_create",
+            "line_id": line_id,
+            "artifact_type": "brief",
+            "format": "md",
+            "purpose": "line_bootstrap",
+            "content": f"# Linienstart: {goal[:80]}\n\nTask: {task_id[:8]}\n\n*Automatisch beim Start angelegt.*",
+        }
+        def _do(p):
+            from core.workspace_artifact_service import create_artifact
+            art = create_artifact(
+                owner_id=owner_id, line_id=p["line_id"],
+                artifact_type="brief", format="md",
+                content=p["content"], purpose="line_bootstrap",
+                task_id=task_id,
+            )
+            return {"success": bool(art), "result": f"Brief #{art['id']}" if art else "Fehler",
+                    "artifact_id": art["id"] if art else None}
+        execute_write("workspace.artifact_create", params, owner_id, _do, task_id=task_id)
+        logger.info(f"7.4: Brief-Artefakt fuer Task {task_id[:8]} angelegt")
+    except Exception as e:
+        logger.debug(f"_auto_trigger_brief fehlgeschlagen (unkritisch): {e}")
+
+
+def _auto_trigger_result(task_id: str, owner_id: str, line_id: str,
+                          goal: str, summary: str = "") -> None:
+    """7.4: Materialisiert automatisch ein result-Artefakt bei Task-Abschluss."""
+    try:
+        from core.gate_service import execute_write
+        artifact_content = f"# Abschluss: {goal[:80]}\n\n**Task:** {task_id[:8]}\n\n"
+        if summary:
+            artifact_content += f"**Zusammenfassung:**\n{summary}\n"
+        params = {
+            "action": "materialize_execution",
+            "line_id": line_id,
+            "content": artifact_content,
+            "format": "md",
+        }
+        def _do(p):
+            from core.workspace_artifact_service import materialize_execution_artifact
+            art = materialize_execution_artifact(
+                owner_id=owner_id, line_id=p["line_id"],
+                content=p["content"], format="md",
+                task_id=task_id,
+            )
+            return {"success": bool(art), "result": f"Result #{art['id']}" if art else "Fehler",
+                    "artifact_id": art["id"] if art else None}
+        execute_write("workspace.materialize_execution", params, owner_id, _do, task_id=task_id)
+        logger.info(f"7.4: Result-Artefakt fuer Task {task_id[:8]} materialisiert")
+    except Exception as e:
+        logger.debug(f"_auto_trigger_result fehlgeschlagen (unkritisch): {e}")
+
+
+# =============================================================================
+# 7.4 Trigger-Matrix
+# =============================================================================
+# Definiert wann welches Artefakt automatisch erzeugt wird:
+#
+# Linienstart          -> brief     (line_bootstrap)        [_auto_trigger_brief]
+# Task-Abschluss       -> result    (execution_result)      [_auto_trigger_result]
+# Stagnation erkannt   -> worklog   (working_state)         [_auto_trigger_worklog_stagnation]
+# Mehrere Steps gelaufen -> analysis (working_state)        [_auto_trigger_analysis]
+
+TRIGGER_MATRIX = {
+    "linienstart":          ("brief",    "line_bootstrap",   False),
+    "task_abschluss":       ("result",   "execution_result", True),   # is_materialized
+    "stagnation":           ("worklog",  "working_state",    False),
+    "zwischenstand":        ("analysis", "working_state",    False),
+}
+
+
+def _auto_trigger_analysis(task_id: str, owner_id: str, line_id: str,
+                             observations: str = "") -> None:
+    """
+    7.4: Zwischenstand-Trigger -- nach mehreren Steps ohne Abschluss.
+    Erzeugt ein analysis-Artefakt als Arbeitsstand.
+    """
+    try:
+        from core.gate_service import execute_write
+        artifact_content = f"# Zwischenstand\n\n**Task:** {task_id[:8]}\n\n"
+        if observations:
+            artifact_content += f"**Bisherige Beobachtungen:**\n{observations[:800]}\n"
+        params = {
+            "action": "artifact_create",
+            "line_id": line_id,
+            "artifact_type": "analysis",
+            "format": "md",
+            "purpose": "working_state",
+            "content": artifact_content,
+        }
+        def _do(p):
+            from core.workspace_artifact_service import create_artifact
+            art = create_artifact(
+                owner_id=owner_id, line_id=p["line_id"],
+                artifact_type="analysis", format="md",
+                content=p["content"], purpose="working_state",
+                task_id=task_id,
+            )
+            return {"success": bool(art), "result": f"Analysis #{art['id']}" if art else "Fehler",
+                    "artifact_id": art["id"] if art else None}
+        execute_write("workspace.artifact_create", params, owner_id, _do, task_id=task_id)
+        logger.info(f"7.4: Analysis-Artefakt Zwischenstand fuer Task {task_id[:8]}")
+    except Exception as e:
+        logger.debug(f"_auto_trigger_analysis fehlgeschlagen (unkritisch): {e}")
+
+
+def _should_trigger_analysis(task_id: str) -> tuple[bool, str]:
+    """
+    Prueft ob ein Zwischenstand-Trigger sinnvoll ist:
+    >= 3 abgeschlossene Steps und noch kein analysis-Artefakt fuer die Linie.
+    """
+    try:
+        from core.database import get_connection
+        conn = get_connection()
+        step_count = conn.execute(
+            "SELECT COUNT(*) as n FROM orbit_steps WHERE task_id=? AND status='done'",
+            (task_id,)
+        ).fetchone()["n"]
+        conn.close()
+        if step_count < 3:
+            return False, ""
+        # Task -> linked_todo -> line_id pruefen ob schon analysis da
+        conn2 = get_connection()
+        task = conn2.execute("SELECT linked_todo_id FROM orbit_tasks WHERE id=?",
+                              (task_id,)).fetchone()
+        conn2.close()
+        if not task or not task["linked_todo_id"]:
+            return False, ""
+        line_id = f"todo:{task['linked_todo_id']}"
+        from core.workspace_artifact_service import list_line_artifacts
+        existing = list_line_artifacts(line_id, artifact_type="analysis", status="active")
+        if existing:
+            return False, ""  # schon da
+        return True, line_id
+    except Exception:
+        return False, ""
+
+
 def _auto_create_steps(task_id: str, goal: str, user_id: str) -> None:
     """
     Baustein 2 -- Kimi leitet aus einem Goal automatisch Steps ab.
@@ -2274,6 +2416,21 @@ def task_transition(task_id: str, new_status: str, reason: str = None,
                              summary=f"Task {task_id[:8]} abgeschlossen",
                              task_id=task_id)
                 logger.info(f"task_transition: Todo #{task_obj['linked_todo_id']} automatisch erledigt")
+                # 7.4: Result-Artefakt bei Abschluss
+                try:
+                    linked = task_obj.get("linked_todo_id")
+                    _owner = task_obj.get("owner_id","")
+                    if not _owner:
+                        from config import OWNER_ID
+                        _owner = OWNER_ID
+                    _auto_trigger_result(
+                        task_id, _owner,
+                        f"todo:{linked}",
+                        task_obj.get("goal",""),
+                        summary=reason or "",
+                    )
+                except Exception:
+                    pass
 
             # Bei failed/aborted -> Todo auf blocked
             elif new_status in ("failed", "aborted") and task_obj and task_obj.get("linked_todo_id"):
@@ -2543,6 +2700,17 @@ def _execute_step(step: dict, task_id: str) -> None:
 
     if result["success"]:
         step_transition(step_id, "done", reason=f"Tool {tool_ref} erfolgreich")
+
+        # 7.4: Zwischenstand-Analyse-Trigger nach mehreren Steps
+        try:
+            trigger_ok, line_id_for_analysis = _should_trigger_analysis(task_id)
+            if trigger_ok:
+                t_obj_a = get_task(task_id)
+                _owner_a = _owner_id
+                obs_text = result_summary if 'result_summary' in dir() else str(result.get("result",""))[:300]
+                _auto_trigger_analysis(task_id, _owner_a, line_id_for_analysis, obs_text)
+        except Exception:
+            pass
 
         # 6.1 + 7.5: first_meaningful_execution tracken + Artefakt materialisieren
         if result.get("audit_id"):

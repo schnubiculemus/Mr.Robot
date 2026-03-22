@@ -557,13 +557,22 @@ def build_line_manifest(line_id: str) -> dict:
 
 
 def rebuild_artifact_index(line_id: str) -> bool:
-    """Schreibt artifact_index.json in meta/."""
+    """Schreibt artifact_index.json + line_manifest.json in meta/."""
     try:
         ensure_line_structure(line_id)
         manifest = build_line_manifest(line_id)
-        idx_path = os.path.join(get_line_root(line_id), "meta", "artifact_index.json")
+        meta_dir = os.path.join(get_line_root(line_id), "meta")
+
+        # artifact_index.json
+        idx_path = os.path.join(meta_dir, "artifact_index.json")
         with open(idx_path, "w", encoding="utf-8") as f:
             json.dump(manifest, f, indent=2, ensure_ascii=False)
+
+        # Prio 2: line_manifest.json persistent schreiben
+        manifest_path = os.path.join(meta_dir, "line_manifest.json")
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, indent=2, ensure_ascii=False)
+
         return True
     except Exception as e:
         logger.error(f"rebuild_artifact_index fehlgeschlagen: {e}")
