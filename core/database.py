@@ -853,6 +853,34 @@ def init_kimi_b_schema(conn=None):
         )
     """)
 
+    # write_requests — Preview/Approval-Lebenszyklus fuer mittlere Writes (5.2)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS write_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_id TEXT NOT NULL,
+            task_id TEXT,
+            step_id TEXT,
+            action_key TEXT NOT NULL,
+            tool_ref TEXT NOT NULL,
+            risk_class TEXT NOT NULL,
+            target_ref TEXT,
+            target_scope TEXT,
+            preview_payload TEXT,
+            preview_text TEXT,
+            reason TEXT,
+            approval_status TEXT NOT NULL DEFAULT 'pending',
+            approval_required INTEGER NOT NULL DEFAULT 1,
+            approved_by TEXT,
+            rejected_reason TEXT,
+            created_at TEXT NOT NULL,
+            approved_at TEXT,
+            executed_at TEXT,
+            expires_at TEXT,
+            verification_status TEXT,
+            audit_id INTEGER
+        )
+    """)
+
     # write_audit — Audit-Trail fuer alle Schreiboperationen (5.x)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS write_audit (

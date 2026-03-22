@@ -375,20 +375,27 @@ def api_planner_state():
     except Exception:
         write_audit = []
 
+    # Pending Write-Requests
+    try:
+        from core.gate_service import get_pending_write_requests
+        pending_writes = get_pending_write_requests(user_id)
+    except Exception:
+        pending_writes = []
+
     return jsonify({
-        "focus":        focus,
-        "focus_hours":  round(focus_hours, 1),
-        "decisions":    decisions,
-        "lagebild":     lagebild,
-        "hierarchy":    hierarchy,
-        "write_audit":  write_audit,
+        "focus":          focus,
+        "focus_hours":    round(focus_hours, 1),
+        "decisions":      decisions,
+        "lagebild":       lagebild,
+        "hierarchy":      hierarchy,
+        "write_audit":    write_audit,
+        "pending_writes": pending_writes,
     })
 
 
 @app.route("/api/write-audit")
 @require_auth
 def api_write_audit():
-    """Letzte Write-Audit-Eintraege."""
     from core.database import get_connection
     limit = int(request.args.get("limit", 20))
     conn = get_connection()
@@ -399,6 +406,42 @@ def api_write_audit():
     finally:
         conn.close()
     return jsonify(rows)
+
+
+@app.route("/api/write-requests")
+@require_auth
+def api_write_requests():
+    """Offene und letzte Write-Requests."""
+    from core.gate_service import get_pending_write_requests
+    from core.database import get_connection
+    from config import USER_CONTEXTS
+    user_id = list(USER_CONTEXTS.keys())[0]
+    pending = get_pending_write_requests(user_id)
+    conn = get_connection()
+    try:
+        recent = [dict(r) for r in conn.execute(
+            "SELECT * FROM write_requests WHERE owner_id=? ORDER BY created_at DESC LIMIT 20",
+            (user_id,)
+        ).fetchall()]
+    finally:
+        conn.close()
+    return jsonify({"pending": pending, "recent": recent})
+
+
+@app.route("/api/write-requests/<int:req_id>/action", methods=["POST"])
+@require_auth
+def api_write_request_action(req_id):
+    """Approve oder Reject eines Write-Requests."""
+    from core.gate_service import approve_write_request, reject_write_request
+    data = request.json or {}
+    action = data.get("action")
+    if action == "approve":
+        result = approve_write_request(req_id, approved_by="dashboard")
+        return jsonify(result)
+    elif action == "reject":
+        ok = reject_write_request(req_id, reason=data.get("reason",""), rejected_by="dashboard")
+        return jsonify({"ok": ok})
+    return jsonify({"error": "Unbekannte Aktion"}), 400
 
 
 @app.route("/api/planner/run", methods=["POST"])

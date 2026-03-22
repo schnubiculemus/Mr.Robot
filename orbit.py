@@ -3577,8 +3577,35 @@ def _dispatch_tool(tool_ref: str, action: str, params: dict) -> object:
     """
     # Kalender
     if tool_ref in ("calendar_read", "calendar_write", "calendar_change", "calendar_delete"):
-        from core.calendar.calendar_router import execute_calendar_action
-        return execute_calendar_action({"action": action, **params})
+        # Lesen: direkt
+        if tool_ref == "calendar_read":
+            from core.calendar.calendar_router import execute_calendar_action
+            return execute_calendar_action({"action": action, **params})
+
+        # Schreiben: 5.2 Gate -- needs_approval fuer calendar_write/change
+        from core.gate_service import execute_write, build_calendar_preview
+        action_key = f"calendar.{action}" if action else f"calendar.{tool_ref.replace('calendar_','')}"
+
+        def _do_cal(p):
+            from core.calendar.calendar_router import execute_calendar_action
+            return execute_calendar_action({"action": action, **p})
+
+        gresult = execute_write(action_key, params, _owner_id, _do_cal,
+                                task_id=task_id, step_id=step_id)
+
+        if gresult.get("pending"):
+            # Write-Request angelegt -- Task auf waiting_user_decision
+            if task_id:
+                update_task(task_id, status="waiting")
+            return {"success": False, "pending": True,
+                    "result": gresult.get("message","Write-Request angelegt"),
+                    "write_request_id": gresult.get("write_request_id"),
+                    "preview": gresult.get("preview")}
+
+        return {"success": gresult["ok"],
+                "result": gresult.get("result") or gresult.get("error"),
+                "error": gresult.get("error"),
+                "audit_id": gresult.get("audit_id")}
 
     # Todos / Listen
     if tool_ref in ("todos_read", "todos_write", "todos_delete"):
