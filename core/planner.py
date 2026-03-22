@@ -298,12 +298,24 @@ def collect_candidates(owner_id: str) -> dict:
                 if len(recent_obs[tid]) < 10:
                     recent_obs[tid].append({"type": r["type"], "content": r["content"]})
 
+        # 5.4: Offene Write-Requests als Linien
+        write_request_lines = [dict(r) for r in conn.execute(
+            """SELECT id, action_key, approval_status, origin_todo_id, line_status,
+                      after_approve_action, after_reject_action, task_id, deferred_until,
+                      preview_text, reason, created_at
+               FROM write_requests
+               WHERE owner_id=? AND approval_status IN ('pending','deferred')
+               ORDER BY created_at DESC LIMIT 10""",
+            (owner_id,)
+        ).fetchall()]
+
         return {
-            "goals":        goals,
-            "proposals":    proposals,
-            "todos":        todos,
-            "active_tasks": active_tasks,
-            "recent_obs":   recent_obs,
+            "goals":               goals,
+            "proposals":           proposals,
+            "todos":               todos,
+            "active_tasks":        active_tasks,
+            "recent_obs":          recent_obs,
+            "write_request_lines": write_request_lines,
         }
     finally:
         conn.close()
@@ -1208,11 +1220,34 @@ def run_planner(owner_id: str, force: bool = False) -> dict:
         except Exception:
             pass
 
+        # 5.4: Deferred Write-Requests -- zugehoerige Todos nicht starten
+        import datetime as _dt
+        write_reqs = candidates.get("write_request_lines", [])
+        deferred_todo_ids = set()
+        for wr in write_reqs:
+            if wr.get("approval_status") == "deferred" and wr.get("deferred_until"):
+                try:
+                    def_until = _dt.datetime.fromisoformat(
+                        wr["deferred_until"].replace("Z", "+00:00"))
+                    if _dt.datetime.now(_dt.timezone.utc) < def_until:
+                        if wr.get("origin_todo_id"):
+                            deferred_todo_ids.add(int(wr["origin_todo_id"]))
+                except Exception:
+                    pass
+
+        if deferred_todo_ids:
+            result["started_tasks"] = [
+                t for t in result.get("started_tasks", [])
+                if t not in deferred_todo_ids
+            ]
+            logger.info(f"Planner 5.4: {len(deferred_todo_ids)} Todos wegen Defer uebersprungen")
+
         logger.info(
-            f"Planner V3: {result['action']} | "
+            f"Planner: {result['action']} | "
             f"primary={primary['id'] if primary else None} | "
             f"trigger={result.get('replan_trigger')} | "
-            f"started={result['started_tasks']}"
+            f"started={result['started_tasks']} | "
+            f"write_reqs={len(write_reqs)}"
         )
         return result
 

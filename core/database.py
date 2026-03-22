@@ -880,6 +880,18 @@ def init_kimi_b_schema(conn=None):
             audit_id INTEGER
         )
     """)
+    # 5.4: Linienkontext-Felder nachrüsten
+    for _wr_col, _wr_type in [
+        ("deferred_until", "TEXT"), ("decision_due_at", "TEXT"),
+        ("origin_todo_id", "INTEGER"), ("origin_goal_id", "INTEGER"),
+        ("after_approve_action", "TEXT"), ("after_reject_action", "TEXT"),
+        ("secondary_line_id", "INTEGER"), ("secondary_line_type", "TEXT"),
+        ("line_status", "TEXT"),
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE write_requests ADD COLUMN {_wr_col} {_wr_type}")
+        except Exception:
+            pass
 
     # write_audit — Audit-Trail fuer alle Schreiboperationen (5.x)
     conn.execute("""

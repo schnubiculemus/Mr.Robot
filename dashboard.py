@@ -375,10 +375,45 @@ def api_planner_state():
     except Exception:
         write_audit = []
 
-    # Pending Write-Requests
+    # Pending Write-Requests mit Linienkontext (5.4)
     try:
         from core.gate_service import get_pending_write_requests
-        pending_writes = get_pending_write_requests(user_id)
+        pending_writes_raw = get_pending_write_requests(user_id)
+        pending_writes = []
+        from core.database import get_connection as _gc6
+        _c6 = _gc6()
+        for wr in pending_writes_raw:
+            enriched = dict(wr)
+            # Hauptlinie (origin_todo)
+            if wr.get("origin_todo_id"):
+                try:
+                    row = _c6.execute("SELECT title FROM todos WHERE id=?",
+                                      (int(wr["origin_todo_id"]),)).fetchone()
+                    if row:
+                        enriched["origin_todo_title"] = row["title"][:50]
+                except Exception:
+                    pass
+            # Nebenlinie
+            if wr.get("secondary_line_id"):
+                try:
+                    row = _c6.execute("SELECT title FROM todos WHERE id=?",
+                                      (int(wr["secondary_line_id"]),)).fetchone()
+                    if row:
+                        enriched["secondary_line_title"] = row["title"][:40]
+                except Exception:
+                    pass
+            # Approve/Reject Labels
+            enriched["after_approve_label"] = {
+                "continue_line": "Linie fortsetzen",
+                "complete_line": "Linie abschliessen",
+            }.get(wr.get("after_approve_action","continue_line"), "Fortsetzen")
+            enriched["after_reject_label"] = {
+                "replan": "Umplanen",
+                "pause":  "Pausieren",
+                "close":  "Beenden",
+            }.get(wr.get("after_reject_action","replan"), "Umplanen")
+            pending_writes.append(enriched)
+        _c6.close()
     except Exception:
         pending_writes = []
 

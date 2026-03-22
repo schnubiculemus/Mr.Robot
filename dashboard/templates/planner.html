@@ -163,12 +163,16 @@ function render(data) {
           <span style="font-weight:600;font-size:0.85rem">${r.action_key}</span>
           <span style="font-size:0.72rem;color:var(--text-muted);margin-left:auto">#${r.id}</span>
         </div>
-        ${r.preview_text ? `<div style="font-size:0.8rem;color:var(--text-muted);margin-bottom:0.5rem;padding:0.4rem 0.5rem;background:var(--bg);border-radius:4px">&#128269; ${r.preview_text}</div>` : ''}
-        ${r.reason ? `<div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:0.5rem">Grund: ${r.reason}</div>` : ''}
-        <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:0.4rem">
-          ${r.task_id ? 'Task: '+r.task_id.substring(0,8) : ''}
-          ${r.created_at ? ' &middot; ' + new Date(r.created_at).toLocaleString('de',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}) : ''}
-          ${r.expires_at ? ' &middot; laeuft ab: ' + new Date(r.expires_at).toLocaleString('de',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}) : ''}
+        ${r.preview_text ? `<div style="font-size:0.8rem;color:var(--text-muted);margin-bottom:0.4rem;padding:0.4rem 0.5rem;background:var(--bg);border-radius:4px">&#128269; ${r.preview_text}</div>` : ''}
+        ${r.origin_todo_title ? `<div style="font-size:0.78rem;margin-bottom:0.25rem"><span style="color:var(--text-muted)">Hauptlinie:</span> <strong>${r.origin_todo_title}</strong></div>` : ''}
+        ${r.secondary_line_title ? `<div style="font-size:0.75rem;margin-bottom:0.25rem;color:var(--text-muted)">Nebenlinie: ${r.secondary_line_title}</div>` : ''}
+        ${r.reason ? `<div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:0.25rem">Grund: ${r.reason}</div>` : ''}
+        <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:0.4rem;display:flex;gap:0.6rem;flex-wrap:wrap">
+          ${r.task_id ? '<span>Task: '+r.task_id.substring(0,8)+'</span>' : ''}
+          ${r.created_at ? '<span>'+new Date(r.created_at).toLocaleString('de',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})+'</span>' : ''}
+          ${r.expires_at ? '<span style="color:#f59e0b">&#8987; '+new Date(r.expires_at).toLocaleString('de',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})+'</span>' : ''}
+          ${r.after_approve_label ? '<span style="color:#10b981">&#10003; '+r.after_approve_label+'</span>' : ''}
+          ${r.after_reject_label ? '<span style="color:#ef4444">&#10007; '+r.after_reject_label+'</span>' : ''}
         </div>
         <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
           <button onclick="approveWrite(${r.id})" style="padding:0.3rem 0.75rem;background:#10b981;color:white;border:none;border-radius:5px;cursor:pointer;font-size:0.78rem">&#10003; Freigeben</button>

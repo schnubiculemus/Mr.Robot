@@ -254,7 +254,13 @@ def write_audit(owner_id: str, action_type: str, tool_ref: str,
 def create_write_request(owner_id: str, action_key: str, params: dict,
                           preview_text: str, reason: str = "",
                           task_id: str = None, step_id: str = None,
-                          expires_hours: int = 24) -> dict | None:
+                          expires_hours: int = 24,
+                          origin_todo_id: int = None,
+                          origin_goal_id: int = None,
+                          after_approve_action: str = "continue_line",
+                          after_reject_action: str = "replan",
+                          secondary_line_id: int = None,
+                          secondary_line_type: str = None) -> dict | None:
     """
     Legt einen Write-Request an -- Preview-Entitaet fuer Approval-Flow.
     Gibt den angelegten Request zurueck.
@@ -273,18 +279,35 @@ def create_write_request(owner_id: str, action_key: str, params: dict,
 
         conn = get_connection()
         try:
+            # origin_todo_id aus task ableiten falls nicht explizit
+            _origin_todo_id = origin_todo_id
+            if not _origin_todo_id and task_id:
+                try:
+                    t = conn.execute("SELECT linked_todo_id FROM orbit_tasks WHERE id=?", (task_id,)).fetchone()
+                    if t and t["linked_todo_id"]:
+                        _origin_todo_id = t["linked_todo_id"]
+                except Exception:
+                    pass
+
             cur = conn.execute(
                 """INSERT INTO write_requests
                    (owner_id, task_id, step_id, action_key, tool_ref, risk_class,
                     target_ref, target_scope, preview_payload, preview_text,
                     reason, approval_status, approval_required,
-                    created_at, expires_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,'pending',?,?,?)""",
+                    created_at, expires_at,
+                    origin_todo_id, origin_goal_id,
+                    after_approve_action, after_reject_action,
+                    secondary_line_id, secondary_line_type,
+                    line_status)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,?,?,?,?,?,?,'pending_approval')""",
                 (owner_id, task_id, step_id, action_key, tool_ref,
                  policy["class"], target_ref, target_scope,
                  json.dumps(params), preview_text[:1000],
                  reason[:300], 1 if policy.get("approval") else 0,
-                 now, expires_at)
+                 now, expires_at,
+                 _origin_todo_id, origin_goal_id,
+                 after_approve_action, after_reject_action,
+                 secondary_line_id, secondary_line_type)
             )
             conn.commit()
             req_id = cur.lastrowid
@@ -385,14 +408,37 @@ def approve_write_request(req_id: int, approved_by: str = "user") -> dict:
     except Exception as e:
         logger.warning(f"approve_write_request: Status-Update fehlgeschlagen: {e}")
 
-    # Task aus waiting_user_decision loesen
-    if req.get("task_id") and result["ok"]:
+    # 5.4: Differenzierte Approve-Folge
+    after_approve = req.get("after_approve_action", "continue_line")
+    if result["ok"] and req.get("task_id"):
+        try:
+            import orbit as _orbit
+            if after_approve == "complete_line":
+                _orbit.task_transition(req["task_id"], "completed", reason="Approve: abgeschlossen")
+                logger.info(f"approve: Task {req['task_id'][:8]} -> completed")
+            else:  # continue_line (default)
+                _orbit.update_task(req["task_id"], status="active")
+                logger.info(f"approve: Task {req['task_id'][:8]} -> active (continue_line)")
+        except Exception as e:
+            logger.debug(f"approve: Task-Folge fehlgeschlagen: {e}")
+    elif not result["ok"] and req.get("task_id"):
+        # Write fehlgeschlagen nach Approval -- Task reaktivieren, Planner soll umplanen
         try:
             import orbit as _orbit
             _orbit.update_task(req["task_id"], status="active")
-            logger.info(f"approve_write_request: Task {req['task_id'][:8]} -> active")
-        except Exception as e:
-            logger.debug(f"approve_write_request: Task-Status-Update fehlgeschlagen: {e}")
+        except Exception:
+            pass
+
+    # line_status aktualisieren
+    try:
+        from core.database import get_connection as _gc4
+        _c4 = _gc4()
+        _c4.execute("UPDATE write_requests SET line_status=? WHERE id=?",
+                    ("executed" if result["ok"] else "failed", req_id))
+        _c4.commit()
+        _c4.close()
+    except Exception:
+        pass
 
     return result
 
@@ -416,23 +462,38 @@ def reject_write_request(req_id: int, reason: str = "", rejected_by: str = "user
         finally:
             conn.close()
 
-        # Task aus waiting_user_decision auf failed -- Planner soll umplanen
+        # 5.4: Differenzierte Reject-Folge
+        after_reject = req.get("after_reject_action", "replan") if req else "replan"
         if req and req.get("task_id"):
             try:
                 import orbit as _orbit
-                _orbit.update_task(req["task_id"], status="active")
-                # Rejection als Observation speichern
-                from core.todo_service import record_observation
-                from config import OWNER_ID
-                record_observation(
-                    owner_id=req.get("owner_id", OWNER_ID),
-                    content=f"Write-Request #{req_id} abgelehnt: {reason[:100] or 'kein Grund'}",
-                    obs_type="blocker",
-                    task_id=req["task_id"],
-                )
-                logger.info(f"reject: Task {req['task_id'][:8]} -> active (Planner soll umplanen)")
+                obs_content = f"Write-Request #{req_id} abgelehnt: {reason[:100] or 'kein Grund'}"
+                if after_reject == "pause":
+                    _orbit.update_task(req["task_id"], status="waiting")
+                    logger.info(f"reject: Task {req['task_id'][:8]} -> waiting (pause)")
+                elif after_reject == "close":
+                    _orbit.task_transition(req["task_id"], "aborted", reason=f"Reject: {reason[:60]}")
+                    logger.info(f"reject: Task {req['task_id'][:8]} -> aborted")
+                else:  # replan (default)
+                    _orbit.update_task(req["task_id"], status="active")
+                    logger.info(f"reject: Task {req['task_id'][:8]} -> active (replan)")
+                # Observation schreiben
+                try:
+                    from core.todo_service import record_observation
+                    from config import OWNER_ID
+                    record_observation(owner_id=req.get("owner_id", OWNER_ID),
+                                       content=obs_content, obs_type="blocker",
+                                       task_id=req["task_id"])
+                except Exception:
+                    pass
+                # line_status
+                from core.database import get_connection as _gc5
+                _c5 = _gc5()
+                _c5.execute("UPDATE write_requests SET line_status='rejected' WHERE id=?", (req_id,))
+                _c5.commit()
+                _c5.close()
             except Exception as e:
-                logger.debug(f"reject: Task-Reaktivierung fehlgeschlagen: {e}")
+                logger.debug(f"reject: Folge fehlgeschlagen: {e}")
         return True
     except Exception as e:
         logger.warning(f"reject_write_request fehlgeschlagen: {e}")
