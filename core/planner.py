@@ -49,9 +49,10 @@ BLOCKER_WAITING_FOLLOWUP  = "waiting_internal_followup"
 FOCUS_MIN_HOURS = 1.5
 
 # 6.x Konstanten
-W_EXECUTION_PRESSURE   = 3.0   # Bonus fuer Linien unter Umsetzungsdruck
-META_CYCLE_THRESHOLD   = 3     # Anzahl Meta-Zyklen bevor Gate aktiv
-MEANINGFUL_EXEC_TOOLS  = {      # Tools die als first_meaningful_execution zaehlen
+W_EXECUTION_PRESSURE      = 3.0   # Bonus fuer Linien unter Umsetzungsdruck
+META_CYCLE_THRESHOLD      = 3     # Anzahl Meta-Zyklen bevor Gate aktiv
+META_CYCLE_HARD_LIMIT     = 6     # Ab hier: execution_required -- erzwungener Vollzug-Bias
+MEANINGFUL_EXEC_TOOLS  = {        # Tools die als first_meaningful_execution zaehlen
     "workspace.save", "workspace.delete",
     "todos.create", "todos.complete",
     "proposal.approve", "proposal.reject",
@@ -681,9 +682,14 @@ def score_candidates(candidates: dict, situation: dict, owner_id: str = "") -> l
             score += ex_pressure
             details["execution_pressure"] = ex_pressure
 
-        # 6.1: First-Line-Gate -- aktiv wenn reif und noch kein Vollzug
+        # 6.1: First-Line-Gate + execution_required
         is_mature = _is_line_mature(todo, situation)
         first_line_gate = is_mature and not todo.get("first_meaningful_execution")
+        execution_required = _is_execution_required(todo)
+
+        # Bei execution_required: task_template auf implementation zwingen
+        if execution_required and base_decision == CONTINUE_LINE:
+            todo["task_template"] = "implementation"  # erzwinge Implementation
 
         return {
             "type":           "todo",
@@ -703,10 +709,11 @@ def score_candidates(candidates: dict, situation: dict, owner_id: str = "") -> l
             "goal_id":        todo.get("goal_id"),
             "proposal_id":    todo.get("proposal_id"),
             "entblockbar":       blocker_type not in (BLOCKER_HARD,),
-            "execution_pressure": ex_pressure,
-            "first_line_gate":    first_line_gate,
-            "is_mature":          is_mature,
-            "meta_cycle_count":   todo.get("meta_cycle_count") or 0,
+            "execution_pressure":  ex_pressure,
+            "first_line_gate":     first_line_gate,
+            "is_mature":           is_mature,
+            "execution_required":  execution_required,
+            "meta_cycle_count":    todo.get("meta_cycle_count") or 0,
             "first_meaningful_execution": todo.get("first_meaningful_execution"),
         }
 
@@ -988,6 +995,18 @@ def choose_worklines(candidates: dict, scored: list,
                   else "Hauptlinie wartet auf Freigabe -- Nebenlinie aktiv.")
         return _build_result(primary, secondary, scored, reason, CONTINUE_LINE, replan_trigger)
 
+    # 6.x: execution_required schlaegt alles -- harter Vollzugszwang
+    required_cands = [s for s in continue_cands if s.get("execution_required")]
+    if required_cands:
+        primary = required_cands[0]
+        # Keine Nebenlinie -- volle Konzentration auf Vollzug
+        return _build_result(
+            primary, None, scored,
+            f"EXECUTION REQUIRED: {primary.get('meta_cycle_count',0)} Meta-Zyklen ohne Vollzug -- "
+            f"nur noch Implementation erlaubt.",
+            CONTINUE_LINE, replan_trigger
+        )
+
     # 6.3: Linien mit execution_pressure bevorzugen
     pressure_cands = sorted(
         [s for s in continue_cands if s.get("execution_pressure", 0) > 0],
@@ -1004,8 +1023,11 @@ def choose_worklines(candidates: dict, scored: list,
         secondary_pool = [s for s in primary_pool[1:]] + start_cands
         secondary = secondary_pool[0] if secondary_pool else None
 
-        # 6.4: Fokusgrund je nach execution_pressure
-        if primary.get("first_line_gate"):
+        # 6.4: Fokusgrund je nach Zustand
+        if primary.get("execution_required"):
+            reason = (f"EXECUTION REQUIRED: {primary.get('meta_cycle_count',0)} Meta-Zyklen "
+                      f"-- nur noch Implementation.")
+        elif primary.get("first_line_gate"):
             reason = (f"First-Line-Gate aktiv: {primary.get('meta_cycle_count',0)} Meta-Zyklen "
                       f"-- erster Vollzug noetig.")
         elif primary.get("execution_pressure", 0) > 0:
@@ -1105,16 +1127,28 @@ def _is_line_mature(todo: dict, situation: dict) -> bool:
 def _get_execution_pressure(todo: dict) -> float:
     """
     6.3: Berechnet execution_pressure fuer eine Linie.
-    Hoeher = mehr Druck in Richtung erster Vollzug.
+    Ab META_CYCLE_HARD_LIMIT: Maximaldruck (execution_required).
     """
     if todo.get("first_meaningful_execution"):
-        return 0.0  # Erster Vollzug schon passiert
+        return 0.0
     meta_cycles = todo.get("meta_cycle_count") or 0
+    if meta_cycles >= META_CYCLE_HARD_LIMIT:
+        return W_EXECUTION_PRESSURE  # Maximaldruck
     base = min(meta_cycles * 0.5, W_EXECUTION_PRESSURE)
-    # Extra-Druck wenn Goal-relevant
     if todo.get("goal_id"):
         base = min(base * 1.2, W_EXECUTION_PRESSURE)
     return round(base, 2)
+
+
+def _is_execution_required(todo: dict) -> bool:
+    """
+    6.x: Harter Vollzugszwang -- ab META_CYCLE_HARD_LIMIT ohne Vollzug.
+    Bei execution_required: Planner waehlt AUSSCHLIESSLICH Implementation.
+    """
+    if todo.get("first_meaningful_execution"):
+        return False
+    meta_cycles = todo.get("meta_cycle_count") or 0
+    return meta_cycles >= META_CYCLE_HARD_LIMIT and (todo.get("execution_mode","none") != "none")
 
 
 def record_meta_cycle(todo_id: int, owner_id: str) -> None:
@@ -1342,7 +1376,8 @@ def maybe_start_task(chosen: list, owner_id: str) -> list:
         try:
             import json as _j
             orbit_mode = "internal" if line["execution_mode"] == "orbit_internal" else "chat"
-            tmpl = line.get("task_template") or "analysis"
+            # 6.x: execution_required erzwingt implementation-Template
+            tmpl = "implementation" if line.get("execution_required") else (line.get("task_template") or "analysis")
 
             task_id = _orbit.create_task(
                 task_type="action",

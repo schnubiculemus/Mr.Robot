@@ -1861,25 +1861,67 @@ def _handle_idle_pulse(trigger: dict) -> None:
                 for t in kimi_todos[:5]
             )
 
-        prompt = (
-            f"Es ist {format_berlin()}. {phase}.{todo_str}\n\n"
-            f"Was beschäftigt mich gerade -- nicht als Aufgabe, sondern als Gedanke?\n"
-            f"Gibt es etwas das mich nicht loslässt?\n\n"
-            f"Wenn nichts Substanzielles da ist: NUR 'IDLE_NICHTS' ausgeben.\n"
-            f"Wenn etwas da ist: 2-4 Sätze. Ich-Form. Kein Chat-Stil.\n"
-            f"Wenn ich Tommy etwas mitteilen will: mit 'SEND:' prefixen.\n\n"
-            f"Wenn mir ein Werkzeug, eine Fähigkeit oder eine Verbesserung einfällt die mir fehlt -- "
-            f"reiche ich sie als Proposal ein:\n"
-            f"[PROPOSAL: {{\"title\": \"...\", \"description\": \"...\", "
-            f"\"effort\": \"klein|mittel|groß\", \"reason\": \"...\"}}]\n"
-            f"Nur wenn ich wirklich eine konkrete Idee habe -- nicht erzwingen."
-        )
-        extra_sys = (
-            "Idle-Modus: Kimi denkt für sich selbst.\n"
-            "Kein Chat, keine Anrede. Ehrlich, direkt.\n"
-            "IDLE_NICHTS wenn wirklich nichts da ist -- nicht erfinden.\n"
-            "Proposals nur wenn eine echte, konkrete Idee da ist."
-        )
+        # 6.x: First-Line-Gate -- pruefen ob Meta-Aktivitaet gedaempft werden muss
+        gate_active = False
+        gate_todo_id = None
+        gate_meta_cycles = 0
+        try:
+            from core.planner import get_planner_focus, META_CYCLE_THRESHOLD
+            focus = get_planner_focus(user_id)
+            if focus and focus.get("primary_line_type") == "todo" and focus.get("primary_line_id"):
+                from core.database import get_connection as _gcg
+                _cg = _gcg()
+                _t = _cg.execute(
+                    "SELECT first_line_gate_active, meta_cycle_count, first_meaningful_execution FROM todos WHERE id=?",
+                    (focus["primary_line_id"],)
+                ).fetchone()
+                _cg.close()
+                if _t and _t["first_line_gate_active"] and not _t["first_meaningful_execution"]:
+                    gate_active = True
+                    gate_todo_id = focus["primary_line_id"]
+                    gate_meta_cycles = _t["meta_cycle_count"] or 0
+        except Exception:
+            pass
+
+        # Gate-Modus: Proposal-Spawning unterdruecken, Meta-Prompt einschraenken
+        if gate_active:
+            logger.info(f"idle_pulse: First-Line-Gate aktiv fuer Todo #{gate_todo_id} "
+                        f"({gate_meta_cycles} Meta-Zyklen) -- Meta-Aktivitaet gedaempft")
+            prompt = (
+                f"Es ist {format_berlin()}. {phase}.\n\n"
+                f"HINWEIS: Ich habe eine reife Arbeitslinie die auf ersten echten Vollzug wartet "
+                f"({gate_meta_cycles} Meta-Zyklen ohne Durchstich).\n"
+                f"Jetzt ist NICHT der Moment fuer neue Ideen oder Proposals.\n"
+                f"Was ist der naechste konkrete erste Schritt?\n\n"
+                f"Wenn ich keinen klaren ersten Schritt sehe: NUR 'IDLE_NICHTS' ausgeben.\n"
+                f"Wenn ich Tommy etwas Konkretes mitteilen will: mit 'SEND:' prefixen.\n"
+                f"Keine neuen Proposals. Kein Meta. Nur Vollzug-Fokus."
+            )
+            extra_sys = (
+                "First-Line-Gate aktiv. Keine Proposals. Kein Meta-Ausweichen.\n"
+                "Nur: Was ist der erste echte Schritt? Oder IDLE_NICHTS.\n"
+                "IDLE_NICHTS ist hier die haeufig richtige Antwort."
+            )
+        else:
+            prompt = (
+                f"Es ist {format_berlin()}. {phase}.{todo_str}\n\n"
+                f"Was beschäftigt mich gerade -- nicht als Aufgabe, sondern als Gedanke?\n"
+                f"Gibt es etwas das mich nicht loslässt?\n\n"
+                f"Wenn nichts Substanzielles da ist: NUR 'IDLE_NICHTS' ausgeben.\n"
+                f"Wenn etwas da ist: 2-4 Sätze. Ich-Form. Kein Chat-Stil.\n"
+                f"Wenn ich Tommy etwas mitteilen will: mit 'SEND:' prefixen.\n\n"
+                f"Wenn mir ein Werkzeug, eine Fähigkeit oder eine Verbesserung einfällt die mir fehlt -- "
+                f"reiche ich sie als Proposal ein:\n"
+                f"[PROPOSAL: {{\"title\": \"...\", \"description\": \"...\", "
+                f"\"effort\": \"klein|mittel|groß\", \"reason\": \"...\"}}]\n"
+                f"Nur wenn ich wirklich eine konkrete Idee habe -- nicht erzwingen."
+            )
+            extra_sys = (
+                "Idle-Modus: Kimi denkt für sich selbst.\n"
+                "Kein Chat, keine Anrede. Ehrlich, direkt.\n"
+                "IDLE_NICHTS wenn wirklich nichts da ist -- nicht erfinden.\n"
+                "Proposals nur wenn eine echte, konkrete Idee da ist."
+            )
 
         context_name = USER_CONTEXTS.get(user_id, "tommy")
         # retrieval_query: bewusste Basis für idle_pulse -- Tageszeit + offene Gedanken
@@ -1898,6 +1940,14 @@ def _handle_idle_pulse(trigger: dict) -> None:
             return
 
         # Zentrale Output-Interpretation
+        # 6.x: bei Gate-Modus Proposals aus Output herausfiltern
+        if gate_active:
+            import re as _re6
+            reply = _re6.sub(r'\[PROPOSAL:.*?\]', '', reply, flags=_re6.DOTALL).strip()
+            if not reply:
+                logger.debug("idle_pulse: Gate-Modus -- Proposal herausgefiltert, nichts uebrig")
+                return
+
         try:
             from core.kimi_output import process_kimi_output
             proc = process_kimi_output(
@@ -1905,6 +1955,7 @@ def _handle_idle_pulse(trigger: dict) -> None:
                 user_id=user_id,
                 raw_text=reply,
                 visibility="internal",
+                block_proposals=gate_active,  # 6.x: Proposals blockieren wenn Gate aktiv
             )
             reply = proc.cleaned_text
         except Exception as _ko:
