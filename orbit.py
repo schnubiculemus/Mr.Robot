@@ -1654,11 +1654,85 @@ def _e_append_next_step(task_id: str, next_step_hint: str, user_id: str, loop_co
         update_task(task_id, loop_count=loop_count + 1)
 
         # Naechsten Schritt aus Kimis Hinweis ableiten
+        import json as _jstep, re as _restep
         hint_lower = next_step_hint.lower()
-        if any(w in hint_lower for w in ["datei", "lesen", "read", "öffnen", "prüfen", "check"]):
+
+        # 7.5.1: Artefakt-native Pfade -- vor Legacy-Fallbacks pruefen
+        # Artefakt-Typ aus Hinweis ableiten
+        _artifact_type = None
+        if any(w in hint_lower for w in ["brief", "orientierungsrahmen", "einordnung", "grundlage", "einstieg"]):
+            _artifact_type = "brief"
+        elif any(w in hint_lower for w in ["analyse", "analysis", "mechanismen", "untersuchen", "strukturieren", "untersuchung"]):
+            _artifact_type = "analysis"
+        elif any(w in hint_lower for w in ["plan", "nächste schritte", "umsetzung", "umsetzungsskizze", "roadmap"]):
+            _artifact_type = "plan"
+        elif any(w in hint_lower for w in ["implementierung", "implementation", "umsetzung", "code", "bauen"]):
+            _artifact_type = "implementation"
+        elif any(w in hint_lower for w in ["ergebnis", "result", "fazit", "abschluss", "zusammenfassung"]):
+            _artifact_type = "result"
+        elif any(w in hint_lower for w in ["bericht", "report", "abschlussbericht"]):
+            _artifact_type = "report"
+
+        # line_id aus Task ableiten
+        _line_id = None
+        try:
+            _task_obj = get_task(task_id)
+            if _task_obj and _task_obj.get("linked_todo_id"):
+                _line_id = f"todo:{_task_obj['linked_todo_id']}"
+        except Exception:
+            pass
+
+        # 7.5.1: Lesen/Laden eines Artefakts
+        if _artifact_type and _line_id and any(w in hint_lower for w in [
+            "laden", "lesen", "öffnen", "fortsetzen", "weiter", "lad", "lies", "read"
+        ]):
             tool_ref = "workspace"
-            action = "list"
-            description = '{"action": "list"}'
+            action = "artifact_read"
+            description = _jstep.dumps({
+                "action": "artifact_read",
+                "line_id": _line_id,
+                "artifact_type": _artifact_type,
+            })
+
+        # 7.5.1: Artefakt anlegen
+        elif _artifact_type and _line_id and any(w in hint_lower for w in [
+            "anlegen", "erstellen", "schreiben", "erzeugen", "neue", "neues", "erstell", "anleg"
+        ]):
+            tool_ref = "workspace"
+            action = "artifact_create"
+            description = _jstep.dumps({
+                "action": "artifact_create",
+                "line_id": _line_id,
+                "artifact_type": _artifact_type,
+                "format": "md",
+                "purpose": "working_state",
+                "content": f"# {_artifact_type.capitalize()}\n\n{next_step_hint[:300]}",
+            })
+
+        # 7.5.1: Artefakt aktualisieren
+        elif _artifact_type and _line_id and any(w in hint_lower for w in [
+            "ergänzen", "erweitern", "aktualisieren", "update", "fortschreiben", "hinzufügen"
+        ]):
+            tool_ref = "workspace"
+            action = "artifact_update"
+            description = _jstep.dumps({
+                "action": "artifact_update",
+                "line_id": _line_id,
+                "artifact_type": _artifact_type,
+                "content": next_step_hint[:300],
+            })
+
+        # 7.5.1: Artefakt-Liste der Linie lesen (statt generisches workspace.list)
+        elif _line_id and any(w in hint_lower for w in [
+            "datei", "prüfen", "check", "überblick", "liste", "was gibt es", "vorhanden"
+        ]):
+            tool_ref = "workspace"
+            action = "artifact_list"
+            description = _jstep.dumps({
+                "action": "artifact_list",
+                "line_id": _line_id,
+            })
+
         elif any(w in hint_lower for w in ["schreiben", "speichern", "anlegen", "erstellen", "save"]):
             tool_ref = "workspace"
             action = "save"

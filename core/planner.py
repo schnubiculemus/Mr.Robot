@@ -1497,18 +1497,54 @@ def maybe_start_task(chosen: list, owner_id: str) -> list:
                 interruptible=True,
                 preflight_required=False,
             )
+
+            # 7.5.1: Bootstrap-Step -- artifact_list damit Kimi weiss was auf der Linie existiert
+            _line_id_bootstrap = f"todo:{line['id']}"
+            _orbit.create_step(
+                task_id=task_id,
+                step_type="workspace",
+                description=_j.dumps({
+                    "action": "artifact_list",
+                    "line_id": _line_id_bootstrap,
+                }),
+                tool_ref="workspace",
+                interruptible=True,
+                preflight_required=False,
+            )
+
             _orbit.set_task_hot(task_id, True)
             start_todo(line["id"], task_id)
             started.append(task_id)
             logger.info(f"Planner: Task {task_id[:8]} ({tmpl}) fuer Todo #{line['id']}")
-            # 7.4: Brief-Artefakt bei Linienstart
+
+            # 7.4: Brief-Artefakt bei Linienstart -- failure jetzt sichtbar
             try:
                 _orbit._auto_trigger_brief(
                     task_id, owner_id,
                     f"todo:{line['id']}", line["title"]
                 )
-            except Exception:
-                pass
+            except Exception as _brief_err:
+                logger.warning(f"Planner: _auto_trigger_brief fehlgeschlagen fuer Todo #{line['id']}: {_brief_err}")
+                # Fallback: expliziten artifact_create Step anlegen
+                try:
+                    _orbit.create_step(
+                        task_id=task_id,
+                        step_type="workspace",
+                        description=_j.dumps({
+                            "action": "artifact_create",
+                            "line_id": f"todo:{line['id']}",
+                            "artifact_type": "brief",
+                            "format": "md",
+                            "purpose": "line_bootstrap",
+                            "content": f"# Brief: {line['title'][:80]}\n\n*Automatisch beim Start angelegt (Fallback).*",
+                        }),
+                        tool_ref="workspace",
+                        interruptible=False,
+                        preflight_required=False,
+                    )
+                    logger.info(f"Planner: Fallback-Brief-Step fuer Todo #{line['id']} angelegt")
+                except Exception as _fb_err:
+                    logger.warning(f"Planner: Fallback-Brief-Step fehlgeschlagen: {_fb_err}")
         except Exception as e:
             logger.warning(f"Planner: Task-Start fehlgeschlagen #{line['id']}: {e}")
 
