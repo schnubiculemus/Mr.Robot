@@ -179,13 +179,28 @@ def create_trigger(trigger_type: str, source: str = None, payload: dict = None) 
 
 
 def get_pending_triggers() -> list:
-    """Holt alle unverarbeiteten Trigger, älteste zuerst."""
-    conn = get_connection()
+    """7.5.3: Trigger priorisiert laden -- tool_result vor cognition vor idle_pulse."""
     try:
-        rows = conn.execute(
-            "SELECT * FROM orbit_triggers WHERE processed = 0 ORDER BY created_at ASC"
-        ).fetchall()
-        return [dict(r) for r in rows]
+        from core.database import get_connection
+        conn = get_connection()
+        try:
+            rows = conn.execute(
+                """SELECT * FROM orbit_triggers WHERE processed = 0
+                   ORDER BY
+                     CASE trigger_type
+                       WHEN 'tool_result'  THEN 1
+                       WHEN 'cognition'    THEN 2
+                       WHEN 'idle_pulse'   THEN 4
+                       ELSE 3
+                     END ASC,
+                     created_at ASC"""
+            ).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.warning(f"get_pending_triggers fehlgeschlagen: {e}")
+        return []
     finally:
         conn.close()
 
@@ -1715,7 +1730,9 @@ def _e_append_next_step(task_id: str, next_step_hint: str, user_id: str, loop_co
 
         # 7.5.1: Artefakt aktualisieren
         elif _artifact_type and _line_id and any(w in hint_lower for w in [
-            "ergänzen", "erweitern", "aktualisieren", "update", "fortschreiben", "hinzufügen"
+            "ergänzen", "erweitern", "aktualisieren", "update", "fortschreiben", "hinzufügen",
+            "vervollständigen", "befüllen", "ausformulieren", "weiter ausarbeiten",
+            "fertig schreiben", "überarbeiten", "ausarbeiten", "fertigstellen"
         ]):
             tool_ref = "workspace"
             action = "artifact_update"
@@ -2411,7 +2428,10 @@ def process(events: list) -> None:
 
         if handler:
             if trigger_type in _ASYNC_TRIGGER_TYPES:
-                # Async: in Thread mit Timeout -- blockiert nie den Tick-Loop
+                # 7.5.3: Differenziertes Async
+                # tool_result: join mit Timeout -- Ergebnis wichtig fuer Task-Fortschritt
+                # idle_pulse/cognition: fire-and-forget -- blockieren nie den Tick-Loop
+                _fire_and_forget = trigger_type in {"idle_pulse", "cognition"}
                 def _run(h=handler, e=event, tid=trigger_id, tt=trigger_type):
                     try:
                         h(e)
@@ -2421,10 +2441,13 @@ def process(events: list) -> None:
                         mark_trigger_processed(tid)
                 t = _threading.Thread(target=_run, daemon=True)
                 t.start()
-                t.join(timeout=_ASYNC_TRIGGER_TIMEOUT)
-                if t.is_alive():
-                    logger.warning(f"Trigger-Handler {trigger_type} Timeout ({_ASYNC_TRIGGER_TIMEOUT}s) -- fortgesetzt im Hintergrund")
-                    mark_trigger_processed(trigger_id)
+                if _fire_and_forget:
+                    logger.debug(f"Trigger {trigger_type} fire-and-forget gestartet")
+                else:
+                    t.join(timeout=_ASYNC_TRIGGER_TIMEOUT)
+                    if t.is_alive():
+                        logger.warning(f"Trigger-Handler {trigger_type} Timeout ({_ASYNC_TRIGGER_TIMEOUT}s) -- fortgesetzt im Hintergrund")
+                        mark_trigger_processed(trigger_id)
             else:
                 try:
                     handler(event)
@@ -4325,12 +4348,24 @@ def _dispatch_tool(tool_ref: str, action: str, params: dict) -> object:
                                 "artifact_id": art["id"]}
                     return {"success": False, "error": "Artifact-Erstellung fehlgeschlagen"}
                 elif _at == "artifact_update":
-                    from core.workspace_artifact_service import update_artifact_content
+                    from core.workspace_artifact_service import update_artifact_content, get_latest_line_artifact
+                    # 7.5.3: Fallback -- artifact_id optional, line_id+artifact_type reichen
+                    _art_id = p.get("artifact_id")
+                    if not _art_id:
+                        _lid_u = p.get("line_id") or (f"todo:{task_id}" if task_id else None)
+                        _atype_u = p.get("artifact_type", "brief")
+                        if _lid_u:
+                            _latest = get_latest_line_artifact(_lid_u, _atype_u)
+                            if _latest:
+                                _art_id = _latest["id"]
+                                logger.debug(f"artifact_update: Fallback auf #{_art_id} ({_atype_u}) fuer Linie {_lid_u}")
+                    if not _art_id:
+                        return {"success": False, "error": "artifact_update: keine artifact_id und kein Artefakt auf Linie gefunden"}
                     ok = update_artifact_content(
-                        artifact_id=int(p.get("artifact_id",0)),
+                        artifact_id=int(_art_id),
                         content=p.get("content",""), status=p.get("status"))
                     return {"success": ok, "result": "Artifact aktualisiert" if ok else "Fehler",
-                            "artifact_id": p.get("artifact_id")}
+                            "artifact_id": _art_id}
                 elif _at == "worklog_append":
                     from core.workspace_artifact_service import append_worklog_entry
                     lid = p.get("line_id") or (f"todo:{task_id}" if task_id else "general")

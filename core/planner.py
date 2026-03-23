@@ -1513,23 +1513,47 @@ def maybe_start_task(chosen: list, owner_id: str) -> list:
                 preflight_required=False,
             )
 
-            # Step 3: artifact_create brief -- in Pipeline, nicht direkt
-            # Laeuft durch tool_result -> Kognitionszyklus -> Kimi arbeitet weiter
-            _orbit.create_step(
-                task_id=task_id,
-                step_type="workspace",
-                description=_j.dumps({
-                    "action": "artifact_create",
-                    "line_id": _line_id_bootstrap,
-                    "artifact_type": "brief",
-                    "format": "md",
-                    "purpose": "line_bootstrap",
-                    "content": f"# Brief: {line['title'][:80]}\n\n*Automatisch beim Start angelegt — Kimi fuellt aus.*",
-                }),
-                tool_ref="workspace",
-                interruptible=False,
-                preflight_required=False,
-            )
+            # Step 3: artifact_bootstrap_brief -- konditional
+            # 7.5.3: nur create wenn noch kein Brief existiert, sonst read
+            # verhindert Brief-Zerstoerung durch Versionierung bei Task-Neustart
+            try:
+                from core.workspace_artifact_service import get_latest_line_artifact
+                _existing_brief = get_latest_line_artifact(_line_id_bootstrap, "brief")
+            except Exception:
+                _existing_brief = None
+
+            if _existing_brief:
+                # Brief existiert bereits -- lesen statt neu anlegen
+                _orbit.create_step(
+                    task_id=task_id,
+                    step_type="workspace",
+                    description=_j.dumps({
+                        "action": "artifact_read",
+                        "line_id": _line_id_bootstrap,
+                        "artifact_type": "brief",
+                    }),
+                    tool_ref="workspace",
+                    interruptible=False,
+                    preflight_required=False,
+                )
+                logger.info(f"Planner: Brief bereits vorhanden fuer Linie {_line_id_bootstrap} -- read statt create")
+            else:
+                # Kein Brief -- anlegen
+                _orbit.create_step(
+                    task_id=task_id,
+                    step_type="workspace",
+                    description=_j.dumps({
+                        "action": "artifact_create",
+                        "line_id": _line_id_bootstrap,
+                        "artifact_type": "brief",
+                        "format": "md",
+                        "purpose": "line_bootstrap",
+                        "content": f"# Brief: {line['title'][:80]}\n\n*Automatisch beim Start angelegt — Kimi fuellt aus.*",
+                    }),
+                    tool_ref="workspace",
+                    interruptible=False,
+                    preflight_required=False,
+                )
 
             _orbit.set_task_hot(task_id, True)
             start_todo(line["id"], task_id)
