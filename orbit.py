@@ -195,8 +195,7 @@ def get_pending_triggers() -> list:
                        WHEN 'idle_pulse'   THEN 4
                        ELSE 3
                      END ASC,
-                     created_at ASC
-                   LIMIT 5"""
+                     created_at ASC"""
             ).fetchall()
             # Sofort als processing markieren + claimed_at setzen -- verhindert Doppelstart
             if rows:
@@ -2458,12 +2457,10 @@ def process(events: list) -> None:
                 if _fire_and_forget:
                     logger.debug(f"Trigger {trigger_type} fire-and-forget gestartet")
                 else:
-                    # 7.5.6: tool_result Timeout kurz -- Tick-Loop nicht blockieren
-                    _join_timeout = 5
-                    t.join(timeout=_join_timeout)
+                    t.join(timeout=_ASYNC_TRIGGER_TIMEOUT)
                     if t.is_alive():
-                        logger.debug(f"Trigger {trigger_type} laeuft im Hintergrund weiter (>{_join_timeout}s)")
-                        # Nicht als processed markieren -- Thread macht das selbst
+                        logger.warning(f"Trigger-Handler {trigger_type} Timeout ({_ASYNC_TRIGGER_TIMEOUT}s) -- fortgesetzt im Hintergrund")
+                        mark_trigger_processed(trigger_id)
             else:
                 try:
                     handler(event)
@@ -2938,6 +2935,17 @@ def _execute_step(step: dict, task_id: str) -> None:
             from config import OWNER_ID
             params["phone_number"] = OWNER_ID
 
+    # owner_id fuer _execute_step -- benoetigt von 7.4 Triggern
+    try:
+        from config import OWNER_ID as _OWNER_ID_ES
+        _owner_id = _OWNER_ID_ES
+        if task:
+            origin = task.get("primary_origin", "")
+            if origin.startswith("user:"):
+                _owner_id = origin[5:]
+    except Exception:
+        _owner_id = ""
+
     # Tool ausfuehren
     result = execute_tool(
         tool_ref=tool_ref,
@@ -2945,6 +2953,7 @@ def _execute_step(step: dict, task_id: str) -> None:
         params=params,
         task_id=task_id,
         step_id=step_id,
+        owner_id=_owner_id,
     )
 
     if result["success"]:
@@ -5403,38 +5412,13 @@ def tick() -> None:
         return
 
     try:
-        import time as _time_tick
-        _t0 = _time_tick.monotonic()
-
-        # 7.5.6: Scheduler ZUERST -- neue/heiße Tasks vor Trigger-Backlog
-        run_scheduler()
-        _t1 = _time_tick.monotonic()
-
-        # Trigger limitiert holen -- max 5 pro Tick
         events = collect_triggers()
         if events:
             logger.info(f"Tick: {len(events)} Trigger")
-
-        # idle_pulse drosseln wenn aktive/heiße Tasks vorhanden
-        _has_hot = False
-        try:
-            _hot_events = [e for e in events if e.get("trigger_type") == "idle_pulse"]
-            if _hot_events:
-                _hot_count = count_hot_tasks()
-                if _hot_count > 0:
-                    events = [e for e in events if e.get("trigger_type") != "idle_pulse"]
-                    logger.debug(f"7.5.6: idle_pulse gedrosselt ({_hot_count} heiße Tasks aktiv)")
-                    _has_hot = True
-        except Exception:
-            pass
-
         process(events)
-        _t2 = _time_tick.monotonic()
-
+        run_scheduler()
         check_proactive()
         run_recovery()
-
-        logger.debug(f"Tick: scheduler={_t1-_t0:.1f}s | triggers={_t2-_t1:.1f}s")
 
         # Maintenance alle ~30 Minuten
         try:
