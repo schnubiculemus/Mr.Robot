@@ -373,6 +373,8 @@ def init_db():
             payload TEXT DEFAULT '{}',
             processed INTEGER NOT NULL DEFAULT 0,
             processed_at TEXT,
+            processing INTEGER NOT NULL DEFAULT 0,
+            claimed_at TEXT,
             linked_object_id TEXT,
             created_at TEXT NOT NULL
         )

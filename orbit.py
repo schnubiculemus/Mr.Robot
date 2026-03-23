@@ -197,13 +197,15 @@ def get_pending_triggers() -> list:
                      END ASC,
                      created_at ASC"""
             ).fetchall()
-            # Sofort als processing markieren -- verhindert Doppelstart
+            # Sofort als processing markieren + claimed_at setzen -- verhindert Doppelstart
             if rows:
+                import datetime as _dt
+                _now_claim = _dt.datetime.now(_dt.timezone.utc).isoformat()
                 ids = [r["id"] for r in rows]
                 placeholders = ",".join("?" * len(ids))
                 conn.execute(
-                    f"UPDATE orbit_triggers SET processing=1 WHERE id IN ({placeholders})",
-                    ids
+                    f"UPDATE orbit_triggers SET processing=1, claimed_at=? WHERE id IN ({placeholders})",
+                    [_now_claim] + ids
                 )
                 conn.commit()
             return [dict(r) for r in rows]
@@ -222,7 +224,7 @@ def mark_trigger_processed(trigger_id: str, linked_object_id: str = None) -> Non
     try:
         conn.execute(
             """UPDATE orbit_triggers
-               SET processed = 1, processed_at = ?, linked_object_id = ?
+               SET processed = 1, processed_at = ?, processing = 0, linked_object_id = ?
                WHERE id = ?""",
             (to_iso(), linked_object_id, trigger_id)
         )
@@ -5234,6 +5236,35 @@ def full_recovery_on_start() -> None:
     try:
         logger.info("=== ORBIT Full Recovery Start ===")
 
+        # 7.5.5: Stale-Trigger-Recovery -- geclaimte aber nie verarbeitete Trigger freigeben
+        # Trigger die älter als 10 Minuten auf processing=1 stehen werden zurückgesetzt
+        try:
+            import datetime as _dt_rec
+            _stale_cutoff = (_dt_rec.datetime.now(_dt_rec.timezone.utc)
+                             - _dt_rec.timedelta(minutes=10)).isoformat()
+            _conn_rec = get_connection()
+            try:
+                _stale = _conn_rec.execute(
+                    """SELECT COUNT(*) FROM orbit_triggers
+                       WHERE processed=0 AND processing=1
+                       AND (claimed_at IS NULL OR claimed_at < ?)""",
+                    (_stale_cutoff,)
+                ).fetchone()[0]
+                if _stale:
+                    _conn_rec.execute(
+                        """UPDATE orbit_triggers SET processing=0, claimed_at=NULL
+                           WHERE processed=0 AND processing=1
+                           AND (claimed_at IS NULL OR claimed_at < ?)""",
+                        (_stale_cutoff,)
+                    )
+                    _conn_rec.commit()
+                    logger.info(f"Recovery: {_stale} stale Trigger freigegeben (processing=0)")
+                    actions.append(f"stale_triggers_released:{_stale}")
+            finally:
+                _conn_rec.close()
+        except Exception as _rec_e:
+            logger.warning(f"Recovery: Stale-Trigger-Reset fehlgeschlagen: {_rec_e}")
+
         recovered_steps = _recover_running_steps()
         if recovered_steps:
             actions.append(f"steps_recovered:{len(recovered_steps)}")
@@ -5422,6 +5453,12 @@ def main():
             _conn_mig.execute("ALTER TABLE orbit_triggers ADD COLUMN processing INTEGER NOT NULL DEFAULT 0")
             _conn_mig.commit()
             logger.info("Migration: orbit_triggers.processing Spalte hinzugefuegt")
+        except Exception:
+            pass
+        try:
+            _conn_mig.execute("ALTER TABLE orbit_triggers ADD COLUMN claimed_at TEXT")
+            _conn_mig.commit()
+            logger.info("Migration: orbit_triggers.claimed_at Spalte hinzugefuegt")
         except Exception:
             pass  # Spalte existiert bereits
         finally:
