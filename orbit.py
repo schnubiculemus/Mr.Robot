@@ -168,8 +168,8 @@ def create_trigger(trigger_type: str, source: str = None, payload: dict = None) 
     try:
         conn.execute(
             """INSERT INTO orbit_triggers
-               (id, trigger_type, source, payload, processed, created_at)
-               VALUES (?, ?, ?, ?, 0, ?)""",
+               (id, trigger_type, source, payload, processed, processing, created_at)
+               VALUES (?, ?, ?, ?, 0, 0, ?)""",
             (tid, trigger_type, source, _json(payload, "{}"), to_iso())
         )
         conn.commit()
@@ -184,8 +184,10 @@ def get_pending_triggers() -> list:
         from core.database import get_connection
         conn = get_connection()
         try:
+            # 7.5.4: Claiming -- nur holen was noch nicht in Bearbeitung
+            # Zuerst claimen (processing=1), dann verarbeiten
             rows = conn.execute(
-                """SELECT * FROM orbit_triggers WHERE processed = 0
+                """SELECT * FROM orbit_triggers WHERE processed = 0 AND processing = 0
                    ORDER BY
                      CASE trigger_type
                        WHEN 'tool_result'  THEN 1
@@ -195,6 +197,15 @@ def get_pending_triggers() -> list:
                      END ASC,
                      created_at ASC"""
             ).fetchall()
+            # Sofort als processing markieren -- verhindert Doppelstart
+            if rows:
+                ids = [r["id"] for r in rows]
+                placeholders = ",".join("?" * len(ids))
+                conn.execute(
+                    f"UPDATE orbit_triggers SET processing=1 WHERE id IN ({placeholders})",
+                    ids
+                )
+                conn.commit()
             return [dict(r) for r in rows]
         finally:
             conn.close()
@@ -5402,6 +5413,21 @@ def tick() -> None:
 def main():
     from core.database import init_db
     init_db()
+
+    # 7.5.4: Migration -- processing-Spalte zu orbit_triggers hinzufügen falls nicht vorhanden
+    try:
+        from core.database import get_connection as _gc_mig
+        _conn_mig = _gc_mig()
+        try:
+            _conn_mig.execute("ALTER TABLE orbit_triggers ADD COLUMN processing INTEGER NOT NULL DEFAULT 0")
+            _conn_mig.commit()
+            logger.info("Migration: orbit_triggers.processing Spalte hinzugefuegt")
+        except Exception:
+            pass  # Spalte existiert bereits
+        finally:
+            _conn_mig.close()
+    except Exception as _mig_e:
+        logger.warning(f"Migration orbit_triggers fehlgeschlagen: {_mig_e}")
 
     logger.info("=== ORBIT gestartet ===")
     logger.info(f"Tick: {ORBIT_TICK_SECONDS}s | Not-Aus: {not ORBIT_ENABLED} | Soft-Pause: {ORBIT_SOFT_PAUSE}")

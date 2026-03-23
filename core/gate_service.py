@@ -944,8 +944,19 @@ def preflight_artifact(action: str, params: dict) -> tuple[bool, str]:
 
     elif action == "artifact_update":
         artifact_id = params.get("artifact_id")
+        # 7.5.4: Fallback -- artifact_id optional, line_id + artifact_type reichen
         if not artifact_id:
-            return False, "artifact_id fehlt"
+            line_id = params.get("line_id")
+            artifact_type = params.get("artifact_type")
+            if not line_id:
+                return False, "artifact_update: artifact_id oder line_id erforderlich"
+            from core.workspace_artifact_service import get_latest_line_artifact
+            _art = get_latest_line_artifact(line_id, artifact_type)
+            if not _art:
+                return False, f"artifact_update: kein Artefakt fuer Linie '{line_id}' (type={artifact_type}) gefunden"
+            # artifact_id in params eintragen damit der Executor sie findet
+            params["artifact_id"] = _art["id"]
+            artifact_id = _art["id"]
         art = get_artifact(int(artifact_id))
         if not art:
             return False, f"Artifact #{artifact_id} nicht gefunden"
