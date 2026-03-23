@@ -184,8 +184,8 @@ def get_pending_triggers() -> list:
         from core.database import get_connection
         conn = get_connection()
         try:
-            # 7.5.4: Claiming -- nur holen was noch nicht in Bearbeitung
-            # Zuerst claimen (processing=1), dann verarbeiten
+            # 7.5.7: Nur IDs holen, noch nicht claimen -- claim-on-dispatch
+            # LIMIT 1 pro Tick: kein Batch-Claiming mehr
             rows = conn.execute(
                 """SELECT * FROM orbit_triggers WHERE processed = 0 AND processing = 0
                    ORDER BY
@@ -195,19 +195,10 @@ def get_pending_triggers() -> list:
                        WHEN 'idle_pulse'   THEN 4
                        ELSE 3
                      END ASC,
-                     created_at ASC"""
+                     created_at ASC
+                   LIMIT 1"""
             ).fetchall()
-            # Sofort als processing markieren + claimed_at setzen -- verhindert Doppelstart
-            if rows:
-                import datetime as _dt
-                _now_claim = _dt.datetime.now(_dt.timezone.utc).isoformat()
-                ids = [r["id"] for r in rows]
-                placeholders = ",".join("?" * len(ids))
-                conn.execute(
-                    f"UPDATE orbit_triggers SET processing=1, claimed_at=? WHERE id IN ({placeholders})",
-                    [_now_claim] + ids
-                )
-                conn.commit()
+            # Noch KEIN Claiming hier -- passiert in process() kurz vor Verarbeitung
             return [dict(r) for r in rows]
         finally:
             conn.close()
@@ -2432,6 +2423,28 @@ def collect_triggers() -> list:
 _ASYNC_TRIGGER_TYPES = {"idle_pulse", "cognition", "tool_result"}
 _ASYNC_TRIGGER_TIMEOUT = 90  # Sekunden
 
+def _claim_trigger(trigger_id: str) -> bool:
+    """7.5.7: Claim-on-dispatch -- Trigger kurz vor Verarbeitung claimen."""
+    try:
+        import datetime as _dt_c
+        _now = _dt_c.datetime.now(_dt_c.timezone.utc).isoformat()
+        from core.database import get_connection as _gc_c
+        conn = _gc_c()
+        try:
+            cur = conn.execute(
+                """UPDATE orbit_triggers SET processing=1, claimed_at=?
+                   WHERE id=? AND processed=0 AND processing=0""",
+                (_now, trigger_id)
+            )
+            conn.commit()
+            return cur.rowcount > 0
+        finally:
+            conn.close()
+    except Exception as _ce:
+        logger.warning(f"_claim_trigger fehlgeschlagen: {_ce}")
+        return False
+
+
 def process(events: list) -> None:
     import threading as _threading
     for event in events:
@@ -2440,10 +2453,12 @@ def process(events: list) -> None:
         handler = TRIGGER_HANDLERS.get(trigger_type)
 
         if handler:
+            # 7.5.7: Claim-on-dispatch
+            if not _claim_trigger(trigger_id):
+                logger.debug(f"Trigger {trigger_id[:8]} bereits geclaimt -- skip")
+                continue
+
             if trigger_type in _ASYNC_TRIGGER_TYPES:
-                # 7.5.3: Differenziertes Async
-                # tool_result: join mit Timeout -- Ergebnis wichtig fuer Task-Fortschritt
-                # idle_pulse/cognition: fire-and-forget -- blockieren nie den Tick-Loop
                 _fire_and_forget = trigger_type in {"idle_pulse", "cognition"}
                 def _run(h=handler, e=event, tid=trigger_id, tt=trigger_type):
                     try:
@@ -2457,10 +2472,10 @@ def process(events: list) -> None:
                 if _fire_and_forget:
                     logger.debug(f"Trigger {trigger_type} fire-and-forget gestartet")
                 else:
-                    t.join(timeout=_ASYNC_TRIGGER_TIMEOUT)
+                    # 7.5.7: 30s Timeout fuer tool_result
+                    t.join(timeout=30)
                     if t.is_alive():
-                        logger.warning(f"Trigger-Handler {trigger_type} Timeout ({_ASYNC_TRIGGER_TIMEOUT}s) -- fortgesetzt im Hintergrund")
-                        mark_trigger_processed(trigger_id)
+                        logger.debug(f"Trigger {trigger_type} laeuft im Hintergrund (>30s)")
             else:
                 try:
                     handler(event)
@@ -5421,11 +5436,31 @@ def tick() -> None:
         return
 
     try:
+        import time as _time_tick
+        _t0 = _time_tick.monotonic()
+
+        # 7.5.7: Scheduler ZUERST -- neue/heiße Tasks vor Trigger-Backlog
+        run_scheduler()
+        _t1 = _time_tick.monotonic()
+
+        # Trigger holen (LIMIT 1 pro Tick -- kein Batch-Claiming)
         events = collect_triggers()
         if events:
             logger.info(f"Tick: {len(events)} Trigger")
+
+        # idle_pulse drosseln wenn heiße Tasks aktiv
+        try:
+            if events and events[0].get("trigger_type") == "idle_pulse":
+                if count_hot_tasks() > 0:
+                    events = []
+                    logger.debug("7.5.7: idle_pulse gedrosselt -- heiße Tasks aktiv")
+        except Exception:
+            pass
+
         process(events)
-        run_scheduler()
+        _t2 = _time_tick.monotonic()
+        logger.debug(f"Tick: scheduler={_t1-_t0:.1f}s | triggers={_t2-_t1:.1f}s")
+
         check_proactive()
         run_recovery()
 
