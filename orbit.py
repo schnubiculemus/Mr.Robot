@@ -2472,10 +2472,10 @@ def process(events: list) -> None:
                 if _fire_and_forget:
                     logger.debug(f"Trigger {trigger_type} fire-and-forget gestartet")
                 else:
-                    # 7.5.7: 30s Timeout fuer tool_result
-                    t.join(timeout=30)
+                    # 7.5.7: 15s Timeout fuer tool_result -- kurz genug um Tick nicht zu blockieren
+                    t.join(timeout=15)
                     if t.is_alive():
-                        logger.debug(f"Trigger {trigger_type} laeuft im Hintergrund (>30s)")
+                        logger.debug(f"Trigger {trigger_type} laeuft im Hintergrund (>15s)")
             else:
                 try:
                     handler(event)
