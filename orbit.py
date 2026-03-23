@@ -2397,19 +2397,41 @@ def collect_triggers() -> list:
     return get_pending_triggers()
 
 
+# Trigger-Typen die in separatem Thread mit Timeout laufen muessen
+# um den Tick-Loop nicht zu blockieren (ChromaDB, Ollama-Calls)
+_ASYNC_TRIGGER_TYPES = {"idle_pulse", "cognition", "tool_result"}
+_ASYNC_TRIGGER_TIMEOUT = 90  # Sekunden
+
 def process(events: list) -> None:
+    import threading as _threading
     for event in events:
         trigger_type = event.get("trigger_type", "unknown")
         trigger_id = event.get("id", "")
         handler = TRIGGER_HANDLERS.get(trigger_type)
 
         if handler:
-            try:
-                handler(event)
-                mark_trigger_processed(trigger_id)
-            except Exception as e:
-                logger.error(f"Trigger-Handler {trigger_type} fehlgeschlagen: {e}", exc_info=True)
-                mark_trigger_processed(trigger_id)
+            if trigger_type in _ASYNC_TRIGGER_TYPES:
+                # Async: in Thread mit Timeout -- blockiert nie den Tick-Loop
+                def _run(h=handler, e=event, tid=trigger_id, tt=trigger_type):
+                    try:
+                        h(e)
+                        mark_trigger_processed(tid)
+                    except Exception as _ex:
+                        logger.error(f"Trigger-Handler {tt} fehlgeschlagen: {_ex}", exc_info=True)
+                        mark_trigger_processed(tid)
+                t = _threading.Thread(target=_run, daemon=True)
+                t.start()
+                t.join(timeout=_ASYNC_TRIGGER_TIMEOUT)
+                if t.is_alive():
+                    logger.warning(f"Trigger-Handler {trigger_type} Timeout ({_ASYNC_TRIGGER_TIMEOUT}s) -- fortgesetzt im Hintergrund")
+                    mark_trigger_processed(trigger_id)
+            else:
+                try:
+                    handler(event)
+                    mark_trigger_processed(trigger_id)
+                except Exception as e:
+                    logger.error(f"Trigger-Handler {trigger_type} fehlgeschlagen: {e}", exc_info=True)
+                    mark_trigger_processed(trigger_id)
         else:
             logger.warning(f"Unbekannter Trigger-Typ: {trigger_type} ({trigger_id[:8]})")
             mark_trigger_processed(trigger_id)
