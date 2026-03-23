@@ -1516,7 +1516,11 @@ def _handle_tool_result(trigger: dict) -> None:
     steps = get_steps(task_id=task_id)
     open_steps = [s for s in steps if s["status"] in ("pending", "running", "ready")]
     if open_steps and not is_terminal_release:
-        logger.debug(f"_handle_tool_result: {len(open_steps)} offene Steps -- warte")
+        # 7.5.2: Deadlock-Fix -- Task wieder aktivieren statt einfrieren
+        # waiting_feedback + offene Steps = Scheduler skippt -> nichts laeuft weiter
+        update_task(task_id, status="active")
+        set_task_hot(task_id, True)
+        logger.debug(f"_handle_tool_result: {len(open_steps)} offene Steps -- Task wieder active+hot")
         return
 
     # F5: Schleifenschutz
