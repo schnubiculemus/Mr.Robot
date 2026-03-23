@@ -992,11 +992,119 @@ def _auto_trigger_result(task_id: str, owner_id: str, line_id: str,
 # Mehrere Steps gelaufen -> analysis (working_state)        [_auto_trigger_analysis]
 
 TRIGGER_MATRIX = {
-    "linienstart":          ("brief",    "line_bootstrap",   False),
-    "task_abschluss":       ("result",   "execution_result", True),   # is_materialized
-    "stagnation":           ("worklog",  "working_state",    False),
-    "zwischenstand":        ("analysis", "working_state",    False),
+    "linienstart":          ("brief",          "line_bootstrap",       False),
+    "task_abschluss":       ("result",         "execution_result",     True),
+    "stagnation":           ("worklog",        "working_state",        False),
+    "zwischenstand":        ("analysis",       "working_state",        False),
+    "plan_bereit":          ("plan",           "implementation_base",  False),
+    "abschluss_bericht":    ("report",         "handover",             False),
 }
+
+
+def _auto_trigger_worklog_stagnation(task_id: str, owner_id: str, line_id: str,
+                                      note: str = "") -> None:
+    """
+    7.4: Stagnations-Trigger -- wenn Task laengere Zeit ohne Fortschritt laueft.
+    Schreibt einen Worklog-Eintrag als Protokoll.
+    """
+    try:
+        from core.gate_service import execute_write
+        entry = f"Stagnation erkannt -- Task {task_id[:8]} ohne neuen Fortschritt."
+        if note:
+            entry += f"\n{note}"
+        params = {
+            "action": "worklog_append",
+            "line_id": line_id,
+            "content": entry,
+        }
+        def _do(p):
+            from core.workspace_artifact_service import append_worklog_entry
+            ok = append_worklog_entry(p["line_id"], p["content"], task_id=task_id)
+            return {"success": ok, "result": "Worklog aktualisiert" if ok else "Fehler",
+                    "artifact_id": None}
+        execute_write("workspace.worklog_append", params, owner_id, _do, task_id=task_id)
+        logger.info(f"7.4: Stagnation-Worklog fuer Task {task_id[:8]}")
+    except Exception as e:
+        logger.debug(f"_auto_trigger_worklog_stagnation fehlgeschlagen: {e}")
+
+
+def _auto_trigger_plan(task_id: str, owner_id: str, line_id: str,
+                        goal: str = "", analysis_content: str = "") -> None:
+    """
+    7.4: Plan-Trigger -- nach analysis-Artefakt wenn noch kein plan existiert.
+    """
+    try:
+        from core.workspace_artifact_service import list_line_artifacts
+        # Nur wenn noch kein plan da
+        existing = list_line_artifacts(line_id, artifact_type="plan", status="active")
+        if existing:
+            return
+        from core.gate_service import execute_write
+        artifact_content = f"# Plan: {goal[:80]}\n\n**Task:** {task_id[:8]}\n\n"
+        if analysis_content:
+            artifact_content += f"**Basis (Analysis):**\n{analysis_content[:500]}\n\n"
+        artifact_content += "**Naechste Schritte:**\n- [ ] TBD\n"
+        params = {
+            "action": "artifact_create",
+            "line_id": line_id,
+            "artifact_type": "plan",
+            "format": "md",
+            "purpose": "implementation_base",
+            "content": artifact_content,
+        }
+        def _do(p):
+            from core.workspace_artifact_service import create_artifact
+            art = create_artifact(
+                owner_id=owner_id, line_id=p["line_id"],
+                artifact_type="plan", format="md",
+                content=p["content"], purpose="implementation_base",
+                task_id=task_id,
+            )
+            return {"success": bool(art), "result": f"Plan #{art['id']}" if art else "Fehler",
+                    "artifact_id": art["id"] if art else None}
+        execute_write("workspace.artifact_create", params, owner_id, _do, task_id=task_id)
+        logger.info(f"7.4: Plan-Artefakt fuer Task {task_id[:8]}")
+    except Exception as e:
+        logger.debug(f"_auto_trigger_plan fehlgeschlagen: {e}")
+
+
+def _auto_trigger_report(task_id: str, owner_id: str, line_id: str,
+                          goal: str = "", result_content: str = "") -> None:
+    """
+    7.4: Report/Handover-Trigger -- nach result wenn Linie abgeschlossen.
+    """
+    try:
+        from core.workspace_artifact_service import list_line_artifacts
+        existing = list_line_artifacts(line_id, artifact_type="report", status="active")
+        if existing:
+            return
+        from core.gate_service import execute_write
+        artifact_content = f"# Abschlussbericht: {goal[:80]}\n\n**Task:** {task_id[:8]}\n\n"
+        if result_content:
+            artifact_content += f"**Ergebnis:**\n{result_content[:800]}\n\n"
+        artifact_content += "**Status:** Abgeschlossen\n"
+        params = {
+            "action": "artifact_create",
+            "line_id": line_id,
+            "artifact_type": "report",
+            "format": "md",
+            "purpose": "handover",
+            "content": artifact_content,
+        }
+        def _do(p):
+            from core.workspace_artifact_service import create_artifact
+            art = create_artifact(
+                owner_id=owner_id, line_id=p["line_id"],
+                artifact_type="report", format="md",
+                content=p["content"], purpose="handover",
+                task_id=task_id,
+            )
+            return {"success": bool(art), "result": f"Report #{art['id']}" if art else "Fehler",
+                    "artifact_id": art["id"] if art else None}
+        execute_write("workspace.artifact_create", params, owner_id, _do, task_id=task_id)
+        logger.info(f"7.4: Report-Artefakt fuer Task {task_id[:8]}")
+    except Exception as e:
+        logger.debug(f"_auto_trigger_report fehlgeschlagen: {e}")
 
 
 def _auto_trigger_analysis(task_id: str, owner_id: str, line_id: str,
@@ -2416,19 +2524,20 @@ def task_transition(task_id: str, new_status: str, reason: str = None,
                              summary=f"Task {task_id[:8]} abgeschlossen",
                              task_id=task_id)
                 logger.info(f"task_transition: Todo #{task_obj['linked_todo_id']} automatisch erledigt")
-                # 7.4: Result-Artefakt bei Abschluss
+                # 7.4: Result + Report bei Abschluss
                 try:
                     linked = task_obj.get("linked_todo_id")
                     _owner = task_obj.get("owner_id","")
                     if not _owner:
                         from config import OWNER_ID
                         _owner = OWNER_ID
-                    _auto_trigger_result(
-                        task_id, _owner,
-                        f"todo:{linked}",
-                        task_obj.get("goal",""),
-                        summary=reason or "",
-                    )
+                    _line_id = f"todo:{linked}"
+                    _goal = task_obj.get("goal","")
+                    _auto_trigger_result(task_id, _owner, _line_id, _goal,
+                                         summary=reason or "")
+                    # Report nach Result
+                    _auto_trigger_report(task_id, _owner, _line_id, _goal,
+                                         result_content=reason or "")
                 except Exception:
                     pass
 
@@ -2701,14 +2810,38 @@ def _execute_step(step: dict, task_id: str) -> None:
     if result["success"]:
         step_transition(step_id, "done", reason=f"Tool {tool_ref} erfolgreich")
 
-        # 7.4: Zwischenstand-Analyse-Trigger nach mehreren Steps
+        # 7.4: Zwischenstand-Analyse-Trigger + Plan-Trigger nach mehreren Steps
         try:
             trigger_ok, line_id_for_analysis = _should_trigger_analysis(task_id)
             if trigger_ok:
                 t_obj_a = get_task(task_id)
                 _owner_a = _owner_id
-                obs_text = result_summary if 'result_summary' in dir() else str(result.get("result",""))[:300]
+                obs_text = str(result.get("result",""))[:300]
                 _auto_trigger_analysis(task_id, _owner_a, line_id_for_analysis, obs_text)
+                # Plan-Trigger nach Analysis
+                _auto_trigger_plan(task_id, _owner_a, line_id_for_analysis,
+                                    goal=t_obj_a.get("goal","") if t_obj_a else "",
+                                    analysis_content=obs_text)
+        except Exception:
+            pass
+
+        # 7.4: Stagnations-Check -- wenn viele Steps laufen aber kein Vollzug
+        try:
+            t_for_stag = get_task(task_id) if task_id else None
+            if t_for_stag and t_for_stag.get("linked_todo_id"):
+                _stag_line = f"todo:{t_for_stag['linked_todo_id']}"
+                from core.database import get_connection as _gc_stag
+                _cs = _gc_stag()
+                _done_count = _cs.execute(
+                    "SELECT COUNT(*) as n FROM orbit_steps WHERE task_id=? AND status='done'",
+                    (task_id,)
+                ).fetchone()["n"]
+                _cs.close()
+                if _done_count >= 6 and not t_for_stag.get("first_meaningful_execution"):
+                    _auto_trigger_worklog_stagnation(
+                        task_id, _owner_id, _stag_line,
+                        note=f"{_done_count} Steps ohne echten Vollzug"
+                    )
         except Exception:
             pass
 

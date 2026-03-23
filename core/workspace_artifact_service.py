@@ -331,19 +331,35 @@ def set_artifact_status(artifact_id: int, status: str, actor: str = "kimi") -> b
 
 
 def mark_artifact_superseded(old_id: int, new_id: int, actor: str = "kimi") -> bool:
-    """Markiert altes Artefakt als superseded durch neues."""
+    """Markiert altes Artefakt als superseded durch neues -- setzt supersedes_artifact_id."""
     try:
         from core.database import get_connection
         conn = get_connection()
         try:
             conn.execute(
-                "UPDATE workspace_artifacts SET status='superseded', updated_at=? WHERE id=?",
+                """UPDATE workspace_artifacts
+                   SET status='superseded', updated_at=?
+                   WHERE id=?""",
                 (to_iso(), old_id)
+            )
+            # supersedes_artifact_id im neuen Artefakt setzen
+            conn.execute(
+                "UPDATE workspace_artifacts SET supersedes_artifact_id=? WHERE id=?",
+                (old_id, new_id)
             )
             conn.commit()
         finally:
             conn.close()
         _write_event(old_id, "superseded", actor, {"superseded_by": new_id})
+        _write_event(new_id, "supersedes", actor, {"supersedes": old_id})
+        # line_state + index aktualisieren
+        try:
+            art = get_artifact(old_id)
+            if art:
+                _touch_line_state(art["owner_id"], art["line_id"])
+                rebuild_artifact_index(art["line_id"])
+        except Exception:
+            pass
         return True
     except Exception as e:
         logger.error(f"mark_artifact_superseded fehlgeschlagen: {e}")

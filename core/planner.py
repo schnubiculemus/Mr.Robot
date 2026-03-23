@@ -330,17 +330,23 @@ def collect_candidates(owner_id: str) -> dict:
                 types.add(ar["artifact_type"])
                 workspace_states[lid]["artifact_types"] = types
 
-            # Letzten aktiven Artefakttyp pro Linie
+            # Letzten aktiven Artefakttyp pro Linie -- sauberer Subquery-Ansatz
             latest_rows = conn.execute(
-                """SELECT line_id, artifact_type FROM workspace_artifacts
-                   WHERE status='active'
-                   GROUP BY line_id
-                   HAVING MAX(created_at)"""
+                """SELECT wa.line_id, wa.artifact_type
+                   FROM workspace_artifacts wa
+                   INNER JOIN (
+                       SELECT line_id, MAX(created_at) as max_ts
+                       FROM workspace_artifacts
+                       WHERE status='active'
+                       GROUP BY line_id
+                   ) latest ON wa.line_id = latest.line_id AND wa.created_at = latest.max_ts
+                   WHERE wa.status='active'"""
             ).fetchall()
             for lr in latest_rows:
                 lid = lr["line_id"]
-                if lid in workspace_states:
-                    workspace_states[lid]["latest_active_type"] = lr["artifact_type"]
+                if lid not in workspace_states:
+                    workspace_states[lid] = {}
+                workspace_states[lid]["latest_active_type"] = lr["artifact_type"]
         except Exception:
             pass
 
@@ -1106,6 +1112,9 @@ def choose_worklines(candidates: dict, scored: list,
         elif primary.get("execution_pressure", 0) > 0:
             reason = (f"Umsetzungsdruck ({primary['execution_pressure']:.1f}) -- "
                       f"Implementation bevorzugt.")
+        elif primary.get("next_artifact_type"):
+            reason = (f"Naechster Artefaktschritt: {primary['next_artifact_type']} "
+                      f"(aktuell: {primary.get('latest_active_type') or 'keins'}).")
         elif external_waiting and not active_waiting:
             reason = "Warte auf externe Bedingung -- Nebenlinie starten falls moeglich."
         else:
@@ -1449,8 +1458,15 @@ def maybe_start_task(chosen: list, owner_id: str) -> list:
         try:
             import json as _j
             orbit_mode = "internal" if line["execution_mode"] == "orbit_internal" else "chat"
-            # 6.x: execution_required erzwingt implementation-Template
-            tmpl = "implementation" if line.get("execution_required") else (line.get("task_template") or "analysis")
+            # 6.x + 7.5: execution_required oder next_artifact_type bestimmt Template
+            if line.get("execution_required"):
+                tmpl = "implementation"
+            elif line.get("next_artifact_type") in ("implementation", "result"):
+                tmpl = "implementation"
+            elif line.get("next_artifact_type") in ("plan", "analysis"):
+                tmpl = "analysis"
+            else:
+                tmpl = line.get("task_template") or "analysis"
 
             task_id = _orbit.create_task(
                 task_type="action",
