@@ -4152,7 +4152,8 @@ def execute_tool(
 
     for attempt in range(max_retries + 1):
         try:
-            result = _dispatch_tool(tool_ref, action, params or {})
+            result = _dispatch_tool(tool_ref, action, params or {},
+                                   _owner_id=_owner_id, task_id=task_id, step_id=step_id)
             _update_tool_reputation(tool_ref, success=True)
             audit("orbit", "tool_success", "tool", tool_ref, f"{action} | attempt={attempt}")
             if step_id:
@@ -4175,10 +4176,18 @@ def execute_tool(
             "tool_ref": tool_ref, "action": action, "retries": max_retries}
 
 
-def _dispatch_tool(tool_ref: str, action: str, params: dict) -> object:
+def _dispatch_tool(tool_ref: str, action: str, params: dict,
+                   _owner_id: str = None, task_id: str = None, step_id: str = None) -> object:
     """
     Dispatcht einen Tool-Aufruf an die konkrete Implementierung.
     """
+    # owner_id sicherstellen
+    if _owner_id is None:
+        try:
+            from config import OWNER_ID
+            _owner_id = OWNER_ID
+        except Exception:
+            _owner_id = ""
     # Kalender
     if tool_ref in ("calendar_read", "calendar_write", "calendar_change", "calendar_delete"):
         # Lesen: direkt
