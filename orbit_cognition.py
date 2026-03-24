@@ -317,12 +317,63 @@ def _run_briefing(user_id: str, briefing_type: str, now) -> None:
 # Kognitions-Run
 # =============================================================================
 
+def _get_gate_mode(user_id: str) -> dict:
+    """6.x: Liest First-Line-Gate-Status. Steuert alle Meta-Module."""
+    result = {"gate_active": False, "execution_required": False,
+              "meta_cycle_count": 0, "todo_id": None, "todo_title": ""}
+    try:
+        from core.planner import get_planner_focus, META_CYCLE_THRESHOLD, META_CYCLE_HARD_LIMIT
+        focus = get_planner_focus(user_id)
+        if not focus or focus.get("primary_line_type") != "todo":
+            return result
+        todo_id = focus.get("primary_line_id")
+        if not todo_id:
+            return result
+        from core.database import get_connection
+        conn = get_connection()
+        row = conn.execute(
+            "SELECT first_line_gate_active, meta_cycle_count, first_meaningful_execution, title FROM todos WHERE id=?",
+            (int(todo_id),)
+        ).fetchone()
+        conn.close()
+        if not row or row["first_meaningful_execution"]:
+            return result
+        cycles = row["meta_cycle_count"] or 0
+        result.update({
+            "gate_active":        bool(row["first_line_gate_active"]) or cycles >= META_CYCLE_THRESHOLD,
+            "execution_required": cycles >= META_CYCLE_HARD_LIMIT,
+            "meta_cycle_count":   cycles,
+            "todo_id":            todo_id,
+            "todo_title":         (row["title"] or "")[:50],
+        })
+    except Exception as _ge:
+        import logging; logging.getLogger(__name__).debug(f"_get_gate_mode: {_ge}")
+    return result
+
+
 def run_kognition(user_id: str, context_name: str):
+    """WP0: ENABLE_AUTONOMOUS_COGNITION=False -> deaktiviert (delete_candidate)"""
+    try:
+        from orbit import ENABLE_AUTONOMOUS_COGNITION
+        if not ENABLE_AUTONOMOUS_COGNITION:
+            import logging as _lcog
+            _lcog.getLogger(__name__).debug("WP0: run_kognition deaktiviert")
+            return
+    except Exception:
+        pass
     now = now_utc()
     berlin = now_berlin()
     state = load_state()
-    _module_status = {}  # Tracking: was hat gelaufen, was nicht
+    _module_status = {}
     logger.info(f"--- Kognition: {context_name} ({user_id}) | {berlin.strftime("%H:%M")} ---")
+
+    # 6.x: Gate-Modus -- steuert alle Meta-Module
+    gate = _get_gate_mode(user_id)
+    if gate["gate_active"]:
+        logger.info(
+            f"6.x Gate: {'EXECUTION_REQUIRED' if gate['execution_required'] else 'FIRST_LINE_GATE'} "
+            f"-- Todo #{gate['todo_id']} '{gate['todo_title']}' ({gate['meta_cycle_count']} Zyklen)"
+        )
 
     # ── Tagebuch (abends 20–23h) ─────────────────────────────────────────────
     try:
@@ -349,10 +400,29 @@ def run_kognition(user_id: str, context_name: str):
 
     # ── Introspection ────────────────────────────────────────────────────────
     try:
-        state = load_state()
-        last_introspection = state.get(f"{user_id}_last_introspection")
-        from introspection import run_introspection
-        chunk_id = run_introspection(user_id, last_introspection)
+        chunk_id = None
+        if gate["execution_required"]:
+            logger.info("6.x Gate: Introspection uebersprungen (execution_required)")
+            _module_status["introspect"] = "gate_skip"
+        else:
+            if gate["gate_active"]:
+                state = load_state()
+                _ic = state.get(f"{user_id}_introspect_gate_count", 0) + 1
+                state[f"{user_id}_introspect_gate_count"] = _ic
+                save_state(state)
+                if _ic % 2 != 0:
+                    logger.info(f"6.x Gate: Introspection gedaempft (Lauf {_ic})")
+                    _module_status["introspect"] = "gate_damped"
+                else:
+                    state = load_state()
+                    last_introspection = state.get(f"{user_id}_last_introspection")
+                    from introspection import run_introspection
+                    chunk_id = run_introspection(user_id, last_introspection)
+            else:
+                state = load_state()
+                last_introspection = state.get(f"{user_id}_last_introspection")
+                from introspection import run_introspection
+                chunk_id = run_introspection(user_id, last_introspection)
         if chunk_id:
             state = load_state()
             state[f"{user_id}_last_introspection"] = to_iso(now)
@@ -368,10 +438,15 @@ def run_kognition(user_id: str, context_name: str):
 
     # ── Moltbook Exploration ─────────────────────────────────────────────────
     try:
-        state = load_state()
-        last_moltbook = state.get(f"{user_id}_last_moltbook")
-        from core.moltbook_explorer import run_moltbook_exploration
-        chunk_id = run_moltbook_exploration(user_id, last_moltbook)
+        chunk_id = None
+        if gate["gate_active"]:
+            logger.info("6.x Gate: Moltbook uebersprungen (gate_active)")
+            _module_status["moltbook"] = "gate_skip"
+        else:
+            state = load_state()
+            last_moltbook = state.get(f"{user_id}_last_moltbook")
+            from core.moltbook_explorer import run_moltbook_exploration
+            chunk_id = run_moltbook_exploration(user_id, last_moltbook)
         if chunk_id:
             state = load_state()
             state[f"{user_id}_last_moltbook"] = to_iso(now)
@@ -386,20 +461,24 @@ def run_kognition(user_id: str, context_name: str):
         logger.warning(f"Moltbook fehlgeschlagen: {e}")
 
     # ── Innerer Dialog ───────────────────────────────────────────────────────
-    # Liest was Introspection und Moltbook herausgefunden haben
     try:
-        state = load_state()
-        last_inner = state.get(f"{user_id}_last_inner_dialogue")
-
-        # Session-Kontext der Vorgänger-Module aufbauen
-        prior_context = _build_session_context(state, ["introspection", "moltbook"])
-
-        from inner_dialogue import run_inner_dialogue
-        chunk_id = run_inner_dialogue(
-            user_id,
-            last_inner,
-            session_context=prior_context or None,
-        )
+        chunk_id = None
+        if gate["execution_required"]:
+            logger.info("6.x Gate: Innerer Dialog uebersprungen (execution_required)")
+            _module_status["inner_dialogue"] = "gate_skip"
+        else:
+            state = load_state()
+            last_inner = state.get(f"{user_id}_last_inner_dialogue")
+            prior_context = _build_session_context(state, ["introspection", "moltbook"])
+            if gate["gate_active"]:
+                prior_context = (prior_context or "") + (
+                    f"\n\n[6.x Gate] Todo '{gate['todo_title']}' wartet auf ersten echten Vollzug "
+                    f"({gate['meta_cycle_count']} Meta-Zyklen). "
+                    f"Konzentriere dich auf: Was ist der naechste konkrete Schritt?"
+                )
+            from inner_dialogue import run_inner_dialogue
+            chunk_id = run_inner_dialogue(user_id, last_inner,
+                                           session_context=prior_context or None)
         if chunk_id:
             state = load_state()
             state[f"{user_id}_last_inner_dialogue"] = to_iso(now)
@@ -424,12 +503,20 @@ def run_kognition(user_id: str, context_name: str):
             state, ["introspection", "moltbook", "inner_dialogue"]
         )
 
-        from autonomous_reflection import run_autonomous_reflection
-        chunk_id = run_autonomous_reflection(
-            user_id,
-            last_autonomous,
-            session_context=prior_context or None,
-        )
+        if gate["execution_required"]:
+            logger.info("6.x Gate: Autonome Reflexion uebersprungen (execution_required)")
+            _module_status["auto_reflect"] = "gate_skip"
+            chunk_id = None
+        else:
+            if gate["gate_active"]:
+                prior_context = (prior_context or "") + (
+                    f"\n\n[6.x Gate] Kein Platz fuer breite Reflexion. "
+                    f"Todo '{gate['todo_title']}' braucht jetzt Vollzug, nicht weiteres Denken. "
+                    f"Wenn ueberhaupt: nur naechster konkreter Schritt."
+                )
+            from autonomous_reflection import run_autonomous_reflection
+            chunk_id = run_autonomous_reflection(
+                user_id, last_autonomous, session_context=prior_context or None)
         if chunk_id:
             state = load_state()
             state[f"{user_id}_last_autonomous_reflection"] = to_iso(now)

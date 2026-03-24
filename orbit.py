@@ -67,7 +67,18 @@ _DEFAULT_RELEASE_MODE = {
 # =============================================================================
 
 ORBIT_TICK_SECONDS = 20       # Event-Loop Intervall
-MAX_HOT_TASKS = 3             # max. gleichzeitig heiße Tasks
+# =============================================================================
+# WP0 – Safe Mode Feature Gates
+# =============================================================================
+SAFE_MODE = True                  # Globaler Safe-Mode-Schalter
+
+ENABLE_IDLE_PULSE             = False   # WP0: deaktiviert -- delete_candidate
+ENABLE_AUTONOMOUS_COGNITION   = False   # WP0: deaktiviert -- delete_candidate
+ENABLE_AUTO_ARTIFACTS         = False   # WP0: deaktiviert -- delete_candidate
+ENABLE_MULTI_HOT_TASKS        = False   # WP0: max 1 heißer Task
+ENABLE_RECOVERY_WORKSPACE_OUT = False   # WP0: Recovery schreibt nicht in Workspace
+
+MAX_HOT_TASKS = 1 if not ENABLE_MULTI_HOT_TASKS else 3  # WP0: max 1
 MAX_RUNNING_STEPS = 4         # max. gleichzeitig laufende Steps (3 heiß + 1 leicht)
 
 ORBIT_ENABLED = True          # False = Not-Aus (kein autonomes Handeln)
@@ -944,7 +955,11 @@ def no_action(reason: str, context: str = "", trigger_refs: list = None) -> str:
 
 
 def _auto_trigger_brief(task_id: str, owner_id: str, line_id: str, goal: str) -> None:
-    """7.4: Erzeugt automatisch ein brief-Artefakt beim Linienstart."""
+    """7.4: Erzeugt automatisch ein brief-Artefakt beim Linienstart.
+    WP0: ENABLE_AUTO_ARTIFACTS=False -> deaktiviert (delete_candidate)"""
+    if not ENABLE_AUTO_ARTIFACTS:
+        logger.debug(f"WP0: auto_trigger_brief deaktiviert fuer Task {task_id[:8]}")
+        return
     try:
         from core.gate_service import execute_write
         params = {
@@ -973,7 +988,11 @@ def _auto_trigger_brief(task_id: str, owner_id: str, line_id: str, goal: str) ->
 
 def _auto_trigger_result(task_id: str, owner_id: str, line_id: str,
                           goal: str, summary: str = "") -> None:
-    """7.4: Materialisiert automatisch ein result-Artefakt bei Task-Abschluss."""
+    """7.4: Materialisiert automatisch ein result-Artefakt bei Task-Abschluss.
+    WP0: ENABLE_AUTO_ARTIFACTS=False -> deaktiviert (delete_candidate)"""
+    if not ENABLE_AUTO_ARTIFACTS:
+        logger.debug(f"WP0: auto_trigger_result deaktiviert fuer Task {task_id[:8]}")
+        return
     try:
         from core.gate_service import execute_write
         artifact_content = f"# Abschluss: {goal[:80]}\n\n**Task:** {task_id[:8]}\n\n"
@@ -1063,6 +1082,9 @@ def _auto_trigger_plan(task_id: str, owner_id: str, line_id: str,
     """
     7.4: Plan-Trigger -- nach analysis-Artefakt wenn noch kein plan existiert.
     """
+    if not ENABLE_AUTO_ARTIFACTS:
+        logger.debug(f"WP0: auto_trigger_plan deaktiviert fuer Task {task_id[:8]}")
+        return
     try:
         from core.workspace_artifact_service import list_line_artifacts
         # Nur wenn noch kein plan da
@@ -1101,8 +1123,12 @@ def _auto_trigger_plan(task_id: str, owner_id: str, line_id: str,
 def _auto_trigger_report(task_id: str, owner_id: str, line_id: str,
                           goal: str = "", result_content: str = "") -> None:
     """
+    WP0: ENABLE_AUTO_ARTIFACTS=False -> deaktiviert (delete_candidate)
     7.4: Report/Handover-Trigger -- nach result wenn Linie abgeschlossen.
     """
+    if not ENABLE_AUTO_ARTIFACTS:
+        logger.debug(f"WP0: auto_trigger_report deaktiviert fuer Task {task_id[:8]}")
+        return
     try:
         from core.workspace_artifact_service import list_line_artifacts
         existing = list_line_artifacts(line_id, artifact_type="report", status="active")
@@ -1143,6 +1169,9 @@ def _auto_trigger_analysis(task_id: str, owner_id: str, line_id: str,
     7.4: Zwischenstand-Trigger -- nach mehreren Steps ohne Abschluss.
     Erzeugt ein analysis-Artefakt als Arbeitsstand.
     """
+    if not ENABLE_AUTO_ARTIFACTS:
+        logger.debug(f"WP0: auto_trigger_analysis deaktiviert fuer Task {task_id[:8]}")
+        return
     try:
         from core.gate_service import execute_write
         artifact_content = f"# Zwischenstand\n\n**Task:** {task_id[:8]}\n\n"
@@ -2125,14 +2154,11 @@ def _handle_wiedervorlage(trigger: dict) -> None:
 def _handle_cognition_run(trigger: dict) -> None:
     """
     cognition_run: Cron hat einen Kognitions-Lauf angefordert.
-
-    ORBIT führt orbit_cognition.run_kognition() im eigenen Prozess aus --
-    kein Parallelzugriff auf ChromaDB möglich, da ORBIT der einzige
-    ChromaDB-Nutzer ist (Variante B der Cron-Architektur).
-
-    Der Cron schreibt nur den Trigger (orbit_cognition_trigger.py),
-    ORBIT führt hier die eigentliche Arbeit aus.
+    WP0: ENABLE_AUTONOMOUS_COGNITION=False -> deaktiviert (delete_candidate)
     """
+    if not ENABLE_AUTONOMOUS_COGNITION:
+        logger.debug("WP0: autonome Kognition deaktiviert -- skip cognition_run")
+        return
     payload = _parse(trigger.get("payload"), {})
     user_id = payload.get("user_id", "")
 
@@ -2155,8 +2181,11 @@ def _handle_cognition_run(trigger: dict) -> None:
 def _handle_idle_pulse(trigger: dict) -> None:
     """
     idle_pulse: Kimis durchgehendes Bewusstsein.
-    Alle 20 Minuten -- Kimi denkt nach, speichert Gedanken, kann spontan an Tommy schreiben.
+    WP0: ENABLE_IDLE_PULSE=False -> deaktiviert (delete_candidate)
     """
+    if not ENABLE_IDLE_PULSE:
+        logger.debug("WP0: _handle_idle_pulse deaktiviert")
+        return
     payload = _parse(trigger.get("payload"), {})
     user_id = payload.get("user_id", "")
     if not user_id:
@@ -5490,23 +5519,26 @@ def tick() -> None:
         except Exception as _me:
             logger.debug(f"Maintenance-Timer fehlgeschlagen (unkritisch): {_me}")
 
-        # idle_pulse alle 20 Minuten -- Kimis durchgehendes Bewusstsein
-        try:
-            from core.datetime_utils import now_utc, safe_parse_dt
-            last_idle = runtime_get("last_idle_pulse_at") or ""
-            last_idle_dt = safe_parse_dt(last_idle) if last_idle else None
-            if not last_idle_dt or (now_utc() - last_idle_dt).total_seconds() > 1200:
-                from config import USER_CONTEXTS
-                for uid in USER_CONTEXTS.keys():
-                    create_trigger(
-                        trigger_type="idle_pulse",
-                        source="orbit_tick",
-                        payload={"user_id": uid},
-                    )
-                runtime_set("last_idle_pulse_at", to_iso())
-                logger.debug("idle_pulse Trigger erstellt")
-        except Exception as _ip:
-            logger.debug(f"idle_pulse-Timer fehlgeschlagen (unkritisch): {_ip}")
+        # idle_pulse -- WP0: ENABLE_IDLE_PULSE=False -> deaktiviert (delete_candidate)
+        if ENABLE_IDLE_PULSE:
+            try:
+                from core.datetime_utils import now_utc, safe_parse_dt
+                last_idle = runtime_get("last_idle_pulse_at") or ""
+                last_idle_dt = safe_parse_dt(last_idle) if last_idle else None
+                if not last_idle_dt or (now_utc() - last_idle_dt).total_seconds() > 1200:
+                    from config import USER_CONTEXTS
+                    for uid in USER_CONTEXTS.keys():
+                        create_trigger(
+                            trigger_type="idle_pulse",
+                            source="orbit_tick",
+                            payload={"user_id": uid},
+                        )
+                    runtime_set("last_idle_pulse_at", to_iso())
+                    logger.debug("idle_pulse Trigger erstellt")
+            except Exception as _ip:
+                logger.debug(f"idle_pulse-Timer fehlgeschlagen (unkritisch): {_ip}")
+        else:
+            logger.debug("WP0: idle_pulse deaktiviert")
     except Exception as e:
         logger.error(f"Tick-Fehler: {e}", exc_info=True)
 
@@ -5559,6 +5591,28 @@ def main():
         logger.warning(f"Migration 7.5.8 fehlgeschlagen: {_m758}")
 
     logger.info("=== ORBIT gestartet ===")
+
+    # WP0: Safe Mode Status loggen + Runtime bereinigen
+    if SAFE_MODE:
+        logger.info("WP0: SAFE MODE aktiv")
+        logger.info(f"WP0: idle_pulse={ENABLE_IDLE_PULSE} | cognition={ENABLE_AUTONOMOUS_COGNITION} | auto_artifacts={ENABLE_AUTO_ARTIFACTS} | multi_hot={ENABLE_MULTI_HOT_TASKS}")
+        # Überzählige heiße Tasks kalt stellen (max 1)
+        try:
+            from core.database import get_connection as _gc_wp0
+            _c_wp0 = _gc_wp0()
+            try:
+                hot_tasks = _c_wp0.execute(
+                    "SELECT id FROM orbit_tasks WHERE hot=1 AND status NOT IN ('completed','failed','aborted') ORDER BY updated_at DESC"
+                ).fetchall()
+                if len(hot_tasks) > 1:
+                    for row in hot_tasks[1:]:
+                        _c_wp0.execute("UPDATE orbit_tasks SET hot=0 WHERE id=?", (row["id"],))
+                    _c_wp0.commit()
+                    logger.info(f"WP0: {len(hot_tasks)-1} überzählige heiße Tasks kalt gestellt")
+            finally:
+                _c_wp0.close()
+        except Exception as _wp0e:
+            logger.warning(f"WP0: Runtime-Bereinigung fehlgeschlagen: {_wp0e}")
     logger.info(f"Tick: {ORBIT_TICK_SECONDS}s | Not-Aus: {not ORBIT_ENABLED} | Soft-Pause: {ORBIT_SOFT_PAUSE}")
 
     runtime_set("orbit_started_at", to_iso())
