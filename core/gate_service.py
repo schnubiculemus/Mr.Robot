@@ -926,7 +926,20 @@ def verify_proposal(action: str, params: dict, write_result: dict) -> tuple[bool
 # =============================================================================
 
 def preflight_artifact(action: str, params: dict) -> tuple[bool, str]:
-    """Preflight fuer Workspace-Artifact-Writes."""
+    """Preflight fuer Workspace-Artifact-Writes.
+    WP4: temporary_compat -- Legacy-Schreibpfad (delete_candidate nach V2-Migration)
+    Im Safe Mode: artifact_create / materialize_execution blockiert.
+    """
+    try:
+        from orbit import SAFE_MODE as _SM, ENABLE_AUTO_ARTIFACTS as _EAA
+    except Exception:
+        _SM, _EAA = False, True
+    if _SM and action in ("artifact_create", "materialize_execution") and not _EAA:
+        import logging as _lg
+        _lg.getLogger(__name__).debug(
+            f"WP4: Legacy-Artifact-Write '{action}' im Safe Mode blockiert"
+        )
+        return False, f"WP4 Safe Mode: Legacy-Artifact-Write '{action}' deaktiviert"
     from core.workspace_artifact_service import (
         ARTIFACT_TYPES, ALLOWED_FORMATS, ARTIFACT_STATUSES, get_artifact
     )

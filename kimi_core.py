@@ -189,22 +189,40 @@ def process(request: KimiCoreRequest) -> KimiCoreResult:
         logger.warning(f"KimiCore: process_kimi_output fehlgeschlagen: {e}")
 
     # --- WP4: Workspace-Routing ---
-    # Kimi Core erkennt klare Schreibabsicht und routet an Workspace
+    # Kimi Core erkennt klare Schreibabsicht und routet an V2-Workspace
+    # Freigabepunkt 1: Führendes Dokument hart
+    # - active_document aus AWC = erste Wahl
+    # - "hauptnotiz" NUR beim allerersten Schreiben (kein active_document gesetzt)
+    # - kein stiller Rückfall auf "hauptnotiz" wenn Kontext läuft
+    # Freigabepunkt 2: Hilfsdokumente real einbinden beim Lesen
     try:
         from core.workspace_service import (
-            write_document, append_to_document, set_leading_document,
-            get_leading_document, read_leading_document, WRITE_REASON_IMPLICIT, DOC_TYPE_NOTE
+            append_to_document, set_leading_document,
+            get_leading_document, read_helper_documents,
+            WRITE_REASON_IMPLICIT, DOC_TYPE_NOTE
         )
         _write_markers = [
             "halte das fest", "schreib das", "notiere", "füge hinzu",
             "ergänze", "aktualisiere die notiz", "schreibe in die notiz",
             "note:", "notiz:"
         ]
+        _read_markers = [
+            "was steht", "zeig mir die notiz", "lies die notiz",
+            "was haben wir", "was habe ich", "öffne"
+        ]
         _text_lower = request.text.lower()
         _has_write_intent = any(m in _text_lower for m in _write_markers)
+        _has_read_intent = any(m in _text_lower for m in _read_markers)
+
+        # Führendes Dokument aus AWC -- strikt: kein Fallback wenn Kontext läuft
+        _current_leading = get_leading_document(request.user_id)
         if _has_write_intent:
-            # Führendes Dokument aus AWC -- nur wenn keines gesetzt, Fallback auf "hauptnotiz"
-            _doc_id = get_leading_document(request.user_id) or "hauptnotiz"
+            if _current_leading:
+                # Kontext läuft -- konsequent ins führende Dokument
+                _doc_id = _current_leading
+            else:
+                # Erstes Schreiben -- "hauptnotiz" als Einstieg, dann setzen
+                _doc_id = "hauptnotiz"
             append_to_document(
                 request.user_id, _doc_id,
                 "---\n" + reply[:500],
@@ -213,6 +231,21 @@ def process(request: KimiCoreRequest) -> KimiCoreResult:
             set_leading_document(request.user_id, _doc_id)
             delegations.append(ROUTE_WORKSPACE)
             logger.info(f"KimiCore: Workspace-Write (implicit) → '{_doc_id}'")
+
+        # Freigabepunkt 2: Hilfsdokumente beim Lesen einbinden
+        elif _has_read_intent and _current_leading:
+            helpers = read_helper_documents(request.user_id)
+            if helpers:
+                _helper_summary = "\n".join(
+                    f"[{did}]: {txt[:200]}" for did, txt in helpers.items()
+                )
+                logger.debug(f"KimiCore: {len(helpers)} Hilfsdokument(e) gelesen")
+                # Hilfsdokumente fließen in nächsten AWC-Kontext ein
+                from active_working_context import update_active_context
+                update_active_context(
+                    request.user_id,
+                    last_clean_state=f"Hilfsdokumente gelesen: {list(helpers.keys())}",
+                )
     except Exception as _ws_e:
         logger.debug(f"KimiCore: Workspace-Routing fehlgeschlagen (unkritisch): {_ws_e}")
 
