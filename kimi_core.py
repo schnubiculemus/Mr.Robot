@@ -91,6 +91,18 @@ def process(request: KimiCoreRequest) -> KimiCoreResult:
     delegations = []
     route = ROUTE_MEMORY  # Standard: Memory immer aktiv
 
+    # --- WP2: Active Working Context als Primäranker VOR Memory lesen ---
+    awc_prompt = ""
+    try:
+        from active_working_context import get_active_context, format_for_prompt
+        awc = get_active_context(request.user_id)
+        if awc:
+            awc_prompt = format_for_prompt(awc)
+            delegations.append("awc")
+            logger.debug(f"KimiCore: AWC gelesen: {awc.get('active_line','?')[:60]}")
+    except Exception as _awc_e:
+        logger.debug(f"KimiCore: AWC nicht verfügbar: {_awc_e}")
+
     # --- Schritt 1: Erste Antwort ---
     try:
         reply, turn_meta = ollama_chat(
@@ -98,6 +110,7 @@ def process(request: KimiCoreRequest) -> KimiCoreResult:
             request.text,
             request.chat_history,
             request.context_name,
+            doc_context=awc_prompt if awc_prompt else None,
         )
     except Exception as e:
         logger.error(f"KimiCore: Fehler beim Kimi-Call: {e}")
@@ -206,6 +219,12 @@ def process(request: KimiCoreRequest) -> KimiCoreResult:
 #   - spezialisierte Ausführung
 #   - liefern an Core zurück, sprechen nicht direkt mit Nutzer
 #   - schreiben nicht direkt in Memory
+#
+# Active Working Context (active_working_context.py):
+#   - verbindlicher Primäranker für laufende Arbeit
+#   - wird VOR Memory gelesen
+#   - genau ein aktiver Kontext gleichzeitig
+#   - Kontextwechsel nur nach Bestätigung
 #
 # ORBIT (temporary_compat):
 #   - technische Kompatibilitätsschicht

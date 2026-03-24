@@ -1206,6 +1206,25 @@ def init_soul_proposals_table(conn=None):
     init_kimi_proposals_table(conn)
     init_kimi_output_log_table(conn)
 
+    # WP2: Active Working Context Tabelle
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS active_working_context (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            owner_id TEXT NOT NULL,
+            active_line TEXT,
+            active_goal TEXT,
+            active_document TEXT,
+            last_clean_state TEXT,
+            last_decision TEXT,
+            next_open_question TEXT,
+            proposed_switch_to TEXT,
+            proposed_switch_reason TEXT,
+            proposed_switch_confirmed INTEGER DEFAULT 0,
+            updated_at TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+    """)
+
     conn.commit()
     conn.close()
 
