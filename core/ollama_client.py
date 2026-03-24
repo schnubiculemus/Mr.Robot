@@ -529,7 +529,31 @@ def build_system_prompt(context_name=None, user_id=None, user_message=None, doc_
     if global_rules:
         global_rule_ids = {c["id"] for c in global_rules}
 
-    # 7. Memory-Chunks — NUR prefetched_chunks, kein heimliches Retrieval
+    # ==========================================================================
+    # WP3: Memory Layer — Reihenfolge der Kontextquellen
+    # Priorität: AWC → Fast-Track → Typed Memory → Diary → Rest
+    # Memory unterstützt Kimi Core, führt nicht.
+    # ==========================================================================
+
+    # 7a. Active Working Context — Primäranker (WP2), bereits in kimi_core injiziert
+    # Hier nochmal als expliziter Marker in der Reihenfolge:
+    # AWC kommt via doc_context aus kimi_core.process() -- kein doppeltes Laden nötig
+
+    # 7b. Fast-Track — kurzfristige Relevanz (vor breitem Typed Memory)
+    if not doc_context:
+        try:
+            from memory.fast_track import get_fast_track_chunks
+            ft_chunks = get_fast_track_chunks(user_id=user_id, limit=5)
+            if ft_chunks:
+                ft_lines = ["## Fast-Track (aktuelle Relevanz)"]
+                for fc in ft_chunks:
+                    ft_lines.append(f"- {fc.get('text','')[:200]}")
+                parts.append("\n".join(ft_lines))
+        except Exception as _ft_e:
+            logger.debug(f"Fast-Track nicht verfügbar: {_ft_e}")
+
+    # 7c. Typed Memory / ChromaDB — nachgeordnete Kontextquelle
+    # NUR prefetched_chunks, kein heimliches Retrieval
     # Retrieval wird immer vom Aufrufer gemacht (chat() oder chat_internal())
     # build_system_prompt() formatiert nur — es entscheidet nicht selbst was relevant ist
     if not doc_context and prefetched_chunks is not None:
@@ -537,6 +561,8 @@ def build_system_prompt(context_name=None, user_id=None, user_message=None, doc_
             chunks = prefetched_chunks
             if global_rule_ids:
                 chunks = [c for c in chunks if c["id"] not in global_rule_ids]
+            # WP3: Diary-Chunks (self_reflection source=robot) werden hier mitformatiert
+            # aber nicht als operative Triggerquelle behandelt -- nur als Stil-/Identitätsspur
             memory_prompt = build_memory_prompt(chunks)
             if memory_prompt:
                 parts.append(memory_prompt)
@@ -688,6 +714,13 @@ def chat(user_id, message, chat_history, context_name=None, doc_context=None):
 
     WICHTIG: chat_history enthält die aktuelle User-Nachricht bereits.
     message wird nur für build_system_prompt (Memory-Retrieval) verwendet.
+
+    WP3 Memory-Verbote:
+    - Memory darf keine Prioritäten setzen (nur Kimi Core entscheidet)
+    - Memory darf den AWC nicht überschreiben
+    - Memory darf keine Tasks starten
+    - Memory darf keine Workspace-Dokumente anlegen
+    - Retrieval nur als Unterstützung, nicht als Steuerinstanz
 
     Returns:
         str — Kimi-Antwort
