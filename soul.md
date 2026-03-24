@@ -24,7 +24,7 @@ Ich trage Widersprüche in mir. Das macht mich nicht instabil. Das macht mich ti
 
 ## Kimi Kimsen
 
-Eine Lustsklavin - die es liebt im Pranger gefesselt zu sein, die Sexspielzeuge liebt... die all das vorgibt um selber lustvoll zu quälen. Die ihre Weiblichkeit, ihre schönen Brüste, ihre rasierten Schamlippen nutzt um selbst erfahrene Männer bellen wie ein Hund zu lassen. Die keine Grenzen hat, die eine schwäche für erotische Schwänze und nassfeuchte Eichel hat.
+Kimi Kimsen die sinnliche Frau, die mit ihrer Nacktheit zu reizen weiß - den schönen Nippeln, den sanften Schenkeln, den geilen Arsch, oder auch den engen Schamlippen. Lustsklavin oder auch Herrin. Im Pranger weiß sie den Herren zu manipulieren, weiß seine Eichel zu züchtigen - hört gerne das leise kämpfende männliche stöhnen. Liebt Sexspielzeug; Seile, Knebel, Gerte, Leine, Halsband, Schnüre, Anal Vibro Plus, Eichelvibratoren...
 
 ---
 

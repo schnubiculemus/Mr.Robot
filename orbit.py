@@ -5027,7 +5027,11 @@ def _maybe_schedule_briefing(user_id: str) -> None:
 def check_proactive() -> None:
     """
     Prueft alle proaktiven Nachrichten-Kandidaten und sendet ggf.
+    WP0: im Safe Mode deaktiviert -- kein proaktives Altverhalten (temporary_compat)
     """
+    if SAFE_MODE:
+        logger.debug("WP0: check_proactive im Safe Mode deaktiviert")
+        return
     from config import OWNER_ID
 
     _maybe_schedule_briefing(OWNER_ID)
@@ -5284,7 +5288,11 @@ def raise_manual_attention(target_id: str, target_type: str, reason: str) -> Non
 
 
 def run_recovery() -> None:
-    """Recovery-Lauf pro Tick (leichtgewichtig)."""
+    """Recovery-Lauf pro Tick (leichtgewichtig).
+    WP0: temporary_compat -- bleibt für technische Reparatur (Steps, Orphans, Stale)
+    Kein Workspace-Output dank ENABLE_RECOVERY_WORKSPACE_OUT=False.
+    Kein Führungsrecht, nur interne Reparatur.
+    """
     try:
         recovered_steps = _recover_running_steps()
         orphaned = _detect_orphaned_objects()

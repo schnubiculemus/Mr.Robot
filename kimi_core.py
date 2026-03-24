@@ -188,31 +188,60 @@ def process(request: KimiCoreRequest) -> KimiCoreResult:
     except Exception as e:
         logger.warning(f"KimiCore: process_kimi_output fehlgeschlagen: {e}")
 
-    # --- WP2: AWC nach Interaktion aktualisieren ---
-    # Einfache Heuristik: last_decision aus Antwort ableiten, next_open_question setzen
+    # --- WP2: AWC nach Interaktion sinnvoll befüllen ---
+    # Resthärtung: keine rohen Heuristiken mehr, sondern gezielte Felder
     try:
-        from active_working_context import get_active_context, update_active_context
+        from active_working_context import get_active_context, update_active_context, set_active_context
         _awc_current = get_active_context(request.user_id)
+
+        # Felder aus Eingabe + Antwort ableiten
+        _text = request.text.strip()
+        _reply_clean = (reply or "").replace("\n", " ").strip()
+
+        # last_decision: nur setzen wenn Entscheidung/Richtung erkennbar
+        _decision_markers = ["entschieden", "wir machen", "ab jetzt", "ich werde",
+                             "das ist", "fertig", "erledigt", "gut so", "ok"]
+        _has_decision = any(m in _reply_clean.lower() for m in _decision_markers)
+        _last_decision = _reply_clean[:120] if _has_decision else None
+
+        # next_open_question: aus explizitem Fragezeichen oder offenem Ende
+        _sentences = [s.strip() for s in _reply_clean.split(".") if s.strip()]
+        _open_q = None
+        for s in reversed(_sentences):
+            if "?" in s or any(w in s.lower() for w in ["was ", "wie ", "wann ", "ob "]):
+                _open_q = s[:120]
+                break
+
+        # last_clean_state: sachliche Verdichtung der letzten Aussage
+        _last_clean = _reply_clean[:100] if _reply_clean else None
+
         if _awc_current:
-            # AWC existiert -- last_decision aus Reply-Kurzform aktualisieren
-            _reply_short = (reply[:150] if reply else "").replace("\n", " ").strip()
-            update_active_context(
-                request.user_id,
-                last_decision=f"Letzte Antwort: {_reply_short}",
-            )
+            # AWC existiert -- nur gezielte Felder aktualisieren
+            _updates = {}
+            if _last_clean:
+                _updates["last_clean_state"] = _last_clean
+            if _last_decision:
+                _updates["last_decision"] = _last_decision
+            if _open_q:
+                _updates["next_open_question"] = _open_q
+            # active_line: nur aktualisieren wenn derzeit leer
+            if not _awc_current.get("active_line") and _text:
+                _updates["active_line"] = _text[:80]
+            if _updates:
+                update_active_context(request.user_id, **_updates)
+                logger.debug(f"KimiCore: AWC aktualisiert: {list(_updates.keys())}")
         else:
-            # Kein AWC -- ersten aus Eingabe ableiten
-            from active_working_context import set_active_context
+            # Kein AWC -- ersten anlegen
             set_active_context(
                 request.user_id,
-                active_line=request.text[:80],
+                active_line=_text[:80],
                 active_goal="",
                 active_document="",
-                last_clean_state="",
-                last_decision="",
-                next_open_question=request.text[:80],
+                last_clean_state=_last_clean or "",
+                last_decision=_last_decision or "",
+                next_open_question=_open_q or _text[:80],
             )
-            logger.debug("KimiCore: AWC initial aus Eingabe angelegt")
+            logger.debug("KimiCore: AWC initial angelegt")
     except Exception as _awc_w:
         logger.debug(f"KimiCore: AWC-Update fehlgeschlagen (unkritisch): {_awc_w}")
 
