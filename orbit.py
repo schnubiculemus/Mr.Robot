@@ -4551,6 +4551,16 @@ def _dispatch_tool(tool_ref: str, action: str, params: dict,
             return {"success": True, "result": str(manifest)[:2000], "manifest": manifest}
 
         elif action_type == "worklog_append":
+            # WP4: temporary_compat -- delete_candidate
+            # worklog_append ist Legacy-Schreibpfad. Im Safe Mode blockiert.
+            try:
+                from orbit import SAFE_MODE as _SM_WL
+            except Exception:
+                _SM_WL = False
+            if _SM_WL:
+                logger.debug("WP4: worklog_append im Safe Mode blockiert")
+                return {"success": False,
+                        "error": "WP4 Safe Mode: worklog_append ist Legacy -- kein V2-Schreibpfad"}
             from core.workspace_artifact_service import append_worklog_entry
             line_id = params.get("line_id") or (f"todo:{task_id}" if task_id else "general")
             ok = append_worklog_entry(line_id, params.get("content", ""),
@@ -4558,6 +4568,16 @@ def _dispatch_tool(tool_ref: str, action: str, params: dict,
             return {"success": ok, "result": "Worklog aktualisiert" if ok else "Fehler"}
 
         elif action_type == "materialize_execution":
+            # WP4: temporary_compat -- delete_candidate
+            # materialize_execution ist Legacy-Schreibpfad. Im Safe Mode blockiert.
+            try:
+                from orbit import SAFE_MODE as _SM_ME
+            except Exception:
+                _SM_ME = False
+            if _SM_ME:
+                logger.debug("WP4: materialize_execution im Safe Mode blockiert")
+                return {"success": False,
+                        "error": "WP4 Safe Mode: materialize_execution ist Legacy -- kein V2-Schreibpfad"}
             from core.workspace_artifact_service import materialize_execution_artifact
             line_id = params.get("line_id") or (f"todo:{task_id}" if task_id else "general")
             art = materialize_execution_artifact(
