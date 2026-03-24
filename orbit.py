@@ -970,6 +970,15 @@ def _auto_trigger_brief(task_id: str, owner_id: str, line_id: str, goal: str) ->
             "purpose": "line_bootstrap",
             "content": f"# Linienstart: {goal[:80]}\n\nTask: {task_id[:8]}\n\n*Automatisch beim Start angelegt.*",
         }
+        # WP4: temporary_compat -- delete_candidate
+        # Brief-Bootstrap ist Legacy-Schreibpfad. Im Safe Mode blockiert.
+        try:
+            from orbit import SAFE_MODE as _SM_BRIEF
+        except Exception:
+            _SM_BRIEF = False
+        if _SM_BRIEF:
+            logger.debug(f"WP4: Brief-Bootstrap im Safe Mode blockiert fuer Task {task_id[:8]}")
+            return
         def _do(p):
             from core.workspace_artifact_service import create_artifact
             art = create_artifact(
@@ -3077,6 +3086,15 @@ def _execute_step(step: dict, task_id: str) -> None:
                                     "format": "md",
                                 }
                                 def _do_materialize(p):
+                                    # WP4: temporary_compat -- delete_candidate
+                                    # materialize_execution ist Legacy. Im Safe Mode blockiert.
+                                    try:
+                                        from orbit import SAFE_MODE as _SM_MAT
+                                    except Exception:
+                                        _SM_MAT = False
+                                    if _SM_MAT:
+                                        logger.debug("WP4: materialize_execution im Safe Mode blockiert")
+                                        return {"success": False, "error": "WP4: Legacy materialize_execution im Safe Mode deaktiviert"}
                                     from core.workspace_artifact_service import materialize_execution_artifact
                                     art = materialize_execution_artifact(
                                         owner_id=_owner_id,
@@ -4423,6 +4441,22 @@ def _dispatch_tool(tool_ref: str, action: str, params: dict,
             action_key = f"workspace.{action_type}"
 
             def _do_artifact(p):
+                # WP4: Safe Mode Gate -- neue normale Arbeit schreibt nicht in Legacy-Artefaktwelt
+                # artifact_create / artifact_update / worklog_append / materialize_execution
+                # sind Legacy-Pfade (temporary_compat). Im Safe Mode blockiert.
+                try:
+                    from orbit import SAFE_MODE as _SM_ART
+                except Exception:
+                    _SM_ART = False
+                if _SM_ART:
+                    import logging as _lart
+                    _lart.getLogger(__name__).debug(
+                        "WP4: Legacy-Artifact-Write im Safe Mode blockiert -- "
+                        "neue normale Arbeit nutzt V2-Workspace"
+                    )
+                    return {"success": False,
+                            "error": "WP4 Safe Mode: Legacy-Artifact-Writes deaktiviert. "
+                                     "Neue Arbeit läuft über V2-Workspace (workspace_service.py)."}
                 _at = p.get("action", action_type)
                 if _at == "artifact_create":
                     from core.workspace_artifact_service import create_artifact
