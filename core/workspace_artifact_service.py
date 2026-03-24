@@ -17,16 +17,39 @@ logger = logging.getLogger(__name__)
 # Whitelists
 # =============================================================================
 
-ARTIFACT_TYPES = {
+# =============================================================================
+# WP4: Vereinfachtes Dokumentmodell V2
+# =============================================================================
+# Echte V2-Typen: nur note und code_file
+# Alles andere ist legacy_compat -- delete_candidate nach V2-Migration
+# =============================================================================
+
+# V2-Primärtypen
+WORKSPACE_DOC_TYPES_V2 = {"note", "code_file"}
+
+# Legacy-Typen (temporary_compat -- delete_candidate)
+WORKSPACE_DOC_TYPES_LEGACY = {
     "brief", "analysis", "plan", "implementation",
     "result", "report", "worklog", "patch", "test", "review"
 }
 
+# Alle erlaubten Typen (V2 + legacy_compat)
+ARTIFACT_TYPES = WORKSPACE_DOC_TYPES_V2 | WORKSPACE_DOC_TYPES_LEGACY
+
 ARTIFACT_PURPOSES = {
+    # V2-Zwecke
+    "note",            # einfache Notiz
+    "code",            # Code-Datei
+    # Legacy (temporary_compat)
     "line_bootstrap", "working_state", "handover",
     "execution_result", "review_input", "review_output",
     "implementation_base", "verification_output",
 }
+
+# Schreibregel (WP4): wann darf geschrieben werden?
+# A. Explizit: Nutzer fordert es klar an
+# B. Implizit eindeutig: Kimi Core erkennt klare Schreibabsicht im aktiven Kontext
+# VERBOTEN: aus Trigger, Recovery, diffusem Memory-Impuls, Auto-Artefaktkette
 
 ALLOWED_FORMATS = {
     "md", "json", "txt", "py", "js", "ts",
@@ -526,6 +549,7 @@ def read_artifact_content(artifact_id: int) -> str | None:
 # Materialiserung / Worklog
 # =============================================================================
 
+# WP4: temporary_compat -- delete_candidate (autonome Materialisierung)
 def materialize_execution_artifact(owner_id: str, line_id: str,
                                     content: str, format: str = "md",
                                     task_id: str = None, step_id: str = None,
@@ -551,6 +575,7 @@ def materialize_execution_artifact(owner_id: str, line_id: str,
     return art
 
 
+# WP4: temporary_compat -- delete_candidate (auto-worklog)
 def append_worklog_entry(line_id: str, entry_text: str,
                           actor: str = "kimi", task_id: str = None) -> bool:
     """

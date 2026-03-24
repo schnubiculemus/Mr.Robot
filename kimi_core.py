@@ -188,6 +188,34 @@ def process(request: KimiCoreRequest) -> KimiCoreResult:
     except Exception as e:
         logger.warning(f"KimiCore: process_kimi_output fehlgeschlagen: {e}")
 
+    # --- WP4: Workspace-Routing ---
+    # Kimi Core erkennt klare Schreibabsicht und routet an Workspace
+    try:
+        from core.workspace_service import (
+            write_document, append_to_document, set_leading_document,
+            read_leading_document, WRITE_REASON_IMPLICIT, DOC_TYPE_NOTE
+        )
+        _write_markers = [
+            "halte das fest", "schreib das", "notiere", "füge hinzu",
+            "ergänze", "aktualisiere die notiz", "schreibe in die notiz",
+            "note:", "notiz:"
+        ]
+        _text_lower = request.text.lower()
+        _has_write_intent = any(m in _text_lower for m in _write_markers)
+        if _has_write_intent:
+            _leading = read_leading_document(request.user_id)
+            _doc_id = "hauptnotiz"  # Standard-Dokument
+            append_to_document(
+                request.user_id, _doc_id,
+                "---\n" + reply[:500],
+                write_reason=WRITE_REASON_IMPLICIT,
+            )
+            set_leading_document(request.user_id, _doc_id)
+            delegations.append(ROUTE_WORKSPACE)
+            logger.info(f"KimiCore: Workspace-Write (implicit) → '{_doc_id}'")
+    except Exception as _ws_e:
+        logger.debug(f"KimiCore: Workspace-Routing fehlgeschlagen (unkritisch): {_ws_e}")
+
     # --- WP2: AWC nach Interaktion sinnvoll befüllen ---
     # Resthärtung: keine rohen Heuristiken mehr, sondern gezielte Felder
     try:
