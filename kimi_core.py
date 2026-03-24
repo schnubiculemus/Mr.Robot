@@ -92,12 +92,14 @@ def process(request: KimiCoreRequest) -> KimiCoreResult:
     route = ROUTE_MEMORY  # Standard: Memory immer aktiv
 
     # --- WP2: Active Working Context als Primäranker VOR Memory lesen ---
-    awc_prompt = ""
+    # WP3: AWC als extra_system (eigener Kanal), NICHT als doc_context
+    # So verdrängt AWC nicht Fast-Track + Typed Memory
+    awc_extra = ""
     try:
         from active_working_context import get_active_context, format_for_prompt
         awc = get_active_context(request.user_id)
         if awc:
-            awc_prompt = format_for_prompt(awc)
+            awc_extra = format_for_prompt(awc)
             delegations.append("awc")
             logger.debug(f"KimiCore: AWC gelesen: {awc.get('active_line','?')[:60]}")
     except Exception as _awc_e:
@@ -110,7 +112,7 @@ def process(request: KimiCoreRequest) -> KimiCoreResult:
             request.text,
             request.chat_history,
             request.context_name,
-            doc_context=awc_prompt if awc_prompt else None,
+            extra_system=awc_extra if awc_extra else None,
         )
     except Exception as e:
         logger.error(f"KimiCore: Fehler beim Kimi-Call: {e}")
@@ -122,10 +124,11 @@ def process(request: KimiCoreRequest) -> KimiCoreResult:
     delegations.append(ROUTE_MEMORY)
 
     # --- Schritt 2: Tool-Delegation (Web Search) ---
+    # WP1/Gelb 6: core.tools statt app.py -- korrekte Abhängigkeitsrichtung
     try:
-        from app import _handle_web_search
-        reply, search_ctx = _handle_web_search(reply, user_id=request.user_id,
-                                                user_message=request.text)
+        from core.tools import handle_web_search
+        reply, search_ctx = handle_web_search(reply, user_id=request.user_id,
+                                               user_message=request.text)
         if search_ctx:
             delegations.append(ROUTE_TOOL)
             route = ROUTE_TOOL
@@ -147,9 +150,10 @@ def process(request: KimiCoreRequest) -> KimiCoreResult:
         logger.warning(f"KimiCore: WebSearch fehlgeschlagen (unkritisch): {e}")
 
     # --- Schritt 3: Tool-Delegation (Introspect) ---
+    # WP1/Gelb 6: core.tools statt app.py
     try:
-        from app import _handle_introspect
-        reply, introspect_ctx = _handle_introspect(reply)
+        from core.tools import handle_introspect
+        reply, introspect_ctx = handle_introspect(reply)
         if introspect_ctx:
             delegations.append(ROUTE_TOOL)
             logger.info("KimiCore: Introspect delegiert")
@@ -183,6 +187,34 @@ def process(request: KimiCoreRequest) -> KimiCoreResult:
         reply = proc.to_reply()
     except Exception as e:
         logger.warning(f"KimiCore: process_kimi_output fehlgeschlagen: {e}")
+
+    # --- WP2: AWC nach Interaktion aktualisieren ---
+    # Einfache Heuristik: last_decision aus Antwort ableiten, next_open_question setzen
+    try:
+        from active_working_context import get_active_context, update_active_context
+        _awc_current = get_active_context(request.user_id)
+        if _awc_current:
+            # AWC existiert -- last_decision aus Reply-Kurzform aktualisieren
+            _reply_short = (reply[:150] if reply else "").replace("\n", " ").strip()
+            update_active_context(
+                request.user_id,
+                last_decision=f"Letzte Antwort: {_reply_short}",
+            )
+        else:
+            # Kein AWC -- ersten aus Eingabe ableiten
+            from active_working_context import set_active_context
+            set_active_context(
+                request.user_id,
+                active_line=request.text[:80],
+                active_goal="",
+                active_document="",
+                last_clean_state="",
+                last_decision="",
+                next_open_question=request.text[:80],
+            )
+            logger.debug("KimiCore: AWC initial aus Eingabe angelegt")
+    except Exception as _awc_w:
+        logger.debug(f"KimiCore: AWC-Update fehlgeschlagen (unkritisch): {_awc_w}")
 
     return KimiCoreResult(
         reply=reply,

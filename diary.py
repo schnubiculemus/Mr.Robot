@@ -349,6 +349,17 @@ def _save_entry(entry_text, user_id):
 
 def run_diary(user_id):
     """
+    WP3/Gelb 7: Diary ist private Selbstspur, nicht operative Steuerinstanz.
+    Diary darf:
+    - Kimis eigene Erfahrungen festhalten
+    - Stil und Identität stützen
+    Diary darf NICHT:
+    - Tasks starten
+    - Workspace-Dokumente anlegen
+    - ORBIT triggern
+    - operative Prioritäten setzen
+    """
+    """
     Schreibt einen Tagebucheintrag wenn heute noch keiner existiert.
 
     Returns: (filepath, chunk_id) oder None

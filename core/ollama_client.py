@@ -709,11 +709,12 @@ def _call_ollama(messages):
     return result
 
 
-def chat(user_id, message, chat_history, context_name=None, doc_context=None):
+def chat(user_id, message, chat_history, context_name=None, doc_context=None, extra_system=None):
     """Sendet eine Nachricht an Kimi und gibt die Antwort zurück.
 
     WICHTIG: chat_history enthält die aktuelle User-Nachricht bereits.
     message wird nur für build_system_prompt (Memory-Retrieval) verwendet.
+    extra_system → WP2/WP3: AWC als eigener Kanal (nicht doc_context)
 
     WP3 Memory-Verbote:
     - Memory darf keine Prioritäten setzen (nur Kimi Core entscheidet)
@@ -738,10 +739,11 @@ def chat(user_id, message, chat_history, context_name=None, doc_context=None):
     system_prompt = build_system_prompt(
         context_name=context_name,
         user_id=user_id,
-        user_message=message,  # Memory-Retrieval hier — gleiche Chunks für Prompt und MIRROR
+        user_message=message,
         doc_context=doc_context,
         mode="chat",
-        prefetched_chunks=retrieved_chunks,  # bereits geladen, nicht nochmal fetchen
+        prefetched_chunks=retrieved_chunks,
+        extra_system=extra_system,  # WP2/WP3: AWC über eigenen Kanal
     )
     messages = [{"role": "system", "content": system_prompt}]
     messages.extend(chat_history)

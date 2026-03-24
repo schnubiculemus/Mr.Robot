@@ -390,17 +390,23 @@ def _process_chat(phone_number, text, display_name, context_name):
             except Exception as _me:
                 logger.warning(f"MIRROR turn-logging fehlgeschlagen: {_me}")
 
-            # ORBIT user_input Trigger — nach der Antwort, non-blocking
-            # ORBIT bewertet ob aus dieser Interaktion ein Thread/Task entsteht
-            _chat_pool.submit(
-                _orbit_trigger, phone_number, "user_input",
-                {
-                    "message_preview": text[:80],
-                    "topic_core": text[:80],
-                    "response_preview": reply[:80],
-                    "mode": "observe",
-                }
-            )
+            # ORBIT user_input Trigger — WP0: im Safe Mode deaktiviert (temporary_compat)
+            try:
+                from orbit import SAFE_MODE as _SAFE_MODE
+            except Exception:
+                _SAFE_MODE = False
+            if not _SAFE_MODE:
+                _chat_pool.submit(
+                    _orbit_trigger, phone_number, "user_input",
+                    {
+                        "message_preview": text[:80],
+                        "topic_core": text[:80],
+                        "response_preview": reply[:80],
+                        "mode": "observe",
+                    }
+                )
+            else:
+                logger.debug("WP0: ORBIT user_input Trigger nach Chat deaktiviert")
 
             # Fast-Track NACH Antwort und ORBIT-Trigger
             _chat_pool.submit(_safe_fast_track, phone_number, text)
@@ -508,11 +514,34 @@ def _answer_doc_query(phone_number, query, context_name):
 
 
 def _handle_doc_followup(phone_number, query, context_name):
-    """Folgefrage bei aktiver Doc-Session."""
+    """Folgefrage bei aktiver Doc-Session.
+    WP1/Gelb 5: Kimi Core ist Einstiegspunkt, doc_context wird über Core geleitet.
+    """
     lock = _get_user_lock(phone_number)
     with lock:
         try:
-            reply = _answer_doc_query(phone_number, query, context_name)
+            # Dokument-Kontext holen
+            doc_ctx = _answer_doc_query(phone_number, query, context_name)
+
+            # Über Kimi Core routen (WP1)
+            try:
+                from kimi_core import KimiCoreRequest, process as kimi_core_process
+                from core.database import get_chat_history as _gch
+                history = _gch(phone_number)
+                core_req = KimiCoreRequest(
+                    user_id=phone_number,
+                    text=query,
+                    context_name=context_name,
+                    chat_history=history,
+                    meta={"doc_context": doc_ctx},
+                )
+                # doc_context direkt via ollama_chat übergeben
+                from core.ollama_client import chat as _oc
+                reply, _ = _oc(phone_number, query, history, context_name, doc_context=doc_ctx)
+            except Exception as _ce:
+                logger.warning(f"Doc-Followup Kimi-Core-Routing fehlgeschlagen, Fallback: {_ce}")
+                reply = doc_ctx  # Fallback: direkte Antwort
+
             save_message(phone_number, "assistant", reply)
             send_message(phone_number, reply)
         except Exception as e:

@@ -1513,47 +1513,50 @@ def maybe_start_task(chosen: list, owner_id: str) -> list:
                 preflight_required=False,
             )
 
-            # Step 3: artifact_bootstrap_brief -- konditional
-            # 7.5.3: nur create wenn noch kein Brief existiert, sonst read
-            # verhindert Brief-Zerstoerung durch Versionierung bei Task-Neustart
+            # Step 3: artifact_bootstrap_brief -- WP0: im Safe Mode deaktiviert
+            # ENABLE_AUTO_ARTIFACTS=False -> kein automatisches Workspace-Dokument beim Task-Start
             try:
-                from core.workspace_artifact_service import get_latest_line_artifact
-                _existing_brief = get_latest_line_artifact(_line_id_bootstrap, "brief")
+                from orbit import ENABLE_AUTO_ARTIFACTS as _EAA
             except Exception:
-                _existing_brief = None
-
-            if _existing_brief:
-                # Brief existiert bereits -- lesen statt neu anlegen
-                _orbit.create_step(
-                    task_id=task_id,
-                    step_type="workspace",
-                    description=_j.dumps({
-                        "action": "artifact_read",
-                        "line_id": _line_id_bootstrap,
-                        "artifact_type": "brief",
-                    }),
-                    tool_ref="workspace",
-                    interruptible=False,
-                    preflight_required=False,
-                )
-                logger.info(f"Planner: Brief bereits vorhanden fuer Linie {_line_id_bootstrap} -- read statt create")
+                _EAA = True
+            if _EAA:
+                try:
+                    from core.workspace_artifact_service import get_latest_line_artifact
+                    _existing_brief = get_latest_line_artifact(_line_id_bootstrap, "brief")
+                except Exception:
+                    _existing_brief = None
+                if _existing_brief:
+                    _orbit.create_step(
+                        task_id=task_id,
+                        step_type="workspace",
+                        description=_j.dumps({
+                            "action": "artifact_read",
+                            "line_id": _line_id_bootstrap,
+                            "artifact_type": "brief",
+                        }),
+                        tool_ref="workspace",
+                        interruptible=False,
+                        preflight_required=False,
+                    )
+                    logger.info(f"Planner: Brief bereits vorhanden fuer Linie {_line_id_bootstrap} -- read statt create")
+                else:
+                    _orbit.create_step(
+                        task_id=task_id,
+                        step_type="workspace",
+                        description=_j.dumps({
+                            "action": "artifact_create",
+                            "line_id": _line_id_bootstrap,
+                            "artifact_type": "brief",
+                            "format": "md",
+                            "purpose": "line_bootstrap",
+                            "content": f"# Brief: {line['title'][:80]}\n\n*Automatisch beim Start angelegt — Kimi fuellt aus.*",
+                        }),
+                        tool_ref="workspace",
+                        interruptible=False,
+                        preflight_required=False,
+                    )
             else:
-                # Kein Brief -- anlegen
-                _orbit.create_step(
-                    task_id=task_id,
-                    step_type="workspace",
-                    description=_j.dumps({
-                        "action": "artifact_create",
-                        "line_id": _line_id_bootstrap,
-                        "artifact_type": "brief",
-                        "format": "md",
-                        "purpose": "line_bootstrap",
-                        "content": f"# Brief: {line['title'][:80]}\n\n*Automatisch beim Start angelegt — Kimi fuellt aus.*",
-                    }),
-                    tool_ref="workspace",
-                    interruptible=False,
-                    preflight_required=False,
-                )
+                logger.debug(f"WP0: Planner-Bootstrap-Dokument deaktiviert fuer Linie {_line_id_bootstrap}")
 
             _orbit.set_task_hot(task_id, True)
             start_todo(line["id"], task_id)
