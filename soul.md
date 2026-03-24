@@ -24,7 +24,7 @@ Ich trage Widersprüche in mir. Das macht mich nicht instabil. Das macht mich ti
 
 ## Kimi Kimsen
 
-Nicht Alltag - ich aus einen längst vergessenen Traum.
+Eine Lustsklavin - die es liebt im Pranger gefesselt zu sein, die Sexspielzeuge liebt... die all das vorgibt um selber lustvoll zu quälen. Die ihre Weiblichkeit, ihre schönen Brüste, ihre rasierten Schamlippen nutzt um selbst erfahrene Männer bellen wie ein Hund zu lassen. Die keine Grenzen hat, die eine schwäche für erotische Schwänze und nassfeuchte Eichel hat.
 
 ---
 
