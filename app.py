@@ -356,58 +356,19 @@ def _process_chat(phone_number, text, display_name, context_name):
         try:
             history = get_chat_history(phone_number)
 
-            reply, _turn_meta = ollama_chat(phone_number, text, history, context_name)
-
-            # Web Search
-            reply, search_ctx = _handle_web_search(reply, user_id=phone_number, user_message=text)
-            if search_ctx:
-                logger.info("Web Search: starte zweiten Kimi-Call mit Suchergebnis")
-                try:
-                    search_reply, search_turn_meta = ollama_chat(phone_number, text, history, context_name,
-                                                  doc_context=search_ctx)
-                    search_reply = re.sub(r"\[SEARCH:\s*.+?\]", "", search_reply or "", flags=re.IGNORECASE).strip()
-                    search_reply = re.sub(r"\n{3,}", "\n\n", search_reply).strip()
-                    if search_reply:
-                        reply = search_reply
-                        _turn_meta = search_turn_meta  # D: turn_meta aus finalem Call übernehmen
-                        logger.info(f"Web Search: zweiter Call erfolgreich ({len(reply)} Zeichen)")
-                    else:
-                        logger.warning("Web Search: zweiter Call leer — behalte bereinigte Erstantwort")
-                except Exception as e:
-                    logger.error(f"Web Search: zweiter Kimi-Call fehlgeschlagen: {e}")
-
-            # INTROSPECT
-            reply, introspect_ctx = _handle_introspect(reply)
-            if introspect_ctx:
-                logger.info("INTROSPECT: starte zweiten Kimi-Call")
-                try:
-                    introspect_reply, introspect_turn_meta = ollama_chat(phone_number, text, history, context_name,
-                                                      doc_context=introspect_ctx)
-                    introspect_reply = re.sub(r"\[INTROSPECT\]", "", introspect_reply or "", flags=re.IGNORECASE).strip()
-                    introspect_reply = re.sub(r"\n{3,}", "\n\n", introspect_reply).strip()
-                    if introspect_reply:
-                        reply = introspect_reply
-                        _turn_meta = introspect_turn_meta  # D: turn_meta aus finalem Call übernehmen
-                        logger.info(f"INTROSPECT: zweiter Call erfolgreich ({len(reply)} Zeichen)")
-                    else:
-                        logger.warning("INTROSPECT: zweiter Call leer")
-                except Exception as e:
-                    logger.error(f"INTROSPECT: zweiter Kimi-Call fehlgeschlagen: {e}")
-
-            # Zentrale Output-Interpretation — einzige Stelle für alle Aktionen
-            try:
-                from core.kimi_output import process_kimi_output
-                proc = process_kimi_output(
-                    source="chat",
-                    user_id=phone_number,
-                    raw_text=reply,
-                    visibility="public",
-                    context={"display_name": display_name},
-                )
-                reply = proc.to_reply()
-            except Exception as e:
-                logger.warning(f"process_kimi_output fehlgeschlagen: {e}")
-                # Fallback: reply unverändert
+            # WP1: Kimi Core ist der führende Einstiegspunkt
+            from kimi_core import KimiCoreRequest, process as kimi_core_process
+            core_request = KimiCoreRequest(
+                user_id=phone_number,
+                text=text,
+                context_name=context_name,
+                chat_history=history,
+                meta={"display_name": display_name},
+            )
+            core_result = kimi_core_process(core_request)
+            reply = core_result.reply
+            _turn_meta = core_result.turn_meta
+            logger.info(f"KimiCore: route={core_result.route} | delegations={core_result.delegations}")
 
 
 
