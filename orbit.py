@@ -1000,6 +1000,17 @@ def _auto_trigger_result(task_id: str, owner_id: str, line_id: str,
         logger.debug(f"_auto_trigger_result fehlgeschlagen (unkritisch): {e}")
 
 
+def _is_recovery_transition(reason: str) -> bool:
+    """7.5.8: Prüft ob ein Task-Abschluss aus einem Recovery-Pfad stammt."""
+    if not reason:
+        return False
+    _recovery_markers = [
+        "recovery", "stale", "orphan", "full_recovery",
+        "alle steps terminal", "startup", "restart"
+    ]
+    return any(m in reason.lower() for m in _recovery_markers)
+
+
 # =============================================================================
 # 7.4 Trigger-Matrix
 # =============================================================================
@@ -2676,7 +2687,8 @@ def task_transition(task_id: str, new_status: str, reason: str = None,
                              summary=f"Task {task_id[:8]} abgeschlossen",
                              task_id=task_id)
                 logger.info(f"task_transition: Todo #{task_obj['linked_todo_id']} automatisch erledigt")
-                # 7.4: Result + Report bei Abschluss
+                # 7.4 + 7.5.8: Result + Report bei Abschluss
+                # Recovery-Übergänge erzeugen KEINE sichtbaren result/report
                 try:
                     linked = task_obj.get("linked_todo_id")
                     _owner = task_obj.get("owner_id","")
@@ -2685,11 +2697,13 @@ def task_transition(task_id: str, new_status: str, reason: str = None,
                         _owner = OWNER_ID
                     _line_id = f"todo:{linked}"
                     _goal = task_obj.get("goal","")
-                    _auto_trigger_result(task_id, _owner, _line_id, _goal,
-                                         summary=reason or "")
-                    # Report nach Result
-                    _auto_trigger_report(task_id, _owner, _line_id, _goal,
-                                         result_content=reason or "")
+                    if _is_recovery_transition(reason):
+                        logger.debug(f"7.5.8: Recovery-Abschluss -- kein result/report fuer Task {task_id[:8]}")
+                    else:
+                        _auto_trigger_result(task_id, _owner, _line_id, _goal,
+                                             summary=reason or "")
+                        _auto_trigger_report(task_id, _owner, _line_id, _goal,
+                                             result_content=reason or "")
                 except Exception:
                     pass
 
@@ -5521,6 +5535,28 @@ def main():
             _conn_mig.close()
     except Exception as _mig_e:
         logger.warning(f"Migration orbit_triggers fehlgeschlagen: {_mig_e}")
+
+    # 7.5.8: Migration -- neue Felder in workspace_artifacts
+    try:
+        from core.database import get_connection as _gc_758
+        _c758 = _gc_758()
+        try:
+            for _col, _default in [
+                ("visibility_class", "'workspace'"),
+                ("quality_state", "'draft'"),
+                ("content_origin", "'manual'"),
+                ("quality_notes", "NULL"),
+            ]:
+                try:
+                    _c758.execute(f"ALTER TABLE workspace_artifacts ADD COLUMN {_col} TEXT DEFAULT {_default}")
+                    _c758.commit()
+                    logger.info(f"Migration: workspace_artifacts.{_col} hinzugefuegt")
+                except Exception:
+                    pass  # Spalte existiert bereits
+        finally:
+            _c758.close()
+    except Exception as _m758:
+        logger.warning(f"Migration 7.5.8 fehlgeschlagen: {_m758}")
 
     logger.info("=== ORBIT gestartet ===")
     logger.info(f"Tick: {ORBIT_TICK_SECONDS}s | Not-Aus: {not ORBIT_ENABLED} | Soft-Pause: {ORBIT_SOFT_PAUSE}")

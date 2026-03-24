@@ -930,7 +930,11 @@ def init_kimi_b_schema(conn=None):
             is_materialized_execution INTEGER NOT NULL DEFAULT 0,
             created_by TEXT NOT NULL DEFAULT 'kimi',
             created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
+            updated_at TEXT NOT NULL,
+            visibility_class TEXT NOT NULL DEFAULT 'workspace',
+            quality_state TEXT NOT NULL DEFAULT 'draft',
+            content_origin TEXT NOT NULL DEFAULT 'manual',
+            quality_notes TEXT
         )
     """)
 

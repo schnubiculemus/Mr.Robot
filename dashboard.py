@@ -643,15 +643,22 @@ def api_workspace_stats():
 @app.route("/api/workspace/artifacts/recent")
 @require_auth
 def api_workspace_artifacts_recent():
-    """Letzte N Artefakte optional gefiltert."""
+    """Letzte N Artefakte optional gefiltert. 7.5.8: system-Artefakte ausgeblendet."""
     from core.database import get_connection
     limit = int(request.args.get("limit", 30))
     atype = request.args.get("type")
     status = request.args.get("status")
+    show_system = request.args.get("show_system", "0") == "1"
     conn = get_connection()
     try:
         q = "SELECT * FROM workspace_artifacts WHERE 1=1"
         p = []
+        # 7.5.8: system/hidden Artefakte standardmäßig ausblenden
+        if not show_system:
+            try:
+                q += " AND (visibility_class IS NULL OR visibility_class = 'workspace')"
+            except Exception:
+                pass
         if atype:
             q += " AND artifact_type=?"; p.append(atype)
         if status:

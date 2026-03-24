@@ -11,6 +11,7 @@
     <button class="btn btn-primary" onclick="showTab('artifacts')" id="tab-artifacts">Artefakte</button>
     <button class="btn btn-secondary" onclick="showTab('lines')" id="tab-lines">Linien</button>
     <button class="btn btn-secondary" onclick="showTab('legacy')" id="tab-legacy">Legacy</button>
+    <button class="btn btn-secondary" onclick="showTab('system')" id="tab-system" style="opacity:0.6">System</button>
   </div>
 </div>
 
@@ -34,6 +35,13 @@
 
 <div id="tab-content-lines" style="display:none">
   <div id="lines-list"><div class="loading">Lade Linien...</div></div>
+</div>
+
+<div id="tab-content-system" style="display:none">
+  <div style="padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:16px;font-size:13px;color:var(--text-3)">
+    System-Artefakte — Recovery, Diagnostics, interne Spuren. Nicht für normale Arbeit.
+  </div>
+  <div id="system-list"><div class="loading">Lade System-Artefakte...</div></div>
 </div>
 
 <div id="tab-content-legacy" style="display:none">
@@ -71,6 +79,15 @@ const STATUS_COLORS = {
   draft:'#f3f4f6|#6b7280',active:'#d1fae5|#065f46',final:'#dbeafe|#1e40af',
   superseded:'#fef3c7|#92400e',archived:'#f9fafb|#9ca3af'
 };
+const QUALITY_COLORS = {
+  raw:'#fef3c7|#92400e', draft:'#f3f4f6|#6b7280', reviewable:'#dbeafe|#1e40af',
+  publishable:'#d1fae5|#065f46', rejected:'#fee2e2|#991b1b'
+};
+function qualityBadge(q) {
+  if (!q || q === 'draft') return '';
+  const [bg,c]=(QUALITY_COLORS[q]||'#f3f4f6|#6b7280').split('|');
+  return '<span style="font-size:10px;padding:2px 6px;border-radius:4px;font-weight:500;background:'+bg+';color:'+c+'">'+q+'</span>';
+}
 let currentArtifactId = null;
 
 function typeBadge(t) {
@@ -108,7 +125,7 @@ async function loadArtifacts() {
   el.innerHTML = arts.map(a => {
     const ts = new Date(a.created_at).toLocaleString('de',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
     return '<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:14px 16px;margin-bottom:8px;cursor:pointer" onclick="openArtifact('+a.id+')">'+
-      '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;flex-wrap:wrap">'+typeBadge(a.artifact_type)+statusBadge(a.status)+
+      '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;flex-wrap:wrap">'+typeBadge(a.artifact_type)+statusBadge(a.status)+qualityBadge(a.quality_state)+
       (a.is_materialized_execution ? '<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:#d1fae5;color:#065f46;font-weight:500">Vollzug</span>' : '')+
       '<span style="font-size:12px;color:var(--text-3)">#'+a.id+' v'+a.version+'</span></div>'+
       '<div style="font-size:13px;font-weight:500">'+a.filename+'</div>'+
@@ -169,12 +186,33 @@ function closeModal() { document.getElementById('modal-backdrop').style.display=
 document.getElementById('modal-backdrop').addEventListener('click',e=>{if(e.target===e.currentTarget)closeModal();});
 
 function showTab(tab) {
-  ['artifacts','lines','legacy'].forEach(t=>{
+  ['artifacts','lines','legacy','system'].forEach(t=>{
     document.getElementById('tab-content-'+t).style.display=t===tab?'':'none';
     document.getElementById('tab-'+t).className='btn '+(t===tab?'btn-primary':'btn-secondary');
   });
   if(tab==='lines') loadLines();
   if(tab==='legacy') loadLegacy();
+  if(tab==='system') loadSystem();
+}
+
+async function loadSystem() {
+  const res = await fetch('/api/workspace/artifacts/recent?limit=30&show_system=1');
+  const all = await res.json();
+  const arts = all.filter(a => a.visibility_class && a.visibility_class !== 'workspace');
+  const el = document.getElementById('system-list');
+  if (!arts.length) { el.innerHTML = '<div style="color:var(--text-3);font-size:13px;padding:16px">Keine System-Artefakte.</div>'; return; }
+  el.innerHTML = arts.map(a => {
+    const ts = new Date(a.created_at).toLocaleString('de',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+    return '<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:14px 16px;margin-bottom:8px;opacity:0.7">'+
+      '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">'+typeBadge(a.artifact_type)+
+      '<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:#fee2e2;color:#991b1b">'+( a.visibility_class||'system')+'</span>'+
+      qualityBadge(a.quality_state)+
+      '<span style="font-size:12px;color:var(--text-3)">#'+a.id+'</span></div>'+
+      '<div style="font-size:13px">'+a.filename+'</div>'+
+      '<div style="font-size:12px;color:var(--text-3);margin-top:2px">'+a.line_id+' · '+ts+'</div>'+
+      (a.quality_notes ? '<div style="font-size:11px;color:#9ca3af;margin-top:3px">'+a.quality_notes+'</div>' : '')+
+      '</div>';
+  }).join('');
 }
 
 loadStats(); loadArtifacts();

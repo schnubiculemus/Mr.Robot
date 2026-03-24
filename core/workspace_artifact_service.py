@@ -91,7 +91,11 @@ def create_artifact(owner_id: str, line_id: str, artifact_type: str,
                     purpose: str = "working_state",
                     task_id: str = None, step_id: str = None,
                     created_by: str = "kimi",
-                    is_materialized_execution: bool = False) -> dict | None:
+                    is_materialized_execution: bool = False,
+                    visibility_class: str = "workspace",
+                    quality_state: str = "draft",
+                    content_origin: str = "manual",
+                    quality_notes: str = None) -> dict | None:
     """
     7.x: Erzeugt ein neues Artefakt.
     Schreibt Datei + DB-Eintrag + Event.
@@ -126,12 +130,14 @@ def create_artifact(owner_id: str, line_id: str, artifact_type: str,
                 """INSERT INTO workspace_artifacts
                    (owner_id, line_id, task_id, step_id, artifact_type, purpose,
                     format, status, filename, relative_path, version,
-                    is_materialized_execution, created_by, created_at, updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    is_materialized_execution, created_by, created_at, updated_at,
+                    visibility_class, quality_state, content_origin, quality_notes)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (owner_id, line_id, task_id, step_id, artifact_type, purpose,
                  format, "draft", "_placeholder_", "_placeholder_",
                  version, 1 if is_materialized_execution else 0,
-                 created_by, now, now)
+                 created_by, now, now,
+                 visibility_class, quality_state, content_origin, quality_notes)
             )
             artifact_id = cur.lastrowid
 
@@ -184,6 +190,30 @@ def create_artifact(owner_id: str, line_id: str, artifact_type: str,
         _update_line_state(owner_id, line_id, artifact_id, is_materialized_execution)
 
         artifact = get_artifact(artifact_id)
+        # 7.5.8: Quality-Gate -- visibility_class und quality_state setzen
+        try:
+            from core.artifact_quality_service import evaluate_artifact_quality
+            qr = evaluate_artifact_quality(
+                artifact_type=artifact_type,
+                content=content,
+                content_origin=content_origin,
+                purpose=purpose,
+            )
+            if qr["visibility_class"] != visibility_class or qr["quality_state"] != quality_state:
+                _conn_q = get_connection()
+                try:
+                    _conn_q.execute(
+                        "UPDATE workspace_artifacts SET visibility_class=?, quality_state=?, quality_notes=? WHERE id=?",
+                        (qr["visibility_class"], qr["quality_state"],
+                         "; ".join(qr["reasons"]) if qr["reasons"] else None,
+                         artifact_id)
+                    )
+                    _conn_q.commit()
+                finally:
+                    _conn_q.close()
+        except Exception as _qe:
+            pass  # Quality-Gate unkritisch
+
         logger.info(f"Artifact #{artifact_id} erstellt: {artifact_type} v{version} fuer Linie {line_id}")
 
         # Prio B: supersedes_artifact_id -- altes aktives Artefakt gleichen Typs superseden
