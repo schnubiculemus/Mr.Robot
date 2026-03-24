@@ -193,7 +193,7 @@ def process(request: KimiCoreRequest) -> KimiCoreResult:
     try:
         from core.workspace_service import (
             write_document, append_to_document, set_leading_document,
-            read_leading_document, WRITE_REASON_IMPLICIT, DOC_TYPE_NOTE
+            get_leading_document, read_leading_document, WRITE_REASON_IMPLICIT, DOC_TYPE_NOTE
         )
         _write_markers = [
             "halte das fest", "schreib das", "notiere", "füge hinzu",
@@ -203,8 +203,8 @@ def process(request: KimiCoreRequest) -> KimiCoreResult:
         _text_lower = request.text.lower()
         _has_write_intent = any(m in _text_lower for m in _write_markers)
         if _has_write_intent:
-            _leading = read_leading_document(request.user_id)
-            _doc_id = "hauptnotiz"  # Standard-Dokument
+            # Führendes Dokument aus AWC -- nur wenn keines gesetzt, Fallback auf "hauptnotiz"
+            _doc_id = get_leading_document(request.user_id) or "hauptnotiz"
             append_to_document(
                 request.user_id, _doc_id,
                 "---\n" + reply[:500],

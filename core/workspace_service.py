@@ -171,6 +171,73 @@ def read_leading_document(owner_id: str) -> str | None:
 
 
 # =============================================================================
+# Hilfsdokumente (WP4: minimal modelliert)
+# =============================================================================
+# Hilfsdokumente gehören zu einem führenden Dokument.
+# Struktur: kimi_workspace/v2/<owner>/_meta.json
+# { "leading": "doc_id", "helpers": ["doc_id_1", "doc_id_2"] }
+
+def _meta_path(owner_id: str) -> str:
+    root = get_workspace_root()
+    safe_owner = owner_id.replace("@", "_").replace(":", "_")[:20]
+    return os.path.join(root, safe_owner, "_meta.json")
+
+
+def _read_meta(owner_id: str) -> dict:
+    path = _meta_path(owner_id)
+    if not os.path.exists(path):
+        return {"leading": None, "helpers": []}
+    import json
+    try:
+        with open(path, "r") as f:
+            return json.load(f)
+    except Exception:
+        return {"leading": None, "helpers": []}
+
+
+def _write_meta(owner_id: str, meta: dict) -> None:
+    import json
+    path = _meta_path(owner_id)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(meta, f, indent=2)
+
+
+def add_helper_document(owner_id: str, doc_id: str) -> bool:
+    """Fügt ein Hilfsdokument zum aktiven Kontext hinzu."""
+    meta = _read_meta(owner_id)
+    if doc_id not in meta.get("helpers", []):
+        meta.setdefault("helpers", []).append(doc_id)
+        _write_meta(owner_id, meta)
+    logger.debug(f"Workspace: Hilfsdokument '{doc_id}' registriert")
+    return True
+
+
+def get_helper_documents(owner_id: str) -> list[str]:
+    """Gibt alle Hilfsdokumente zurück."""
+    return _read_meta(owner_id).get("helpers", [])
+
+
+def read_helper_documents(owner_id: str) -> dict[str, str]:
+    """Liest alle Hilfsdokumente. Gibt {doc_id: content} zurück."""
+    helpers = get_helper_documents(owner_id)
+    result = {}
+    for doc_id in helpers:
+        content = read_document(owner_id, doc_id)
+        if content:
+            result[doc_id] = content
+    return result
+
+
+def remove_helper_document(owner_id: str, doc_id: str) -> bool:
+    """Entfernt ein Hilfsdokument aus dem Kontext."""
+    meta = _read_meta(owner_id)
+    meta["helpers"] = [d for d in meta.get("helpers", []) if d != doc_id]
+    _write_meta(owner_id, meta)
+    return True
+
+
+# =============================================================================
 # Workspace-Hygiene
 # =============================================================================
 # WP4: kein Recovery-Output, kein System-Output als normale Dokumente

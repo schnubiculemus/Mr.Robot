@@ -562,10 +562,54 @@ def api_write_requests_history():
 # 7.x Workspace / Artifact API
 # =============================================================================
 
+# =============================================================================
+# WP4: V2-Workspace Routen (Hauptpfad)
+# =============================================================================
+
+@app.route("/api/v2/workspace/documents")
+@require_auth
+def api_v2_workspace_documents():
+    """V2: Alle Dokumente des aktiven Nutzers (note + code_file)."""
+    from config import OWNER_ID
+    from core.workspace_service import list_documents, get_leading_document
+    docs = list_documents(OWNER_ID)
+    leading = get_leading_document(OWNER_ID)
+    return jsonify({"documents": docs, "leading_document": leading})
+
+
+@app.route("/api/v2/workspace/documents/<path:doc_id>")
+@require_auth
+def api_v2_workspace_document(doc_id):
+    """V2: Einzelnes Dokument lesen."""
+    from config import OWNER_ID
+    from core.workspace_service import read_document, get_leading_document
+    content = read_document(OWNER_ID, doc_id)
+    if content is None:
+        return jsonify({"error": "Nicht gefunden"}), 404
+    leading = get_leading_document(OWNER_ID)
+    return jsonify({"doc_id": doc_id, "content": content,
+                    "is_leading": doc_id == leading})
+
+
+@app.route("/api/v2/workspace/leading")
+@require_auth
+def api_v2_workspace_leading():
+    """V2: Führendes Dokument + Inhalt."""
+    from config import OWNER_ID
+    from core.workspace_service import get_leading_document, read_leading_document
+    doc_id = get_leading_document(OWNER_ID)
+    content = read_leading_document(OWNER_ID)
+    return jsonify({"doc_id": doc_id, "content": content})
+
+
+# =============================================================================
+# WP4: Legacy Workspace Routen (temporary_compat -- delete_candidate nach Migration)
+# =============================================================================
+
 @app.route("/api/workspace/lines")
 @require_auth
 def api_workspace_lines():
-    """Alle Linien mit Workspace-Eintraegen."""
+    """Legacy: Alle Linien mit Workspace-Eintraegen. temporary_compat."""
     from core.database import get_connection
     conn = get_connection()
     try:
@@ -580,7 +624,7 @@ def api_workspace_lines():
 @app.route("/api/workspace/lines/<path:line_id>/artifacts")
 @require_auth
 def api_workspace_line_artifacts(line_id):
-    """Alle Artifacts einer Linie."""
+    """Legacy: Alle Artifacts einer Linie. temporary_compat -- delete_candidate"""
     from core.workspace_artifact_service import list_line_artifacts, build_line_manifest
     status = request.args.get("status")
     artifact_type = request.args.get("type")
@@ -592,7 +636,7 @@ def api_workspace_line_artifacts(line_id):
 @app.route("/api/workspace/artifacts/<int:artifact_id>")
 @require_auth
 def api_workspace_artifact(artifact_id):
-    """Einzelnes Artifact mit Inhalt."""
+    """Legacy: Einzelnes Artifact. temporary_compat -- delete_candidate"""
     from core.workspace_artifact_service import get_artifact, read_artifact_content
     art = get_artifact(artifact_id)
     if not art:
@@ -614,7 +658,7 @@ def api_workspace_artifact_status(artifact_id):
 @app.route("/api/workspace/stats")
 @require_auth
 def api_workspace_stats():
-    """Gesamtstatistik des Workspace."""
+    """Legacy: Gesamtstatistik alter Artifacts. temporary_compat -- delete_candidate"""
     from core.database import get_connection
     conn = get_connection()
     try:
