@@ -230,23 +230,46 @@ def process(request: KimiCoreRequest) -> KimiCoreResult:
     # --- Schritt 5: Output-Interpretation ---
     # Kimi Core verarbeitet Proposals, Todos (Write), Calendar (Write) etc. aus dem Reply
     #
-    # WP6 Write-Gate: write_allowed nur wenn explizite Nutzeranweisung erkannt.
-    # Modell-Marker allein reichen nicht — Tommy muss es klar angefordert haben.
-    _write_triggers = [
-        # Todos
-        "leg an", "anlegen", "erstell", "trag ein", "eintragen", "notier",
-        "mach ein todo", "todo anlegen", "aufgabe anlegen", "aufgabe erstellen",
-        "hak ab", "abhaken", "als erledigt", "erledigt markieren",
-        "lösch das todo", "todo löschen",
-        # Kalender
-        "trag ein", "termin anlegen", "termin erstellen", "mach einen termin",
-        "lösch den termin", "termin löschen", "termin ändern", "termin verschieben",
-        "block", "blockiere",
-    ]
+    # WP6 Write-Gate — präzise, klassenspezifisch:
+    #   allow_todo_write     = True nur bei expliziter Todo-Anweisung
+    #   allow_calendar_write = True nur bei expliziter Kalender-Anweisung
+    #   allow_orbit_intent   = True nur wenn Nutzer ORBIT/Eigenbearbeitung explizit will
+    #
+    # Nicht ausreichend: "der Turn klingt irgendwie nach Schreiben"
+    # Erforderlich: spezifische Anweisung für genau diese Write-Klasse
     _text_lower = request.text.lower()
-    _write_allowed = any(t in _text_lower for t in _write_triggers)
-    if _write_allowed:
-        logger.info(f"KimiCore: write_allowed=True (explizite Nutzeranweisung erkannt)")
+
+    # Todo-Write: nur bei klar todogerichteter Anweisung
+    _todo_write_triggers = [
+        "leg an", "leg das an", "anlegen", "erstell ein todo", "erstelle ein todo",
+        "mach ein todo", "todo anlegen", "aufgabe anlegen", "aufgabe erstellen",
+        "trag das ein", "notier das", "hak ab", "abhaken",
+        "als erledigt", "erledigt markieren", "todo löschen", "lösch das todo",
+    ]
+    allow_todo_write = any(t in _text_lower for t in _todo_write_triggers)
+
+    # Kalender-Write: nur bei klar kalendergerichteter Anweisung
+    _calendar_write_triggers = [
+        "termin anlegen", "termin erstellen", "mach einen termin", "trag den termin ein",
+        "termin eintragen", "termin löschen", "lösch den termin",
+        "termin ändern", "termin verschieben", "blockiere", "block im kalender",
+    ]
+    allow_calendar_write = any(t in _text_lower for t in _calendar_write_triggers)
+
+    # ORBIT-Intent: nur wenn Nutzer explizit Eigenbearbeitung signalisiert
+    _orbit_intent_triggers = [
+        "orbit", "arbeite selbst daran", "mach das intern", "bearbeite das eigenständig",
+        "bearbeite das selbst", "kümmere dich selbst", "nimm dir das vor",
+    ]
+    allow_orbit_intent = any(t in _text_lower for t in _orbit_intent_triggers)
+
+    if allow_todo_write:
+        logger.info("KimiCore: allow_todo_write=True")
+    if allow_calendar_write:
+        logger.info("KimiCore: allow_calendar_write=True")
+    if allow_orbit_intent:
+        logger.info("KimiCore: allow_orbit_intent=True")
+
     try:
         from core.kimi_output import process_kimi_output
         proc = process_kimi_output(
@@ -255,7 +278,9 @@ def process(request: KimiCoreRequest) -> KimiCoreResult:
             raw_text=reply,
             visibility="public",
             context=request.meta,
-            write_allowed=_write_allowed,
+            allow_todo_write=allow_todo_write,
+            allow_calendar_write=allow_calendar_write,
+            allow_orbit_intent=allow_orbit_intent,
         )
         reply = proc.to_reply()
     except Exception as e:
