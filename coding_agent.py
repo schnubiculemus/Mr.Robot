@@ -16,6 +16,12 @@ Architekturregeln (WP7):
 Modell: minimax-m2.7 (Coding-fokussiertes Modell, separater Call)
 Kimi Core bleibt Kimi Core — minimax-m2.7 ist nur der Arbeiter im Hintergrund.
 
+Write-Sicherheitsregeln (WP7-Freigabefix):
+  - Write-Modi (scaffold, patch, refactor, tests) geben NUR reinen Dateiinhalt zurück
+  - Keine Markdown-Fences, keine Erklärungstexte in der Datei
+  - _extract_file_content() bereinigt den Output vor dem Workspace-Write
+  - scaffold ohne target_doc_id wird blockiert
+
 WP7-Bindungen:
   WP0: keine Hintergrundautonomie, keine Selbstaktivität
   WP1: Kimi Core bleibt führende Instanz
@@ -28,6 +34,7 @@ WP7-Bindungen:
 
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
@@ -45,8 +52,8 @@ CODING_AGENT_TIMEOUT = int(os.getenv("CODING_AGENT_TIMEOUT", "180"))
 
 MODE_READ_ONLY   = "read_only_analysis"  # Lesen + verstehen, kein Schreiben
 MODE_PATCH       = "patch"               # Gezielte Änderung einer Datei
-MODE_REFACTOR    = "refactor"            # Refactoring innerhalb des Scopes
-MODE_TESTS       = "tests"              # Tests schreiben
+MODE_REFACTOR    = "refactor"            # Refactoring — gibt reinen Dateiinhalt zurück
+MODE_TESTS       = "tests"               # Tests schreiben
 MODE_REVIEW      = "review"              # Code Review / technische Einschätzung
 MODE_SCAFFOLD    = "scaffold"            # Neue Datei/Modul anlegen
 MODE_EXPLAIN     = "explain_code"        # Code erklären
@@ -70,9 +77,9 @@ class CodingRequest:
     active_line: str = ""       # Aktive Arbeitslinie aus AWC
     active_goal: str = ""       # Aktives Ziel aus AWC
     context_note: str = ""      # Optionaler Zusatzkontext
-    return_format: str = "workspace"  # "workspace" (default) → code_file im V2-Workspace
-                                      # "text" → nur als Chattext zurückgeben
-    target_doc_id: str = ""     # Ziel-doc_id im V2-Workspace für neue Dateien
+    return_format: str = "workspace"  # "workspace" → code_file im V2-Workspace (Standard)
+                                      # "text"      → nur als Chattext, kein Workspace-Write
+    target_doc_id: str = ""     # Ziel-doc_id im V2-Workspace (Pflicht bei scaffold)
 
 
 @dataclass
@@ -112,27 +119,89 @@ class CodingResult:
 # Scope-Validierung
 # =============================================================================
 
-def _validate_scope(scope_files: list[str], mode: str = "") -> tuple[bool, str]:
+def _validate_scope(scope_files: list[str], mode: str = "",
+                    target_doc_id: str = "") -> tuple[bool, str]:
     """
     Prüft ob der Scope gültig ist.
 
-    Neue Datei (scaffold, leerer scope_files): erlaubt — target_doc_id wird als Ziel genutzt.
-    Bestehende Datei: scope_files muss mindestens eine Datei enthalten.
-
-    - Maximal 10 Dateien pro Auftrag
-    - Keine absoluten Pfade außerhalb des Workspace
+    scaffold darf leeren Scope haben — aber target_doc_id muss dann gesetzt sein.
+    Alle anderen Write-Modi: mindestens eine scope_file erforderlich.
+    Maximal 10 Dateien pro Auftrag.
+    Keine absoluten Pfade außerhalb von /opt/whatsapp-bot/.
     """
-    # scaffold darf mit leerem Scope starten — neue Datei anlegen
     if not scope_files:
-        if mode == "scaffold":
+        if mode == MODE_SCAFFOLD:
+            if not target_doc_id:
+                return False, (
+                    "scaffold ohne scope erfordert target_doc_id "
+                    "(Name der neuen Datei im Workspace)"
+                )
             return True, ""
-        return False, "Kein Scope angegeben — mindestens eine Datei erforderlich (oder mode=scaffold für neue Datei)"
+        return False, (
+            "Kein Scope angegeben — mindestens eine Datei erforderlich "
+            "(oder mode=scaffold + target_doc_id fuer neue Datei)"
+        )
     if len(scope_files) > 10:
-        return False, f"Scope zu groß: {len(scope_files)} Dateien (max 10)"
+        return False, f"Scope zu gross: {len(scope_files)} Dateien (max 10)"
     for f in scope_files:
         if f.startswith("/") and "/opt/whatsapp-bot/" not in f:
-            return False, f"Datei außerhalb des erlaubten Bereichs: {f}"
+            return False, f"Datei ausserhalb des erlaubten Bereichs: {f}"
     return True, ""
+
+
+# =============================================================================
+# Output-Bereinigung für Write-Modi
+# =============================================================================
+
+def _extract_file_content(raw_output: str, mode: str) -> str:
+    """
+    Bereinigt den Modelloutput für Write-Modi.
+
+    Strategie:
+    1. Wenn ein einzelner Codeblock vorhanden: nur dessen Inhalt nehmen
+    2. Wenn mehrere Codeblöcke: alle zusammenführen
+    3. Wenn kein Codeblock: raw_output als reinen Text nehmen, Fences entfernen
+
+    Schützt vor:
+    - Markdown-Codefences (```python ... ```)
+    - Einleitungssätzen vor dem Code
+    - Erklärungstexten nach dem Code
+    """
+    if mode not in WRITE_MODES:
+        # Read-Modi: kein Bereinigen — Erklärungstext ist gewünscht
+        return raw_output
+
+    # Alle Codeblöcke extrahieren
+    fence_pattern = re.compile(r'```[a-zA-Z0-9_]*\n?(.*?)```', re.DOTALL)
+    blocks = fence_pattern.findall(raw_output)
+
+    if blocks:
+        # Codeblöcke gefunden: nur deren Inhalt, zusammengeführt
+        extracted = "\n\n".join(b.strip() for b in blocks if b.strip())
+        logger.debug(f"_extract_file_content: {len(blocks)} Codeblock(e) extrahiert")
+        return extracted
+
+    # Kein Codeblock — Fences ohne Sprache entfernen, Rest nehmen
+    cleaned = re.sub(r'```[a-zA-Z0-9_]*\n?', '', raw_output)
+    cleaned = re.sub(r'```', '', cleaned)
+    cleaned = cleaned.strip()
+
+    # Typische Einleitungszeilen entfernen (erste Zeile wenn kein Code-Zeichen)
+    lines = cleaned.splitlines()
+    if lines:
+        first = lines[0].strip()
+        # Einleitung erkennen: kein Code-Zeichen, Satz endet mit Doppelpunkt oder ist kurz prosa
+        is_intro = (
+            not any(c in first for c in ('=', '(', 'def ', 'class ', 'import ', '#!'))
+            and (first.endswith(':') or (len(first) < 80 and not first.startswith('#')))
+            and not first.startswith('def ')
+            and not first.startswith('class ')
+        )
+        if is_intro and len(lines) > 1:
+            cleaned = "\n".join(lines[1:]).strip()
+            logger.debug(f"_extract_file_content: Einleitungszeile entfernt: {first[:60]}")
+
+    return cleaned
 
 
 # =============================================================================
@@ -148,7 +217,7 @@ def _read_scope_files(owner_id: str, scope_files: list[str]) -> dict[str, str]:
     result = {}
     for file_ref in scope_files:
         # V2-Workspace: doc_id ohne Pfad
-        if not os.path.sep in file_ref and not file_ref.startswith("/"):
+        if os.path.sep not in file_ref and not file_ref.startswith("/"):
             content = read_document(owner_id, file_ref)
             if content:
                 result[file_ref] = content
@@ -162,7 +231,7 @@ def _read_scope_files(owner_id: str, scope_files: list[str]) -> dict[str, str]:
             except Exception as e:
                 logger.warning(f"_read_scope_files: {file_ref} nicht lesbar: {e}")
         else:
-            logger.debug(f"_read_scope_files: {file_ref} nicht gefunden oder außerhalb Scope")
+            logger.debug(f"_read_scope_files: {file_ref} nicht gefunden oder ausserhalb Scope")
     return result
 
 
@@ -170,37 +239,71 @@ def _write_result_to_workspace(owner_id: str, doc_id: str, content: str) -> bool
     """Schreibt Coding-Agent-Ergebnis in V2-Workspace (WP4-konform)."""
     from core.workspace_service import write_document, DOC_TYPE_CODE, WRITE_REASON_EXPLICIT
     return write_document(owner_id, doc_id, content,
-                         doc_type=DOC_TYPE_CODE,
-                         write_reason=WRITE_REASON_EXPLICIT)
+                          doc_type=DOC_TYPE_CODE,
+                          write_reason=WRITE_REASON_EXPLICIT)
 
 
 # =============================================================================
 # System-Prompt für den Coding Agent
 # =============================================================================
 
+# Gemeinsame Grundregel für alle Write-Modi — hart formuliert
+_WRITE_MODE_OUTPUT_RULE = (
+    "WICHTIG: Antworte NUR mit dem finalen Dateiinhalt. "
+    "Kein Einleitungssatz. Kein Erklaerungstext. Keine Markdown-Fences (keine ```). "
+    "Nur der Code/Text der direkt in die Datei geschrieben werden soll."
+)
+
 def _build_system_prompt(request: CodingRequest) -> str:
+    # Modus-spezifische Anweisungen
+    # Write-Modi: nur Dateiinhalt, keine Erklaerung
+    # Read-Modi: Erklaerung/Analyse erwuenscht
     mode_instructions = {
-        MODE_READ_ONLY:  "Analysiere den Code. Erkläre was er tut, wie er aufgebaut ist und wo mögliche Probleme liegen. Schreibe keinen neuen Code.",
-        MODE_PATCH:      "Führe die beschriebene Änderung durch. Gib den vollständigen geänderten Code zurück. Nur die nötigsten Änderungen.",
-        MODE_REFACTOR:   "Refactore den Code im angegebenen Scope. Behalte die Funktionalität bei. Erkläre kurz was du geändert hast und warum.",
-        MODE_TESTS:      "Schreibe Tests für den beschriebenen Code. Verwende pytest. Decke die wichtigsten Fälle ab.",
-        MODE_REVIEW:     "Führe ein Code Review durch. Fokus: Korrektheit, Lesbarkeit, mögliche Fehler, WP6/WP7-Konformität. Keine unnötigen Stilhinweise.",
-        MODE_SCAFFOLD:   "Erstelle die neue Datei oder das neue Modul. Halte dich an den beschriebenen Scope und Stil.",
-        MODE_EXPLAIN:    "Erkläre den Code verständlich. Keine Verbesserungsvorschläge außer wenn explizit gefragt.",
+        MODE_READ_ONLY: (
+            "Analysiere den Code. Erklaere was er tut, wie er aufgebaut ist "
+            "und wo moegliche Probleme liegen. Schreibe keinen neuen Code."
+        ),
+        MODE_PATCH: (
+            "Fuehre die beschriebene Aenderung durch. "
+            "Gib den vollstaendigen geaenderten Dateiinhalt zurueck. "
+            "Nur die noetigen Aenderungen. " + _WRITE_MODE_OUTPUT_RULE
+        ),
+        MODE_REFACTOR: (
+            "Refactore den Code im angegebenen Scope. Behalte die Funktionalitaet bei. "
+            "Gib den vollstaendigen refactorten Dateiinhalt zurueck. "
+            "Keine Erklaerung des Refactorings im Output — nur der fertige Code. "
+            + _WRITE_MODE_OUTPUT_RULE
+        ),
+        MODE_TESTS: (
+            "Schreibe Tests fuer den beschriebenen Code. Verwende pytest. "
+            "Decke die wichtigsten Faelle ab. "
+            + _WRITE_MODE_OUTPUT_RULE
+        ),
+        MODE_REVIEW: (
+            "Fuehre ein Code Review durch. "
+            "Fokus: Korrektheit, Lesbarkeit, moegliche Fehler. "
+            "Keine unnötigen Stilhinweise."
+        ),
+        MODE_SCAFFOLD: (
+            "Erstelle die neue Datei. Halte dich an den beschriebenen Stil und Auftrag. "
+            + _WRITE_MODE_OUTPUT_RULE
+        ),
+        MODE_EXPLAIN: (
+            "Erklaere den Code verstaendlich. "
+            "Keine Verbesserungsvorschlaege ausser wenn explizit gefragt."
+        ),
     }
 
     parts = [
         "Du bist ein spezialisierter Coding-Worker. Du arbeitest im Auftrag von Kimi Core.",
-        "Regeln:",
-        "- Antworte NUR mit dem Ergebnis deiner Arbeit (Code, Review, Erklärung)",
-        "- Kein Smalltalk, keine Begrüßung, keine Zusammenfassung am Anfang",
+        "Basisregeln:",
+        "- Kein Smalltalk, keine Begruessung",
         "- Kein direkter Dialog mit dem Nutzer",
         "- Arbeite nur im angegebenen Scope",
-        "- Keine neuen Dateien außerhalb des Auftrags",
-        "- Kein Markdown außer Code-Blöcken (keine Sternchen, keine Headers)",
+        "- Keine neuen Dateien ausserhalb des Auftrags",
         "",
         f"Modus: {request.mode}",
-        f"Anweisung: {mode_instructions.get(request.mode, 'Führe den Auftrag aus.')}",
+        f"Anweisung: {mode_instructions.get(request.mode, 'Fuehre den Auftrag aus.')}",
     ]
 
     if request.active_line:
@@ -219,23 +322,25 @@ def _build_system_prompt(request: CodingRequest) -> str:
 
 def run(request: CodingRequest) -> CodingResult:
     """
-    Führt einen Coding-Agent-Auftrag aus.
+    Fuehrt einen Coding-Agent-Auftrag aus.
 
     Einziger Einstiegspunkt — wird nur von Kimi Core aufgerufen.
-    Gibt immer CodingResult zurück — spricht nie direkt mit dem Nutzer.
+    Gibt immer CodingResult zurueck — spricht nie direkt mit dem Nutzer.
     """
-    # Scope validieren (scaffold darf leeren Scope haben)
-    scope_ok, scope_err = _validate_scope(request.scope_files, mode=request.mode)
+    # Scope validieren (scaffold ohne Scope nur mit target_doc_id)
+    scope_ok, scope_err = _validate_scope(
+        request.scope_files, mode=request.mode, target_doc_id=request.target_doc_id
+    )
     if not scope_ok:
         logger.warning(f"CodingAgent: Scope-Fehler: {scope_err}")
         return CodingResult(ok=False, mode=request.mode, output="", error=scope_err)
 
     if request.mode not in ALL_MODES:
         return CodingResult(ok=False, mode=request.mode, output="",
-                           error=f"Unbekannter Modus: {request.mode}")
+                            error=f"Unbekannter Modus: {request.mode}")
 
     logger.info(f"CodingAgent: mode={request.mode}, scope={request.scope_files}, "
-               f"model={CODING_AGENT_MODEL}")
+                f"target={request.target_doc_id}, model={CODING_AGENT_MODEL}")
 
     # Scope-Dateien lesen
     file_contents = _read_scope_files(request.owner_id, request.scope_files)
@@ -243,7 +348,6 @@ def run(request: CodingRequest) -> CodingResult:
 
     if not file_contents and request.mode != MODE_SCAFFOLD:
         logger.warning(f"CodingAgent: Keine Scope-Dateien lesbar: {request.scope_files}")
-        # Trotzdem versuchen — vielleicht ist der Auftrag datei-unabhängig
 
     # Prompt aufbauen
     system_prompt = _build_system_prompt(request)
@@ -265,29 +369,33 @@ def run(request: CodingRequest) -> CodingResult:
     try:
         from core.ollama_client import _call_ollama_with_model
         result = _call_ollama_with_model(messages, model=CODING_AGENT_MODEL,
-                                         timeout=CODING_AGENT_TIMEOUT)
+                                          timeout=CODING_AGENT_TIMEOUT)
         if not result:
             return CodingResult(ok=False, mode=request.mode, output="",
-                               error="Coding Agent: kein Ergebnis vom Modell")
+                                error="Coding Agent: kein Ergebnis vom Modell")
 
-        output = result.get("message", {}).get("content", "").strip()
-        if not output:
+        raw_output = result.get("message", {}).get("content", "").strip()
+        if not raw_output:
             return CodingResult(ok=False, mode=request.mode, output="",
-                               error="Coding Agent: leere Antwort")
+                                error="Coding Agent: leere Antwort")
 
     except Exception as e:
         logger.error(f"CodingAgent: Modell-Call fehlgeschlagen: {e}")
         return CodingResult(ok=False, mode=request.mode, output="", error=str(e))
 
-    # Write-Modi: Ergebnis in V2-Workspace schreiben
-    # Standard (return_format="workspace"): immer schreiben für alle Write-Modi
-    # "text": nur als Chattext zurückgeben, kein Workspace-Write
+    # Write-Modi: Output bereinigen BEVOR er in den Workspace geht
+    if request.mode in WRITE_MODES:
+        output = _extract_file_content(raw_output, request.mode)
+        logger.debug(f"CodingAgent: Output bereinigt: {len(raw_output)} → {len(output)} Zeichen")
+    else:
+        output = raw_output
+
+    # Workspace-Write für Write-Modi (Standard: return_format="workspace")
     files_written = []
     if request.mode in WRITE_MODES and request.return_format != "text":
         # Ziel-doc_id bestimmen:
-        # 1. Explizit als target_doc_id angegeben (neue Datei via scaffold)
-        # 2. Aus erstem Scope-File abgeleitet (bestehende Datei)
-        # 3. Fallback: coding_result
+        # 1. Explizit als target_doc_id (neue Datei via scaffold — bereits validiert)
+        # 2. Aus erstem Scope-File ableiten (bestehende Datei)
         if request.target_doc_id:
             result_doc_id = request.target_doc_id
         elif request.scope_files:
@@ -295,16 +403,21 @@ def run(request: CodingRequest) -> CodingResult:
             base_name = os.path.basename(first_scope).replace(".py", "").replace(".md", "")
             result_doc_id = f"code_{base_name}"
         else:
+            # Sollte durch Validierung abgefangen sein — defensiver Fallback
             result_doc_id = "coding_result"
+            logger.warning("CodingAgent: Fallback auf 'coding_result' — target_doc_id fehlt")
 
-        if _write_result_to_workspace(request.owner_id, result_doc_id, output):
-            files_written.append(result_doc_id)
-            logger.info(f"CodingAgent: Ergebnis in Workspace geschrieben: {result_doc_id}")
+        if output:
+            if _write_result_to_workspace(request.owner_id, result_doc_id, output):
+                files_written.append(result_doc_id)
+                logger.info(f"CodingAgent: code_file geschrieben: '{result_doc_id}' "
+                            f"({len(output)} Zeichen)")
+            else:
+                logger.warning(f"CodingAgent: Workspace-Write fehlgeschlagen: {result_doc_id}")
         else:
-            logger.warning(f"CodingAgent: Workspace-Write fehlgeschlagen für {result_doc_id}")
+            logger.warning("CodingAgent: Output nach Bereinigung leer — kein Workspace-Write")
 
-    logger.info(f"CodingAgent: fertig — {len(output)} Zeichen, "
-               f"gelesen={files_read}, geschrieben={files_written}")
+    logger.info(f"CodingAgent: fertig — gelesen={files_read}, geschrieben={files_written}")
 
     return CodingResult(
         ok=True,
@@ -316,20 +429,17 @@ def run(request: CodingRequest) -> CodingResult:
 
 
 # =============================================================================
-# Marker-Parser (für Kimi Core)
+# Marker-Parser (fuer Kimi Core)
 # =============================================================================
 
 def extract_coding_request(reply: str, owner_id: str,
-                            awc: dict | None = None) -> tuple[str, "CodingRequest | None"]:
+                             awc: dict | None = None) -> tuple[str, "CodingRequest | None"]:
     """
     Extrahiert [CODE_AGENT: {...}] Block aus Kimis Antwort.
     Returns: (reply_cleaned, CodingRequest_or_None)
 
-    Kimi Core ruft das auf um zu prüfen ob der Coding Agent gebraucht wird.
+    Kimi Core ruft das auf um zu pruefen ob der Coding Agent gebraucht wird.
     """
-    import re
-    import json
-
     pattern = re.compile(r'\[CODE_AGENT:\s*(\{.*?\})\s*\]', re.DOTALL)
     match = pattern.search(reply)
     if not match:
@@ -338,6 +448,7 @@ def extract_coding_request(reply: str, owner_id: str,
     reply_cleaned = pattern.sub("", reply).strip()
     reply_cleaned = re.sub(r'\n{3,}', '\n\n', reply_cleaned).strip()
 
+    import json
     try:
         raw = match.group(1).replace('\n', ' ').replace('\r', '')
         payload = json.loads(raw)
