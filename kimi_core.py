@@ -227,6 +227,47 @@ def process(request: KimiCoreRequest) -> KimiCoreResult:
     except Exception as e:
         logger.warning(f"KimiCore: TodoRead fehlgeschlagen (unkritisch): {e}")
 
+    # --- Schritt 4c: Worker-Delegation (Coding Agent) — WP7 ---
+    # Erkennt [CODE_AGENT: {...}] in Kimis Antwort.
+    # Worker-Modell: minimax-m2.7 — separater Call, kein Kimi-Kontext.
+    # Kimi Core führt — Coding Agent arbeitet im expliziten Scope.
+    # Kein direkter Nutzer-Dialog, kein Memory-Write, kein ORBIT.
+    try:
+        from coding_agent import extract_coding_request, run as run_coding_agent
+        _awc_for_agent = None
+        try:
+            from active_working_context import get_active_context
+            _awc_for_agent = get_active_context(request.user_id)
+        except Exception:
+            pass
+
+        reply, coding_req = extract_coding_request(reply, request.user_id, awc=_awc_for_agent)
+        if coding_req:
+            delegations.append("coding_agent")
+            route = ROUTE_WORKER
+            logger.info(f"KimiCore: CodingAgent delegiert — mode={coding_req.mode}, "
+                       f"scope={coding_req.scope_files}")
+            try:
+                coding_result = run_coding_agent(coding_req)
+                agent_ctx = coding_result.to_kimi_context()
+                # Zweiter Kimi-Call: Kimi integriert das Ergebnis und antwortet Tommy
+                agent_reply, agent_turn_meta = ollama_chat(
+                    request.user_id, request.text,
+                    request.chat_history, request.context_name,
+                    doc_context=agent_ctx,
+                )
+                # Guard: kein [CODE_AGENT:...] im zweiten Call
+                import re as _re
+                agent_reply = _re.sub(r'\[CODE_AGENT:\s*\{.*?\}\s*\]', '',
+                                      agent_reply or '', flags=_re.IGNORECASE | _re.DOTALL).strip()
+                if agent_reply:
+                    reply = agent_reply
+                    turn_meta = agent_turn_meta
+            except Exception as e:
+                logger.error(f"KimiCore: CodingAgent fehlgeschlagen: {e}")
+    except Exception as e:
+        logger.warning(f"KimiCore: CodingAgent-Import fehlgeschlagen (unkritisch): {e}")
+
     # --- Schritt 5: Output-Interpretation ---
     # Kimi Core verarbeitet Proposals, Todos (Write), Calendar (Write) etc. aus dem Reply
     #

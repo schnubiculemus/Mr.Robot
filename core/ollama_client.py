@@ -679,6 +679,34 @@ def _track_tokens(prompt_tokens, completion_tokens):
 # Ollama API
 # =============================================================================
 
+def _call_ollama_with_model(messages, model: str, timeout: int = 180):
+    """
+    Low-Level Ollama API Call mit explizitem Modell-Parameter.
+    Wird vom Coding Agent genutzt (WP7) — ruft minimax-m2.7 oder anderes Modell direkt auf.
+    Umgeht das globale OLLAMA_MODEL — kein Einfluss auf Kimi-Calls.
+    """
+    from api_utils import api_call_with_retry
+    result = api_call_with_retry(
+        url=f"{OLLAMA_API_URL}/api/chat",
+        headers={
+            "Authorization": f"Bearer {OLLAMA_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        json_payload={"model": model, "messages": messages, "stream": False},
+        timeout=timeout,
+    )
+    if not result:
+        return None
+    try:
+        _track_tokens(
+            prompt_tokens=result.get("prompt_eval_count", 0),
+            completion_tokens=result.get("eval_count", 0),
+        )
+    except Exception:
+        pass
+    return result
+
+
 def _call_ollama(messages):
     """
     Low-Level Ollama API Call — gemeinsame Basis für chat() und chat_internal().
