@@ -688,76 +688,9 @@ def expire_stale_write_requests(owner_id: str) -> int:
 
 
 def _trigger_planner_consequence(req: dict, outcome: str) -> None:
-    """
-    5.4: Loest eine echte Planner-Folgeentscheidung aus.
-    outcome: 'approved' | 'rejected' | 'deferred' | 'expired'
-    """
-    try:
-        from core.planner import save_planner_focus, pause_focus, get_planner_focus
-        from config import OWNER_ID
-        owner_id = req.get("owner_id", OWNER_ID)
-        task_id = req.get("task_id")
-        after_approve = req.get("after_approve_action", "continue_line")
-        after_reject = req.get("after_reject_action", "replan")
-
-        focus = get_planner_focus(owner_id)
-
-        if outcome == "approved":
-            # Fokus zurueck auf origin_todo wenn vorhanden
-            origin_todo = req.get("origin_todo_id")
-            if origin_todo and focus:
-                save_planner_focus(
-                    owner_id=owner_id,
-                    primary_type="todo", primary_id=int(origin_todo),
-                    reason=f"Freigabe erteilt: {req.get('action_key','')} -- {after_approve}",
-                    confidence=0.9,
-                )
-                logger.info(f"planner_consequence: approve -> Fokus auf Todo #{origin_todo}")
-
-        elif outcome == "rejected":
-            if after_reject == "replan":
-                # Fokus-Confidence senken -- Planner soll neu bewerten
-                if focus:
-                    save_planner_focus(
-                        owner_id=owner_id,
-                        primary_type=focus.get("primary_line_type","todo"),
-                        primary_id=focus.get("primary_line_id", 0),
-                        reason=f"Reject: {req.get('action_key','')} -- Replanning",
-                        confidence=0.3,  # niedrig -> should_replan wird bald True
-                    )
-            elif after_reject in ("pause", "close"):
-                # Fokus pausieren
-                pause_focus(owner_id, reason=f"Reject: {req.get('action_key','')}")
-            logger.info(f"planner_consequence: reject({after_reject}) -> Fokus angepasst")
-
-        elif outcome == "deferred":
-            # Fokus auf Nebenlinie verlagern falls vorhanden
-            secondary_id = req.get("secondary_line_id")
-            if secondary_id and focus:
-                save_planner_focus(
-                    owner_id=owner_id,
-                    primary_type=focus.get("primary_line_type","todo"),
-                    primary_id=focus.get("primary_line_id", 0),
-                    secondary_type="todo", secondary_id=int(secondary_id),
-                    reason=f"Defer: {req.get('action_key','')} verschoben -- Nebenlinie aktiv",
-                    confidence=0.7,
-                )
-            logger.info(f"planner_consequence: defer -> Nebenlinie #{secondary_id}")
-
-        elif outcome == "expired":
-            # Fokus-Confidence sehr niedrig -- zwingt Replan
-            if focus:
-                save_planner_focus(
-                    owner_id=owner_id,
-                    primary_type=focus.get("primary_line_type","todo"),
-                    primary_id=focus.get("primary_line_id", 0),
-                    reason=f"Expired: {req.get('action_key','')} -- Replan noetig",
-                    confidence=0.1,
-                )
-            logger.info(f"planner_consequence: expired -> Replan erzwungen")
-
-    except Exception as e:
-        logger.debug(f"_trigger_planner_consequence fehlgeschlagen: {e}")
+    """WP8: legacy_compat — Planner-Konsequenz deaktiviert. delete_candidate."""
+    logger.debug(f"WP8: _trigger_planner_consequence no-op (outcome={outcome})")
+    return
 
 
 def build_calendar_preview(action: str, params: dict) -> str:

@@ -641,6 +641,13 @@ def _staleness_days(obj: dict) -> float:
 
 # WP5: temporary_compat -- Scoring-/Priorisierungslogik (ORBIT-Führung)
 def score_candidates(candidates: dict, situation: dict, owner_id: str = "") -> list:
+    """WP8: legacy_compat — Scoring-Logik nicht mehr Hauptpfad."""
+    logger.debug("WP8: score_candidates no-op (legacy_compat)")
+    return []
+
+
+def _score_candidates_legacy(candidates: dict, situation: dict, owner_id: str = "") -> list:
+    """WP8: delete_candidate."""
     active_goal_ids = {g["id"] for g in candidates["goals"]}
     active_task_ids = {t["id"] for t in candidates["active_tasks"]}
     recent_obs = candidates.get("recent_obs", {})
@@ -944,6 +951,13 @@ def score_candidates(candidates: dict, situation: dict, owner_id: str = "") -> l
 # WP5: temporary_compat -- Replanning-Entscheidung
 def should_replan(owner_id: str, situation: dict,
                   scored: list) -> tuple[bool, str]:
+    """WP8: legacy_compat — Replan-Check nicht mehr Hauptpfad."""
+    logger.debug("WP8: should_replan no-op")
+    return False, "legacy_compat"
+
+
+def _should_replan_legacy(owner_id: str, situation: dict,
+                  scored: list) -> tuple[bool, str]:
     """
     Prueft ob Replan noetig ist.
     Gibt (should_replan: bool, trigger: str) zurueck.
@@ -1028,6 +1042,13 @@ def should_replan(owner_id: str, situation: dict,
 
 # WP5: temporary_compat -- Linienauswahl-Führungslogik
 def choose_worklines(candidates: dict, scored: list,
+                     owner_id: str, force_replan: bool = False) -> dict:
+    """WP8: legacy_compat — Linienauswahl nicht mehr Hauptpfad."""
+    logger.debug("WP8: choose_worklines no-op")
+    return {}
+
+
+def _choose_worklines_legacy(candidates: dict, scored: list,
                      owner_id: str, force_replan: bool = False) -> dict:
     """
     V3: Fokus halten wenn moeglich, nur bei echten Triggern replanen.
@@ -1413,6 +1434,13 @@ def _format_stagnation(scored: list) -> list:
 
 # WP5: temporary_compat -- Planner-Autostart (delete_candidate, Kimi Core soll steuern)
 def maybe_start_task(chosen: list, owner_id: str) -> list:
+    """WP8: legacy_compat — Task-Bootstrap nicht mehr Hauptpfad."""
+    logger.debug("WP8: maybe_start_task no-op (legacy_compat)")
+    return []
+
+
+def _maybe_start_task_legacy(chosen: list, owner_id: str) -> list:
+    """WP8: delete_candidate."""
     import orbit as _orbit
     from core.todo_service import start_todo
 
@@ -1595,6 +1623,14 @@ def maybe_start_task(chosen: list, owner_id: str) -> list:
 
 # WP5: temporary_compat -- Planner-Hauptlauf (nur noch von Kimi Core aufzurufen)
 def run_planner(owner_id: str, force: bool = False) -> dict:
+    """WP8: legacy_compat — Planner ist nicht mehr Hauptpfad (V2: Kimi Core + AWC)."""
+    # WP8: early return — Planner läuft nicht mehr im V2-System
+    logger.debug("WP8: run_planner no-op (legacy_compat)")
+    return {"status": "legacy_compat", "action_type": "none", "primary": None, "secondary": None}
+
+
+def _run_planner_legacy(owner_id: str, force: bool = False) -> dict:
+    """WP8: delete_candidate — alter Planner-Body."""
     try:
         logger.info("Planner V3: Start")
         candidates = collect_candidates(owner_id)

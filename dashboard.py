@@ -303,7 +303,20 @@ def api_todos_update(todo_id):
 @app.route("/api/planner/state")
 @require_auth
 def api_planner_state():
-    """Gibt aktuellen Planner-Fokus, Fokusdauer und letzte Entscheidungen zurueck."""
+    """WP8: legacy_compat — Planner ist nicht mehr Hauptpfad. Gibt leere Struktur zurück."""
+    return jsonify({
+        "focus": {}, "focus_hours": 0, "decisions": [],
+        "lagebild": {"running": 0, "waiting": 0, "blocked": 0, "startable": 0,
+                     "write_requests_pending": 0, "write_requests_overdue": 0,
+                     "gate_active": 0, "under_pressure": 0, "mature_lines": 0,
+                     "top_candidates": []},
+        "hierarchy": [], "write_audit": [], "pending_writes": [],
+        "_legacy_compat": True,
+    })
+
+
+def _api_planner_state_legacy():
+    """WP8: legacy_compat body — nicht mehr aktiv. delete_candidate."""
     from core.planner import get_planner_focus, get_focus_duration_hours, run_planner
     from core.database import get_connection
     from config import USER_CONTEXTS
@@ -796,12 +809,8 @@ def api_write_control():
 @app.route("/api/planner/run", methods=["POST"])
 @require_auth
 def api_planner_run():
-    """Manueller Planner-Lauf."""
-    from core.planner import run_planner
-    from config import USER_CONTEXTS
-    user_id = list(USER_CONTEXTS.keys())[0]
-    result = run_planner(user_id, force=True)
-    return jsonify(result)
+    """WP8: legacy_compat — Planner-Run deaktiviert."""
+    return jsonify({"ok": False, "reason": "legacy_compat — Planner nicht mehr aktiv (WP8)"})
 
 
 @app.route("/api/todos/<int:todo_id>", methods=["DELETE"])
@@ -2386,7 +2395,7 @@ def api_orbit_lage():
             "tasks_total":       count("orbit_tasks"),
             "tasks_active":      count("orbit_tasks",  "status IN ('new','planned','active','waiting','paused')"),
             "tasks_hot":         count("orbit_tasks",  "hot=1"),
-            "threads_open":      count("orbit_threads", "status IN ('new','watching')"),
+            # WP8: threads_open entfernt (Thread-System nicht mehr aktiv)
             "steps_running":     count("orbit_steps",  "status='running'"),
             "steps_blocked":     count("orbit_steps",  "status='blocked'"),
             "proactive_pending": count("orbit_proactive_messages", "release_state IN ('candidate','too_early','scheduled')"),
@@ -2398,7 +2407,7 @@ def api_orbit_lage():
         hot_tasks = [dict(r) for r in hot_rows]
 
         ma = []
-        for table in ["orbit_tasks", "orbit_threads", "orbit_steps", "orbit_policies", "orbit_routines"]:
+        for table in ["orbit_tasks", "orbit_steps", "orbit_policies", "orbit_routines"]:  # WP8: orbit_threads entfernt
             try:
                 rows = conn.execute(
                     f"SELECT id, '{table}' as src FROM {table} WHERE manual_attention=1"
@@ -2456,6 +2465,12 @@ def api_orbit_task_action(task_id):
 @app.route("/api/orbit/threads")
 @require_auth
 def api_orbit_threads():
+    """WP8: legacy_compat — Thread-System nicht mehr aktiv."""
+    return jsonify({"threads": [], "_legacy_compat": True})
+
+
+def _api_orbit_threads_legacy():
+    """WP8: delete_candidate."""
     try:
         conn = get_db_connection()
         where, params = ["1=1"], []
@@ -2477,6 +2492,11 @@ def api_orbit_threads():
 @app.route("/api/orbit/threads/<thread_id>/action", methods=["POST"])
 @require_auth
 def api_orbit_thread_action(thread_id):
+    """WP8: legacy_compat — Thread-Aktionen deaktiviert."""
+    return jsonify({"ok": False, "reason": "legacy_compat (WP8)"})
+
+
+def _api_orbit_thread_action_legacy(thread_id):
     import orbit as _orbit
     data = request.get_json() or {}
     action = data.get("action", "")
