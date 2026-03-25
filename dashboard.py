@@ -661,11 +661,8 @@ def api_workspace_artifact(artifact_id):
 @app.route("/api/workspace/artifacts/<int:artifact_id>/status", methods=["POST"])
 @require_auth
 def api_workspace_artifact_status(artifact_id):
-    """Status eines Artifacts aendern."""
-    from core.workspace_artifact_service import set_artifact_status
-    data = request.json or {}
-    ok = set_artifact_status(artifact_id, data.get("status",""), actor="dashboard")
-    return jsonify({"ok": ok})
+    """WP8: Legacy-Write deaktiviert. delete_candidate."""
+    return jsonify({"ok": False, "reason": "WP8: Legacy-Artifact-Write deaktiviert."})
 
 
 @app.route("/api/workspace/stats")
@@ -2319,7 +2316,10 @@ def api_proposal_action(proposal_id):
 @app.route("/planner")
 @require_auth
 def planner_page():
-    return render_template("planner.html")
+    """WP8: Planner Legacy-Hinweis."""
+    from flask import Response
+    html = "<html><body style='font-family:sans-serif;padding:40px;background:#1a1a1a;color:#ccc'><div style='max-width:600px;margin:40px auto;background:#2a2a2a;padding:30px;border-radius:8px'><h2 style='color:#e8a838'>Planner nicht mehr aktiv</h2><p>Seit WP8 kein aktiver Hauptpfad mehr.<br>V2: Kimi Core + Active Working Context.</p><p><a href='/' style='color:#6ab0f5'>Dashboard</a></p><p style='color:#555;font-size:0.8em'>WP8: legacy_compat</p></div></body></html>"
+    return Response(html, mimetype="text/html")
 
 
 @app.route("/orbit")

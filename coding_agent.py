@@ -109,8 +109,9 @@ class CodingResult:
 
         parts.append(f"\n{self.output}")
         parts.append(
-            "\n\nIntegriere dieses Ergebnis in deine Antwort an Tommy. "
-            "Erkläre kurz was gemacht wurde. Kein [CODE_AGENT:...] mehr schreiben."
+            "\n\nZeige Tommy jetzt den fertigen Code direkt an (vollstaendig, als Codeblock). "
+            "Dann ein Satz: wo die Datei gespeichert ist und wie sie ausgefuehrt wird. "
+            "Kein [CODE_AGENT:...] mehr schreiben."
         )
         return "\n".join(parts)
 
