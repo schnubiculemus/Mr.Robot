@@ -173,8 +173,62 @@ def process(request: KimiCoreRequest) -> KimiCoreResult:
     except Exception as e:
         logger.warning(f"KimiCore: Introspect fehlgeschlagen (unkritisch): {e}")
 
-    # --- Schritt 4: Output-Interpretation ---
-    # Kimi Core verarbeitet Proposals, Todos, etc. aus dem Reply
+    # --- Schritt 4: Tool-Delegation (Calendar Read) — WP6 ---
+    # ACCESS_READ: [CALENDAR_ACTION: {"action": "list", ...}]
+    # Nur list-Aktionen — create/update/delete laufen weiter über kimi_output.py (Schritt 5)
+    try:
+        from core.tools import handle_calendar_read
+        reply, cal_ctx = handle_calendar_read(reply)
+        if cal_ctx:
+            delegations.append("calendar_read")
+            route = ROUTE_TOOL
+            logger.info("KimiCore: CalendarRead delegiert")
+            try:
+                cal_reply, cal_turn_meta = ollama_chat(
+                    request.user_id, request.text,
+                    request.chat_history, request.context_name,
+                    doc_context=cal_ctx,
+                )
+                # Guard: kein [CALENDAR_ACTION:...] im zweiten Call
+                cal_reply = re.sub(r"\[CALENDAR_ACTION:\s*\{.*?\}\s*\]", "",
+                                   cal_reply or "", flags=re.IGNORECASE | re.DOTALL).strip()
+                if cal_reply:
+                    reply = cal_reply
+                    turn_meta = cal_turn_meta
+            except Exception as e:
+                logger.error(f"KimiCore: CalendarRead zweiter Call fehlgeschlagen: {e}")
+    except Exception as e:
+        logger.warning(f"KimiCore: CalendarRead fehlgeschlagen (unkritisch): {e}")
+
+    # --- Schritt 4b: Tool-Delegation (Todo Read) — WP6 ---
+    # ACCESS_READ: [TODO_ACTION: {"action": "list", ...}]
+    # Nur list-Aktionen — create/complete/delete laufen weiter über kimi_output.py (Schritt 5)
+    try:
+        from core.tools import handle_todo_read
+        reply, todo_ctx = handle_todo_read(reply, user_id=request.user_id)
+        if todo_ctx:
+            delegations.append("todo_read")
+            route = ROUTE_TOOL
+            logger.info("KimiCore: TodoRead delegiert")
+            try:
+                todo_reply, todo_turn_meta = ollama_chat(
+                    request.user_id, request.text,
+                    request.chat_history, request.context_name,
+                    doc_context=todo_ctx,
+                )
+                # Guard: kein [TODO_ACTION:...] im zweiten Call
+                todo_reply = re.sub(r"\[TODO_ACTION:\s*\{.*?\}\s*\]", "",
+                                    todo_reply or "", flags=re.IGNORECASE | re.DOTALL).strip()
+                if todo_reply:
+                    reply = todo_reply
+                    turn_meta = todo_turn_meta
+            except Exception as e:
+                logger.error(f"KimiCore: TodoRead zweiter Call fehlgeschlagen: {e}")
+    except Exception as e:
+        logger.warning(f"KimiCore: TodoRead fehlgeschlagen (unkritisch): {e}")
+
+    # --- Schritt 5: Output-Interpretation ---
+    # Kimi Core verarbeitet Proposals, Todos (Write), Calendar (Write) etc. aus dem Reply
     try:
         from core.kimi_output import process_kimi_output
         proc = process_kimi_output(
