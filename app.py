@@ -118,18 +118,15 @@ def webhook():
 
     save_message(phone_number, "user", text)
 
-    # --- /task Befehl → ORBIT direkter Task ---
+    # --- /task Befehl → Kimi Core (V2-Pfad) ---
+    # Cleanup: /task läuft jetzt direkt über _process_chat (Kimi Core), nicht über ORBIT.
+    # ORBIT-Direkttask ist im Safe Mode no-op -- daher sauberer Pfad über Core.
     if text.strip().lower().startswith("/task "):
         goal = text.strip()[6:].strip()
         if goal:
-            _chat_pool.submit(
-                _orbit_trigger, phone_number, "user_input",
-                {
-                    "message_preview": goal,
-                    "topic_core": goal,
-                    "mode": "direct_task",
-                }
-            )
+            # Als normaler Chat-Input über Kimi Core verarbeiten
+            _chat_pool.submit(_process_chat, phone_number,
+                              f"Aufgabe: {goal}", display_name, context_name)
             reply = f"Verstanden — ich nehme das als Aufgabe auf: {goal}"
         else:
             reply = "Wie lautet die Aufgabe? Schreib z.B. /task Recherchiere aktuelle BIM-Normen"

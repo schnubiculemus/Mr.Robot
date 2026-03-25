@@ -622,6 +622,7 @@ def _staleness_days(obj: dict) -> float:
         return 0.0
 
 
+# WP5: temporary_compat -- Scoring-/Priorisierungslogik (ORBIT-Führung)
 def score_candidates(candidates: dict, situation: dict, owner_id: str = "") -> list:
     active_goal_ids = {g["id"] for g in candidates["goals"]}
     active_task_ids = {t["id"] for t in candidates["active_tasks"]}
@@ -923,6 +924,7 @@ def score_candidates(candidates: dict, situation: dict, owner_id: str = "") -> l
 # 7. Replan-Entscheidung
 # =============================================================================
 
+# WP5: temporary_compat -- Replanning-Entscheidung
 def should_replan(owner_id: str, situation: dict,
                   scored: list) -> tuple[bool, str]:
     """
@@ -1007,6 +1009,7 @@ def should_replan(owner_id: str, situation: dict,
 # 8. Arbeitslinien waehlen
 # =============================================================================
 
+# WP5: temporary_compat -- Linienauswahl-Führungslogik
 def choose_worklines(candidates: dict, scored: list,
                      owner_id: str, force_replan: bool = False) -> dict:
     """
@@ -1391,6 +1394,7 @@ def _format_stagnation(scored: list) -> list:
 # 9. Task starten
 # =============================================================================
 
+# WP5: temporary_compat -- Planner-Autostart (delete_candidate, Kimi Core soll steuern)
 def maybe_start_task(chosen: list, owner_id: str) -> list:
     import orbit as _orbit
     from core.todo_service import start_todo
@@ -1572,6 +1576,7 @@ def maybe_start_task(chosen: list, owner_id: str) -> list:
 # 10. Haupteinstieg
 # =============================================================================
 
+# WP5: temporary_compat -- Planner-Hauptlauf (nur noch von Kimi Core aufzurufen)
 def run_planner(owner_id: str, force: bool = False) -> dict:
     try:
         logger.info("Planner V3: Start")

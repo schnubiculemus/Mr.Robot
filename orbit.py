@@ -263,6 +263,7 @@ def create_thread(topic_core: str, primary_origin: str, relevance: str = "weak",
 
 
 # WP5: temporary_compat -- Thread-Lesen (delete_candidate nach ORBIT-Rückbau)
+# WP5: temporary_compat -- delete_candidate (Thread-System Altbestand)
 def get_thread(thread_id: str) -> dict | None:
     """Holt einen Thread by ID."""
     conn = get_connection()
@@ -276,6 +277,7 @@ def get_thread(thread_id: str) -> dict | None:
 
 
 # WP5: temporary_compat -- Thread-Lesen (delete_candidate nach ORBIT-Rückbau)
+# WP5: temporary_compat -- delete_candidate (Thread-System Altbestand)
 def get_threads(status: str = None, relevance: str = None, limit: int = 50) -> list:
     """Holt Threads, optional gefiltert."""
     conn = get_connection()
@@ -300,6 +302,7 @@ def get_threads(status: str = None, relevance: str = None, limit: int = 50) -> l
 
 
 # WP5: temporary_compat -- Thread-Update (delete_candidate nach ORBIT-Rückbau)
+# WP5: temporary_compat -- delete_candidate (Thread-System Altbestand)
 def update_thread(thread_id: str, **kwargs) -> None:
     """Aktualisiert Felder eines Threads."""
     if not kwargs:
@@ -3737,6 +3740,7 @@ def suppress_policy(policy_id: str, reason: str) -> bool:
     return True
 
 
+# WP5: temporary_compat -- Policy-Retirement (delete_candidate)
 def retire_policy(policy_id: str, reason: str, replaced_by: str = None) -> bool:
     kwargs = {"status": "retired", "reason": reason}
     if replaced_by:
@@ -3969,6 +3973,7 @@ def suppress_routine(routine_id: str, reason: str) -> bool:
     return True
 
 
+# WP5: temporary_compat -- Routine-Retirement (delete_candidate)
 def retire_routine(routine_id: str, reason: str, replaced_by: str = None) -> bool:
     kwargs = {"status": "retired"}
     if replaced_by:
@@ -5392,11 +5397,12 @@ def raise_manual_attention(target_id: str, target_type: str, reason: str) -> Non
     logger.warning(f"manual_attention: {target_type} {target_id[:8]} -- {reason}")
 
 
+# WP5-Cleanup: Recovery = technische Restfunktion, keine Systemintelligenz
 def run_recovery() -> None:
     """Recovery-Lauf pro Tick (leichtgewichtig).
-    WP0: temporary_compat -- bleibt für technische Reparatur (Steps, Orphans, Stale)
-    Kein Workspace-Output dank ENABLE_RECOVERY_WORKSPACE_OUT=False.
-    Kein Führungsrecht, nur interne Reparatur.
+    WP0/WP5: temporary_compat -- technische Reparatur (Steps, Orphans, Stale).
+    Kein Workspace-Output, kein Führungsrecht, kein Nutzpfad.
+    Langfristig: nur auf Start-Recovery (full_recovery_on_start) reduzieren.
     """
     try:
         recovered_steps = _recover_running_steps()
