@@ -1,4 +1,21 @@
 """
+core/planner.py — LEGACY_COMPAT / TEMPORARY_COMPAT (WP8)
+
+Status: temporary_compat — Führungslogik aus der Altarchitektur.
+Nicht mehr der Hauptpfad. Wird noch referenziert von:
+  - orbit.py _maybe_run_planner (selbst temporary_compat, WP5)
+  - dashboard.py (Planner-Ansicht)
+  - orbit_cognition.py
+
+Delete-Kandidaten in diesem Modul:
+  score_candidates()   — Führungslogik, kein V2-Pfad
+  choose_worklines()   — Führungslogik, kein V2-Pfad
+  should_replan()      — Führungslogik, kein V2-Pfad
+  maybe_start_task()   — Bootstrap-Steps, ORBIT-nah
+
+V2-Hauptpfad: Kimi Core + AWC (active_working_context.py)
+
+--- Originaldokumentation ---
 core/planner.py -- Kimi Planner V3
 
 V3 vs V2x:

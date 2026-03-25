@@ -1,4 +1,17 @@
 """
+core/workspace_artifact_service.py — LEGACY_COMPAT (WP8)
+
+Status: legacy_compat — Altbestand, wird von ORBIT-Executor und Dashboard noch referenziert.
+Nicht für neue Arbeit verwenden — neue Dokumente/Code über core/workspace_service.py (V2).
+
+Delete-Kandidaten innerhalb dieses Moduls:
+  materialize_execution_artifact() — delete_candidate (WP4)
+  append_worklog_entry()           — delete_candidate (WP4)
+  Alle Legacy-ARTIFACT_TYPES (brief/analysis/plan/result/report/worklog) — delete_candidate
+
+V2-Hauptpfad: core/workspace_service.py
+
+--- Originaldokumentation ---
 core/workspace_artifact_service.py -- 7.x Workspace-Artefaktsystem
 
 Kanonische Schicht fuer alle Workspace-Writes.

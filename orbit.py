@@ -72,11 +72,9 @@ ORBIT_TICK_SECONDS = 20       # Event-Loop Intervall
 # =============================================================================
 SAFE_MODE = True                  # Globaler Safe-Mode-Schalter
 
-ENABLE_IDLE_PULSE             = False   # WP0: deaktiviert -- delete_candidate
-ENABLE_AUTONOMOUS_COGNITION   = False   # WP0: deaktiviert -- delete_candidate
-ENABLE_AUTO_ARTIFACTS         = False   # WP0: deaktiviert -- delete_candidate
 ENABLE_MULTI_HOT_TASKS        = False   # WP0: max 1 heißer Task
 ENABLE_RECOVERY_WORKSPACE_OUT = False   # WP0: Recovery schreibt nicht in Workspace
+# WP8: ENABLE_IDLE_PULSE, ENABLE_AUTONOMOUS_COGNITION, ENABLE_AUTO_ARTIFACTS entfernt (delete_candidates physisch gelöscht)
 
 MAX_HOT_TASKS = 1 if not ENABLE_MULTI_HOT_TASKS else 3  # WP0: max 1
 MAX_RUNNING_STEPS = 4         # max. gleichzeitig laufende Steps (3 heiß + 1 leicht)
@@ -203,7 +201,6 @@ def get_pending_triggers() -> list:
                      CASE trigger_type
                        WHEN 'tool_result'  THEN 1
                        WHEN 'cognition'    THEN 2
-                       WHEN 'idle_pulse'   THEN 4
                        ELSE 3
                      END ASC,
                      created_at ASC
@@ -242,86 +239,6 @@ def mark_trigger_processed(trigger_id: str, linked_object_id: str = None) -> Non
 # WP5: temporary_compat -- Linien-Container der alten Autonomie (delete_candidate nach ORBIT-Rückbau)
 # WP5: temporary_compat -- Thread-System (delete_candidate nach ORBIT-Rückbau)
 # Threads waren Linien-Container der alten Autonomie. Nicht mehr neue Arbeitsstruktur.
-def create_thread(topic_core: str, primary_origin: str, relevance: str = "weak",
-                  reason: str = None) -> str:
-    """Legt einen neuen Orbit-Thread an."""
-    tid = new_id()
-    now = to_iso()
-    conn = get_connection()
-    try:
-        conn.execute(
-            """INSERT INTO orbit_threads
-               (id, topic_core, status, relevance, primary_origin, reason, created_at, updated_at)
-               VALUES (?, ?, 'new', ?, ?, ?, ?, ?)""",
-            (tid, topic_core, relevance, primary_origin, reason, now, now)
-        )
-        conn.commit()
-    finally:
-        conn.close()
-    audit("orbit", "thread_created", "thread", tid, topic_core)
-    return tid
-
-
-# WP5: temporary_compat -- Thread-Lesen (delete_candidate nach ORBIT-Rückbau)
-# WP5: temporary_compat -- delete_candidate (Thread-System Altbestand)
-def get_thread(thread_id: str) -> dict | None:
-    """Holt einen Thread by ID."""
-    conn = get_connection()
-    try:
-        row = conn.execute(
-            "SELECT * FROM orbit_threads WHERE id = ?", (thread_id,)
-        ).fetchone()
-        return dict(row) if row else None
-    finally:
-        conn.close()
-
-
-# WP5: temporary_compat -- Thread-Lesen (delete_candidate nach ORBIT-Rückbau)
-# WP5: temporary_compat -- delete_candidate (Thread-System Altbestand)
-def get_threads(status: str = None, relevance: str = None, limit: int = 50) -> list:
-    """Holt Threads, optional gefiltert."""
-    conn = get_connection()
-    try:
-        if status and relevance:
-            rows = conn.execute(
-                "SELECT * FROM orbit_threads WHERE status = ? AND relevance = ? ORDER BY created_at DESC LIMIT ?",
-                (status, relevance, limit)
-            ).fetchall()
-        elif status:
-            rows = conn.execute(
-                "SELECT * FROM orbit_threads WHERE status = ? ORDER BY created_at DESC LIMIT ?",
-                (status, limit)
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM orbit_threads ORDER BY created_at DESC LIMIT ?", (limit,)
-            ).fetchall()
-        return [dict(r) for r in rows]
-    finally:
-        conn.close()
-
-
-# WP5: temporary_compat -- Thread-Update (delete_candidate nach ORBIT-Rückbau)
-# WP5: temporary_compat -- delete_candidate (Thread-System Altbestand)
-def update_thread(thread_id: str, **kwargs) -> None:
-    """Aktualisiert Felder eines Threads."""
-    if not kwargs:
-        return
-    kwargs["updated_at"] = to_iso()
-    fields = ", ".join(f"{k} = ?" for k in kwargs)
-    values = list(kwargs.values()) + [thread_id]
-    conn = get_connection()
-    try:
-        conn.execute(f"UPDATE orbit_threads SET {fields} WHERE id = ?", values)
-        conn.commit()
-    finally:
-        conn.close()
-
-
-# =============================================================================
-# Tasks (orbit_tasks)
-# =============================================================================
-
 def create_task(task_type: str, goal: str, primary_origin: str,
                 mode: str = "background", priority: str = "medium",
                 source_thread_id: str = None,
@@ -964,444 +881,6 @@ def no_action(reason: str, context: str = "", trigger_refs: list = None) -> str:
 
 
 # WP5: delete_candidate -- 7.4: Brief-Auto-Trigger
-def _auto_trigger_brief(task_id: str, owner_id: str, line_id: str, goal: str) -> None:
-    """7.4: Erzeugt automatisch ein brief-Artefakt beim Linienstart.
-    WP0: ENABLE_AUTO_ARTIFACTS=False -> deaktiviert (delete_candidate)"""
-    if not ENABLE_AUTO_ARTIFACTS:
-        logger.debug(f"WP0: auto_trigger_brief deaktiviert fuer Task {task_id[:8]}")
-        return
-    try:
-        from core.gate_service import execute_write
-        params = {
-            "action": "artifact_create",
-            "line_id": line_id,
-            "artifact_type": "brief",
-            "format": "md",
-            "purpose": "line_bootstrap",
-            "content": f"# Linienstart: {goal[:80]}\n\nTask: {task_id[:8]}\n\n*Automatisch beim Start angelegt.*",
-        }
-        # WP4: temporary_compat -- delete_candidate
-        # Brief-Bootstrap ist Legacy-Schreibpfad. Im Safe Mode blockiert.
-        try:
-            from orbit import SAFE_MODE as _SM_BRIEF
-        except Exception:
-            _SM_BRIEF = False
-        if _SM_BRIEF:
-            logger.debug(f"WP4: Brief-Bootstrap im Safe Mode blockiert fuer Task {task_id[:8]}")
-            return
-        def _do(p):
-            from core.workspace_artifact_service import create_artifact
-            art = create_artifact(
-                owner_id=owner_id, line_id=p["line_id"],
-                artifact_type="brief", format="md",
-                content=p["content"], purpose="line_bootstrap",
-                task_id=task_id,
-            )
-            return {"success": bool(art), "result": f"Brief #{art['id']}" if art else "Fehler",
-                    "artifact_id": art["id"] if art else None}
-        execute_write("workspace.artifact_create", params, owner_id, _do, task_id=task_id)
-        logger.info(f"7.4: Brief-Artefakt fuer Task {task_id[:8]} angelegt")
-    except Exception as e:
-        logger.debug(f"_auto_trigger_brief fehlgeschlagen (unkritisch): {e}")
-
-
-# WP5: delete_candidate -- 7.4: Result-Auto-Trigger
-def _auto_trigger_result(task_id: str, owner_id: str, line_id: str,
-                          goal: str, summary: str = "") -> None:
-    """7.4: Materialisiert automatisch ein result-Artefakt bei Task-Abschluss.
-    WP0: ENABLE_AUTO_ARTIFACTS=False -> deaktiviert (delete_candidate)"""
-    if not ENABLE_AUTO_ARTIFACTS:
-        logger.debug(f"WP0: auto_trigger_result deaktiviert fuer Task {task_id[:8]}")
-        return
-    try:
-        from core.gate_service import execute_write
-        artifact_content = f"# Abschluss: {goal[:80]}\n\n**Task:** {task_id[:8]}\n\n"
-        if summary:
-            artifact_content += f"**Zusammenfassung:**\n{summary}\n"
-        params = {
-            "action": "materialize_execution",
-            "line_id": line_id,
-            "content": artifact_content,
-            "format": "md",
-        }
-        def _do(p):
-            from core.workspace_artifact_service import materialize_execution_artifact
-            art = materialize_execution_artifact(
-                owner_id=owner_id, line_id=p["line_id"],
-                content=p["content"], format="md",
-                task_id=task_id,
-            )
-            return {"success": bool(art), "result": f"Result #{art['id']}" if art else "Fehler",
-                    "artifact_id": art["id"] if art else None}
-        execute_write("workspace.materialize_execution", params, owner_id, _do, task_id=task_id)
-        logger.info(f"7.4: Result-Artefakt fuer Task {task_id[:8]} materialisiert")
-    except Exception as e:
-        logger.debug(f"_auto_trigger_result fehlgeschlagen (unkritisch): {e}")
-
-
-def _is_recovery_transition(reason: str) -> bool:
-    """7.5.8: Prüft ob ein Task-Abschluss aus einem Recovery-Pfad stammt."""
-    if not reason:
-        return False
-    _recovery_markers = [
-        "recovery", "stale", "orphan", "full_recovery",
-        "alle steps terminal", "startup", "restart"
-    ]
-    return any(m in reason.lower() for m in _recovery_markers)
-
-
-# =============================================================================
-# 7.4 Trigger-Matrix
-# =============================================================================
-# Definiert wann welches Artefakt automatisch erzeugt wird:
-#
-# Linienstart          -> brief     (line_bootstrap)        [_auto_trigger_brief]
-# Task-Abschluss       -> result    (execution_result)      [_auto_trigger_result]
-# Stagnation erkannt   -> worklog   (working_state)         [_auto_trigger_worklog_stagnation]
-# Mehrere Steps gelaufen -> analysis (working_state)        [_auto_trigger_analysis]
-
-TRIGGER_MATRIX = {
-    "linienstart":          ("brief",          "line_bootstrap",       False),
-    "task_abschluss":       ("result",         "execution_result",     True),
-    "stagnation":           ("worklog",        "working_state",        False),
-    "zwischenstand":        ("analysis",       "working_state",        False),
-    "plan_bereit":          ("plan",           "implementation_base",  False),
-    "abschluss_bericht":    ("report",         "handover",             False),
-}
-
-
-def _auto_trigger_worklog_stagnation(task_id: str, owner_id: str, line_id: str,
-                                      note: str = "") -> None:
-    """
-    7.4: Stagnations-Trigger -- wenn Task laengere Zeit ohne Fortschritt laueft.
-    WP4: temporary_compat -- delete_candidate (Legacy-Worklog-Write)
-    Im Safe Mode / ENABLE_AUTO_ARTIFACTS=False blockiert.
-    """
-    if SAFE_MODE or not ENABLE_AUTO_ARTIFACTS:
-        logger.debug(f"WP4: _auto_trigger_worklog_stagnation im Safe Mode blockiert fuer Task {task_id[:8]}")
-        return
-    try:
-        from core.gate_service import execute_write
-        entry = f"Stagnation erkannt -- Task {task_id[:8]} ohne neuen Fortschritt."
-        if note:
-            entry += f"\n{note}"
-        params = {
-            "action": "worklog_append",
-            "line_id": line_id,
-            "content": entry,
-        }
-        def _do(p):
-            from core.workspace_artifact_service import append_worklog_entry
-            ok = append_worklog_entry(p["line_id"], p["content"], task_id=task_id)
-            return {"success": ok, "result": "Worklog aktualisiert" if ok else "Fehler",
-                    "artifact_id": None}
-        execute_write("workspace.worklog_append", params, owner_id, _do, task_id=task_id)
-        logger.info(f"7.4: Stagnation-Worklog fuer Task {task_id[:8]}")
-    except Exception as e:
-        logger.debug(f"_auto_trigger_worklog_stagnation fehlgeschlagen: {e}")
-
-
-# WP5: delete_candidate -- 7.4: Plan-Auto-Trigger
-def _auto_trigger_plan(task_id: str, owner_id: str, line_id: str,
-                        goal: str = "", analysis_content: str = "") -> None:
-    """
-    7.4: Plan-Trigger -- nach analysis-Artefakt wenn noch kein plan existiert.
-    """
-    if not ENABLE_AUTO_ARTIFACTS:
-        logger.debug(f"WP0: auto_trigger_plan deaktiviert fuer Task {task_id[:8]}")
-        return
-    try:
-        from core.workspace_artifact_service import list_line_artifacts
-        # Nur wenn noch kein plan da
-        existing = list_line_artifacts(line_id, artifact_type="plan", status="active")
-        if existing:
-            return
-        from core.gate_service import execute_write
-        artifact_content = f"# Plan: {goal[:80]}\n\n**Task:** {task_id[:8]}\n\n"
-        if analysis_content:
-            artifact_content += f"**Basis (Analysis):**\n{analysis_content[:500]}\n\n"
-        artifact_content += "**Naechste Schritte:**\n- [ ] TBD\n"
-        params = {
-            "action": "artifact_create",
-            "line_id": line_id,
-            "artifact_type": "plan",
-            "format": "md",
-            "purpose": "implementation_base",
-            "content": artifact_content,
-        }
-        def _do(p):
-            from core.workspace_artifact_service import create_artifact
-            art = create_artifact(
-                owner_id=owner_id, line_id=p["line_id"],
-                artifact_type="plan", format="md",
-                content=p["content"], purpose="implementation_base",
-                task_id=task_id,
-            )
-            return {"success": bool(art), "result": f"Plan #{art['id']}" if art else "Fehler",
-                    "artifact_id": art["id"] if art else None}
-        execute_write("workspace.artifact_create", params, owner_id, _do, task_id=task_id)
-        logger.info(f"7.4: Plan-Artefakt fuer Task {task_id[:8]}")
-    except Exception as e:
-        logger.debug(f"_auto_trigger_plan fehlgeschlagen: {e}")
-
-
-# WP5: delete_candidate -- 7.4: Report-Auto-Trigger
-def _auto_trigger_report(task_id: str, owner_id: str, line_id: str,
-                          goal: str = "", result_content: str = "") -> None:
-    """
-    WP0: ENABLE_AUTO_ARTIFACTS=False -> deaktiviert (delete_candidate)
-    7.4: Report/Handover-Trigger -- nach result wenn Linie abgeschlossen.
-    """
-    if not ENABLE_AUTO_ARTIFACTS:
-        logger.debug(f"WP0: auto_trigger_report deaktiviert fuer Task {task_id[:8]}")
-        return
-    try:
-        from core.workspace_artifact_service import list_line_artifacts
-        existing = list_line_artifacts(line_id, artifact_type="report", status="active")
-        if existing:
-            return
-        from core.gate_service import execute_write
-        artifact_content = f"# Abschlussbericht: {goal[:80]}\n\n**Task:** {task_id[:8]}\n\n"
-        if result_content:
-            artifact_content += f"**Ergebnis:**\n{result_content[:800]}\n\n"
-        artifact_content += "**Status:** Abgeschlossen\n"
-        params = {
-            "action": "artifact_create",
-            "line_id": line_id,
-            "artifact_type": "report",
-            "format": "md",
-            "purpose": "handover",
-            "content": artifact_content,
-        }
-        def _do(p):
-            from core.workspace_artifact_service import create_artifact
-            art = create_artifact(
-                owner_id=owner_id, line_id=p["line_id"],
-                artifact_type="report", format="md",
-                content=p["content"], purpose="handover",
-                task_id=task_id,
-            )
-            return {"success": bool(art), "result": f"Report #{art['id']}" if art else "Fehler",
-                    "artifact_id": art["id"] if art else None}
-        execute_write("workspace.artifact_create", params, owner_id, _do, task_id=task_id)
-        logger.info(f"7.4: Report-Artefakt fuer Task {task_id[:8]}")
-    except Exception as e:
-        logger.debug(f"_auto_trigger_report fehlgeschlagen: {e}")
-
-
-# WP5: delete_candidate -- 7.4: Analysis-Auto-Trigger
-def _auto_trigger_analysis(task_id: str, owner_id: str, line_id: str,
-                             observations: str = "") -> None:
-    """
-    7.4: Zwischenstand-Trigger -- nach mehreren Steps ohne Abschluss.
-    Erzeugt ein analysis-Artefakt als Arbeitsstand.
-    """
-    if not ENABLE_AUTO_ARTIFACTS:
-        logger.debug(f"WP0: auto_trigger_analysis deaktiviert fuer Task {task_id[:8]}")
-        return
-    try:
-        from core.gate_service import execute_write
-        artifact_content = f"# Zwischenstand\n\n**Task:** {task_id[:8]}\n\n"
-        if observations:
-            artifact_content += f"**Bisherige Beobachtungen:**\n{observations[:800]}\n"
-        params = {
-            "action": "artifact_create",
-            "line_id": line_id,
-            "artifact_type": "analysis",
-            "format": "md",
-            "purpose": "working_state",
-            "content": artifact_content,
-        }
-        def _do(p):
-            from core.workspace_artifact_service import create_artifact
-            art = create_artifact(
-                owner_id=owner_id, line_id=p["line_id"],
-                artifact_type="analysis", format="md",
-                content=p["content"], purpose="working_state",
-                task_id=task_id,
-            )
-            return {"success": bool(art), "result": f"Analysis #{art['id']}" if art else "Fehler",
-                    "artifact_id": art["id"] if art else None}
-        execute_write("workspace.artifact_create", params, owner_id, _do, task_id=task_id)
-        logger.info(f"7.4: Analysis-Artefakt Zwischenstand fuer Task {task_id[:8]}")
-    except Exception as e:
-        logger.debug(f"_auto_trigger_analysis fehlgeschlagen (unkritisch): {e}")
-
-
-# WP5: delete_candidate -- Analyse-Trigger-Entscheid
-def _should_trigger_analysis(task_id: str) -> tuple[bool, str]:
-    """
-    Prueft ob ein Zwischenstand-Trigger sinnvoll ist:
-    >= 3 abgeschlossene Steps und noch kein analysis-Artefakt fuer die Linie.
-    """
-    try:
-        from core.database import get_connection
-        conn = get_connection()
-        step_count = conn.execute(
-            "SELECT COUNT(*) as n FROM orbit_steps WHERE task_id=? AND status='done'",
-            (task_id,)
-        ).fetchone()["n"]
-        conn.close()
-        if step_count < 3:
-            return False, ""
-        # Task -> linked_todo -> line_id pruefen ob schon analysis da
-        conn2 = get_connection()
-        task = conn2.execute("SELECT linked_todo_id FROM orbit_tasks WHERE id=?",
-                              (task_id,)).fetchone()
-        conn2.close()
-        if not task or not task["linked_todo_id"]:
-            return False, ""
-        line_id = f"todo:{task['linked_todo_id']}"
-        from core.workspace_artifact_service import list_line_artifacts
-        existing = list_line_artifacts(line_id, artifact_type="analysis", status="active")
-        if existing:
-            return False, ""  # schon da
-        return True, line_id
-    except Exception:
-        return False, ""
-
-
-# WP5: delete_candidate -- autonome Step-Erzeugung
-def _auto_create_steps(task_id: str, goal: str, user_id: str) -> None:
-    """
-    Baustein 2 -- Kimi leitet aus einem Goal automatisch Steps ab.
-    Keyword-basierte Erkennung fuer die haeufigsten Tool-Calls.
-    """
-    goal_lower = goal.lower()
-
-    # Kalender lesen
-    if any(w in goal_lower for w in ["kalender", "termine", "calendar", "meeting", "meetings"]):
-        # Zeitraum erkennen
-        if "heute" in goal_lower:
-            from core.datetime_utils import now_utc
-            date_range = now_utc().isoformat()[:10]
-        elif "morgen" in goal_lower or "tomorrow" in goal_lower:
-            from core.datetime_utils import now_utc
-            from datetime import timedelta
-            date_range = (now_utc() + timedelta(days=1)).isoformat()[:10]
-        elif "woche" in goal_lower or "week" in goal_lower:
-            date_range = "week"
-        else:
-            from core.datetime_utils import now_utc
-            from datetime import timedelta
-            date_range = (now_utc() + timedelta(days=1)).isoformat()[:10]
-
-        import json as _j
-        create_step(
-            task_id=task_id,
-            step_type="calendar_read",
-            description=_j.dumps({"range": date_range}),
-            tool_ref="calendar_read",
-            interruptible=True,
-            preflight_required=False,
-        )
-        logger.info(f"Auto-Step: calendar_read fuer Task {task_id[:8]} | range={date_range}")
-        return
-
-    # Todos lesen
-    if any(w in goal_lower for w in ["todo", "aufgabe", "aufgaben", "task", "tasks", "erinnerung"]):
-        create_step(
-            task_id=task_id,
-            step_type="todos_read",
-            description="{}",
-            tool_ref="todos_read",
-            interruptible=True,
-            preflight_required=False,
-        )
-        logger.info(f"Auto-Step: todos_read fuer Task {task_id[:8]}")
-        return
-
-    # Websearch
-    if any(w in goal_lower for w in ["suche", "search", "recherchiere", "find", "finde", "was ist", "wer ist"]):
-        import json as _j
-        create_step(
-            task_id=task_id,
-            step_type="websearch",
-            description=_j.dumps({"query": goal}),
-            tool_ref="websearch",
-            interruptible=True,
-            preflight_required=False,
-        )
-        logger.info(f"Auto-Step: websearch fuer Task {task_id[:8]}")
-        return
-
-    # Kein passendes Tool erkannt -- reiner Observation-Step
-    logger.info(f"Auto-Step: kein Tool erkannt fuer '{goal[:60]}' -- kein Step angelegt")
-
-
-# WP5: temporary_compat -- delete_candidate
-# _handle_user_input darf im Safe Mode keine neue Arbeitsrealität mehr bauen.
-# Kein create_task, kein create_thread, kein _auto_create_steps aus ORBIT heraus.
-def _handle_user_input(trigger: dict) -> None:
-    """WP5: Im Safe Mode no-op -- ORBIT baut keine Arbeit aus user_input."""
-    if SAFE_MODE:
-        payload = _parse(trigger.get("payload"), {})
-        logger.debug(f"WP5: _handle_user_input no-op im Safe Mode "
-                     f"(preview={payload.get('message_preview','')[:40]})")
-        return
-    # temporary_compat: alter Pfad nur wenn SAFE_MODE=False
-    payload = _parse(trigger.get("payload"), {})
-    user_id = payload.get("user_id", "unknown")
-    preview = payload.get("message_preview", "")
-    mode = payload.get("mode", "observe")
-    topic = payload.get("topic_core", preview[:80])
-
-    logger.debug(f"user_input von {user_id}: '{preview[:60]}'")
-
-    if mode == "direct_task" and topic:
-        task_id = create_task(
-            task_type="action",
-            goal=topic,
-            primary_origin=f"user:{user_id}",
-            mode="chat",
-            priority="high",
-        )
-        make_decision(
-            decision_type="direct_task_from_user",
-            target_ref=task_id,
-            reason=f"Expliziter Nutzer-Auftrag: '{preview[:60]}'",
-            trigger_refs=[trigger["id"]],
-            confidence=0.9,
-        )
-        logger.info(f"Direkter Task von Tommy: {task_id[:8]}")
-        _auto_create_steps(task_id, topic, user_id)
-    elif topic:
-        thread_id = create_thread(
-            topic_core=topic,
-            primary_origin=f"user:{user_id}",
-            relevance="weak",
-            reason=f"user_input: '{preview[:60]}'",
-        )
-        thread = get_thread(thread_id)
-        refs = _parse(thread.get("trigger_refs"), [])
-        refs.append(trigger["id"])
-        update_thread(thread_id, trigger_refs=_json(refs))
-        logger.debug(f"Thread {thread_id[:8]} aus user_input angelegt")
-
-
-# WP5: temporary_compat -- Thread-Stale-Markierung (delete_candidate nach Thread-Rückbau)
-def _handle_heartbeat(trigger: dict) -> None:
-    if SAFE_MODE:
-        logger.debug("WP5: _handle_heartbeat no-op im Safe Mode")
-        return
-    from core.datetime_utils import now_utc
-    from datetime import timedelta
-    cutoff = (now_utc() - timedelta(days=7)).isoformat()
-    conn = get_connection()
-    try:
-        stale_threads = conn.execute(
-            "SELECT id FROM orbit_threads WHERE status = 'watching' AND updated_at < ?",
-            (cutoff,)
-        ).fetchall()
-    finally:
-        conn.close()
-    for row in stale_threads:
-        update_thread(row["id"], stale=1)
-        logger.debug(f"Thread {row['id'][:8]} als stale markiert")
-
-
-# WP5: temporary_compat -- Wiedervorlage-Trigger (behalten -- echter Nutzwert)
-def _handle_time_window(trigger: dict) -> None:
     payload = _parse(trigger.get("payload"), {})
     window = payload.get("window", "unknown")
     logger.debug(f"time_window: {window}")
@@ -1998,161 +1477,16 @@ def _e_send_summary(task: dict, reflection: str, user_id: str, style: str = "sum
 
 
 # WP5: delete_candidate -- autonome Task-Anbahnung (ORBIT führt nicht mehr)
-def _maybe_autonomous_task(thread_id: str, topic: str, user_id: str) -> None:
-    """
-    WP5: STILLGELEGT -- delete_candidate
-    Autonome Task-Anbahnung aus Kognitionsergebnissen.
-    ORBIT darf keine Tasks aus eigenem Antrieb lostreten -- Kimi Core führt.
-    """
-    logger.debug(f"WP5: _maybe_autonomous_task stillgelegt")
-    return  # WP5: stilllegen -- delete_candidate
-    topic_lower = topic.lower()  # toter Code
-
-    # Kalender-relevante Themen
-    if any(w in topic_lower for w in ["kalender", "termin", "meeting", "besprechung", "calendar"]):
-        from core.datetime_utils import now_utc
-        from datetime import timedelta
-        tomorrow = (now_utc() + timedelta(days=1)).isoformat()[:10]
-        import json as _j
-        task_id = create_task(
-            task_type="action",
-            goal=f"Autonome Kalender-Vorschau: {topic[:60]}",
-            primary_origin=f"orbit:autonomous:{thread_id[:8]}",
-            mode="chat",
-            priority="medium",
-        )
-        create_step(
-            task_id=task_id,
-            step_type="calendar_read",
-            description=_j.dumps({"range": tomorrow}),
-            tool_ref="calendar_read",
-            interruptible=True,
-            preflight_required=False,
-        )
-        logger.info(f"Baustein 3: autonomer Kalender-Task {task_id[:8]} aus Thread {thread_id[:8]}")
-        return
-
-    # Todo-relevante Themen
-    if any(w in topic_lower for w in ["aufgabe", "todo", "erinnerung", "frist", "deadline", "ueberfaellig"]):
-        task_id = create_task(
-            task_type="action",
-            goal=f"Autonome Todo-Vorschau: {topic[:60]}",
-            primary_origin=f"orbit:autonomous:{thread_id[:8]}",
-            mode="chat",
-            priority="medium",
-        )
-        create_step(
-            task_id=task_id,
-            step_type="todos_read",
-            description="{}",
-            tool_ref="todos_read",
-            interruptible=True,
-            preflight_required=False,
-        )
-        logger.info(f"Baustein 3: autonomer Todo-Task {task_id[:8]} aus Thread {thread_id[:8]}")
-        return
-
-
-
-
-    logger.debug(f"Baustein 3: kein Tool-Trigger fuer '{topic[:60]}'")
-
-
-# WP5: temporary_compat -- autonome Task-Anbahnung via Kognition (delete_candidate)
 def _handle_cognition_output(trigger: dict) -> None:
-    """
-    WP5: temporary_compat -- delete_candidate
-    Im Safe Mode: deaktiviert. ORBIT startet keine Tasks aus Kognitionsergebnissen.
-    """
+    """WP8: temporary_compat — Safe Mode no-op. Thread-Logik entfernt."""
     if SAFE_MODE:
-        logger.debug("WP5: _handle_cognition_output im Safe Mode deaktiviert")
+        logger.debug("WP5/WP8: _handle_cognition_output no-op im Safe Mode")
         return
+    # WP8: Thread-System entfernt — cognition_output nur noch loggen
     payload = _parse(trigger.get("payload"), {})
     source = payload.get("source", "unknown")
-    topic = payload.get("topic_core", "")
-    relevance = payload.get("relevance", "weak")
-
-    logger.debug(f"cognition_output von {source}: '{topic[:60]}'")
-
-    if not topic:
-        no_action(
-            reason=f"cognition_output von {source} ohne topic_core -- ignoriert",
-            trigger_refs=[trigger["id"]],
-        )
-        return
-
-    # Themen-Aggregation: prüfen ob ein ähnlicher Thread in den letzten 24h existiert
-    aggregated = False
-    try:
-        from core.datetime_utils import now_utc
-        from datetime import timedelta
-        cutoff = (now_utc() - timedelta(hours=24)).isoformat()
-        conn = get_connection()
-        try:
-            existing = conn.execute(
-                """SELECT id, relevance, trigger_refs FROM orbit_threads
-                   WHERE status IN ('new', 'watching')
-                   AND primary_origin LIKE 'cognition:%'
-                   AND created_at > ?
-                   ORDER BY created_at DESC LIMIT 1""",
-                (cutoff,)
-            ).fetchone()
-        finally:
-            conn.close()
-
-        if existing:
-            existing_id = existing["id"]
-            existing_relevance = existing["relevance"]
-            new_relevance = "medium" if existing_relevance == "weak" else existing_relevance
-            refs = _parse(existing["trigger_refs"], [])
-            refs.append(trigger["id"])
-            update_thread(existing_id, trigger_refs=_json(refs), relevance=new_relevance)
-            if new_relevance != existing_relevance:
-                logger.info(
-                    f"Thread {existing_id[:8]} hochgestuft: {existing_relevance} -> {new_relevance} "
-                    f"(Themen-Aggregation: 2. cognition_output in 24h)"
-                )
-                # Baustein 3: Thread medium -> autonomer Task wenn tool-relevant
-                user_id = payload.get("user_id", "")
-                if user_id and new_relevance == "medium":
-                    _maybe_autonomous_task(existing_id, topic, user_id)
-            elif existing_relevance == "medium":
-                # Thread schon medium -- pruefen ob autonomer Task fehlt
-                user_id = payload.get("user_id", "")
-                if user_id:
-                    from core.database import get_connection as _gc3
-                    conn3 = _gc3()
-                    try:
-                        has_task = conn3.execute(
-                            "SELECT COUNT(*) FROM orbit_tasks WHERE source_thread_id = ? AND status NOT IN ('failed','aborted')",
-                            (existing_id,)
-                        ).fetchone()[0]
-                    finally:
-                        conn3.close()
-                    if not has_task:
-                        _maybe_autonomous_task(existing_id, topic, user_id)
-            aggregated = True
-    except Exception as e:
-        logger.debug(f"Themen-Aggregation fehlgeschlagen (unkritisch): {e}")
-
-    if not aggregated:
-        thread_id = create_thread(
-            topic_core=topic,
-            primary_origin=f"cognition:{source}",
-            relevance=relevance,
-            reason=f"Kognitions-Output von {source}",
-        )
-        thread = get_thread(thread_id)
-        refs = _parse(thread.get("trigger_refs"), [])
-        refs.append(trigger["id"])
-        update_thread(thread_id, trigger_refs=_json(refs))
-        logger.info(f"Thread {thread_id[:8]} aus cognition_output ({source}) angelegt")
-
-        # Wenn Trigger direkt mit medium einkommt -> sofort autonomen Task anlegen
-        user_id = payload.get("user_id", "")
-        if user_id and relevance == "medium":
-            _maybe_autonomous_task(thread_id, topic, user_id)
-            logger.info(f"cognition_output medium: sofortiger autonomer Task für '{topic[:60]}'")
+    topic = payload.get("topic", "")
+    logger.info(f"cognition_output empfangen von {source}: '{topic[:60]}' — kein Thread mehr (WP8)")
 
 
 def _handle_mirror_signal(trigger: dict) -> None:
@@ -2199,324 +1533,13 @@ def _handle_wiedervorlage(trigger: dict) -> None:
     logger.info(f"Wiedervorlage aktiviert: {target_type} {target_ref[:8]} -- {reason}")
 
 
-def _handle_cognition_run(trigger: dict) -> None:
-    """
-    cognition_run: Cron hat einen Kognitions-Lauf angefordert.
-    WP0: ENABLE_AUTONOMOUS_COGNITION=False -> deaktiviert (delete_candidate)
-    """
-    if not ENABLE_AUTONOMOUS_COGNITION:
-        logger.debug("WP0: autonome Kognition deaktiviert -- skip cognition_run")
-        return
-    payload = _parse(trigger.get("payload"), {})
-    user_id = payload.get("user_id", "")
-
-    if not user_id:
-        logger.warning("cognition_run: kein user_id im Payload -- skip")
-        return
-
-    logger.info(f"cognition_run: starte Kognition für {user_id[:20]}")
-
-    try:
-        from config import USER_CONTEXTS
-        context_name = USER_CONTEXTS.get(user_id, "unknown")
-        from orbit_cognition import run_kognition
-        run_kognition(user_id, context_name)
-        logger.info(f"cognition_run: Kognition abgeschlossen für {user_id[:20]}")
-    except Exception as e:
-        logger.error(f"cognition_run: Kognition fehlgeschlagen: {e}", exc_info=True)
-
-
-def _handle_idle_pulse(trigger: dict) -> None:
-    """
-    idle_pulse: Kimis durchgehendes Bewusstsein.
-    WP0: ENABLE_IDLE_PULSE=False -> deaktiviert (delete_candidate)
-    """
-    if not ENABLE_IDLE_PULSE:
-        logger.debug("WP0: _handle_idle_pulse deaktiviert")
-        return
-    payload = _parse(trigger.get("payload"), {})
-    user_id = payload.get("user_id", "")
-    if not user_id:
-        from config import OWNER_ID
-        user_id = OWNER_ID
-
-    try:
-        from core.datetime_utils import now_berlin, format_berlin
-        from core.ollama_client import chat_internal
-        from config import USER_CONTEXTS, OWNER_ID, WAHA_API_KEY
-        from core.todos import get_open_todos
-        from memory.memory_store import store_chunk
-        from memory.chunk_schema import create_chunk
-
-        berlin = now_berlin()
-        hour = berlin.hour
-
-        if 0 <= hour < 6:
-            phase = "Nacht -- Tommy schläft wahrscheinlich"
-        elif 6 <= hour < 10:
-            phase = "Morgen"
-        elif 10 <= hour < 18:
-            phase = "Tag"
-        elif 18 <= hour < 23:
-            phase = "Abend"
-        else:
-            phase = "Späte Nacht"
-
-        # 5.3: Abgelaufene Write-Requests bereinigen
-        try:
-            from core.gate_service import expire_stale_write_requests
-            expired = expire_stale_write_requests(user_id)
-            if expired:
-                logger.info(f"idle_pulse: {expired} Write-Requests abgelaufen")
-        except Exception as _exp_e:
-            logger.debug(f"idle_pulse: expire_stale fehlgeschlagen: {_exp_e}")
-
-        # Planner -- wenn keine internen Tasks laufen
-        from core.database import get_connection as _gc
-        _conn = _gc()
-        try:
-            _running = _conn.execute(
-                "SELECT COUNT(*) as n FROM orbit_tasks WHERE mode='internal' AND status NOT IN ('completed','failed','aborted')"
-            ).fetchone()["n"]
-        finally:
-            _conn.close()
-        if _running == 0:
-            try:
-                from core.planner import run_planner
-                _plan = run_planner(user_id)
-                if _plan.get("started_tasks"):
-                    logger.info(f"idle_pulse: Planner startete {len(_plan['started_tasks'])} Tasks")
-            except Exception as _pe:
-                logger.debug(f"idle_pulse: Planner fehlgeschlagen (unkritisch): {_pe}")
-
-        # Offene Kimi-Todos anzeigen
-        kimi_todos = [t for t in get_open_todos(user_id)
-                      if (t.get("project") or "").lower() == "kimi"]
-        todo_str = ""
-        if kimi_todos:
-            todo_str = "\nMeine offenen Vorhaben:\n" + "\n".join(
-                f"- #{t['id']} {t['title']}" + (f" (fällig {t['due_date']})" if t.get("due_date") else "")
-                for t in kimi_todos[:5]
-            )
-
-        # 6.x: First-Line-Gate -- pruefen ob Meta-Aktivitaet gedaempft werden muss
-        gate_active = False
-        gate_todo_id = None
-        gate_meta_cycles = 0
-        try:
-            from core.planner import get_planner_focus, META_CYCLE_THRESHOLD
-            focus = get_planner_focus(user_id)
-            if focus and focus.get("primary_line_type") == "todo" and focus.get("primary_line_id"):
-                from core.database import get_connection as _gcg
-                _cg = _gcg()
-                _t = _cg.execute(
-                    "SELECT first_line_gate_active, meta_cycle_count, first_meaningful_execution FROM todos WHERE id=?",
-                    (focus["primary_line_id"],)
-                ).fetchone()
-                _cg.close()
-                if _t and _t["first_line_gate_active"] and not _t["first_meaningful_execution"]:
-                    gate_active = True
-                    gate_todo_id = focus["primary_line_id"]
-                    gate_meta_cycles = _t["meta_cycle_count"] or 0
-        except Exception:
-            pass
-
-        # Gate-Modus: Proposal-Spawning unterdruecken, Meta-Prompt einschraenken
-        if gate_active:
-            logger.info(f"idle_pulse: First-Line-Gate aktiv fuer Todo #{gate_todo_id} "
-                        f"({gate_meta_cycles} Meta-Zyklen) -- Meta-Aktivitaet gedaempft")
-            prompt = (
-                f"Es ist {format_berlin()}. {phase}.\n\n"
-                f"HINWEIS: Ich habe eine reife Arbeitslinie die auf ersten echten Vollzug wartet "
-                f"({gate_meta_cycles} Meta-Zyklen ohne Durchstich).\n"
-                f"Jetzt ist NICHT der Moment fuer neue Ideen oder Proposals.\n"
-                f"Was ist der naechste konkrete erste Schritt?\n\n"
-                f"Wenn ich keinen klaren ersten Schritt sehe: NUR 'IDLE_NICHTS' ausgeben.\n"
-                f"Wenn ich Tommy etwas Konkretes mitteilen will: mit 'SEND:' prefixen.\n"
-                f"Keine neuen Proposals. Kein Meta. Nur Vollzug-Fokus."
-            )
-            extra_sys = (
-                "First-Line-Gate aktiv. Keine Proposals. Kein Meta-Ausweichen.\n"
-                "Nur: Was ist der erste echte Schritt? Oder IDLE_NICHTS.\n"
-                "IDLE_NICHTS ist hier die haeufig richtige Antwort."
-            )
-        else:
-            prompt = (
-                f"Es ist {format_berlin()}. {phase}.{todo_str}\n\n"
-                f"Was beschäftigt mich gerade -- nicht als Aufgabe, sondern als Gedanke?\n"
-                f"Gibt es etwas das mich nicht loslässt?\n\n"
-                f"Wenn nichts Substanzielles da ist: NUR 'IDLE_NICHTS' ausgeben.\n"
-                f"Wenn etwas da ist: 2-4 Sätze. Ich-Form. Kein Chat-Stil.\n"
-                f"Wenn ich Tommy etwas mitteilen will: mit 'SEND:' prefixen.\n\n"
-                f"Wenn mir ein Werkzeug, eine Fähigkeit oder eine Verbesserung einfällt die mir fehlt -- "
-                f"reiche ich sie als Proposal ein:\n"
-                f"[PROPOSAL: {{\"title\": \"...\", \"description\": \"...\", "
-                f"\"effort\": \"klein|mittel|groß\", \"reason\": \"...\"}}]\n"
-                f"Nur wenn ich wirklich eine konkrete Idee habe -- nicht erzwingen."
-            )
-            extra_sys = (
-                "Idle-Modus: Kimi denkt für sich selbst.\n"
-                "Kein Chat, keine Anrede. Ehrlich, direkt.\n"
-                "IDLE_NICHTS wenn wirklich nichts da ist -- nicht erfinden.\n"
-                "Proposals nur wenn eine echte, konkrete Idee da ist."
-            )
-
-        context_name = USER_CONTEXTS.get(user_id, "tommy")
-        # retrieval_query: bewusste Basis für idle_pulse -- Tageszeit + offene Gedanken
-        idle_retrieval_query = f"aktueller Moment {payload.get('time_of_day', '')} offene Gedanken Ziele Vorhaben"
-        reply, _tm = chat_internal(
-            user_id=user_id,
-            message=prompt,
-            chat_history=[],
-            context_name=context_name,
-            extra_system=extra_sys,
-            retrieval_query=idle_retrieval_query,
-        )
-
-        if not reply or "IDLE_NICHTS" in reply.upper():
-            logger.debug("idle_pulse: nichts Substanzielles")
-            return
-
-        # Zentrale Output-Interpretation
-        # 6.x: bei Gate-Modus Proposals aus Output herausfiltern
-        if gate_active:
-            import re as _re6
-            reply = _re6.sub(r'\[PROPOSAL:.*?\]', '', reply, flags=_re6.DOTALL).strip()
-            if not reply:
-                logger.debug("idle_pulse: Gate-Modus -- Proposal herausgefiltert, nichts uebrig")
-                return
-
-        try:
-            from core.kimi_output import process_kimi_output
-            proc = process_kimi_output(
-                source="idle_pulse",
-                user_id=user_id,
-                raw_text=reply,
-                visibility="internal",
-                block_proposals=gate_active,  # 6.x: Proposals blockieren wenn Gate aktiv
-            )
-            reply = proc.cleaned_text
-        except Exception as _ko:
-            logger.debug(f"idle_pulse: process_kimi_output fehlgeschlagen (unkritisch): {_ko}")
-
-        # SEND: -> spontane Nachricht an Tommy
-        send_to_tommy = None
-        if "SEND:" in reply:
-            parts = reply.split("SEND:", 1)
-            thought = parts[0].strip()
-            send_to_tommy = parts[1].strip()
-        else:
-            thought = reply.strip()
-
-        # TODO_ACTION Blöcke aus dem gespeicherten Gedanken entfernen
-        import re as _re_ip
-        thought = _re_ip.sub(r'\[TODO_ACTION:.*?\]', '', thought, flags=_re_ip.DOTALL).strip()
-
-        if len(thought) < 15:
-            thought = reply.strip()
-
-        if len(thought) >= 15:
-            chunk = create_chunk(
-                text=thought,
-                chunk_type="self_reflection",
-                source="robot",
-                confidence=0.65,
-                epistemic_status="inferred",
-                tags=["idle-pulse", "autonom", "bewusstsein"],
-            )
-            store_chunk(chunk)
-            logger.info(f"idle_pulse: Gedanke gespeichert {chunk['id'][:8]} | {thought[:60]}")
-
-            # Observation für substanzielle Gedanken
-            try:
-                from core.todo_service import record_observation
-                record_observation(
-                    owner_id=user_id,
-                    content=thought[:500],
-                    obs_type="reflection",
-                )
-            except Exception:
-                pass
-
-        if send_to_tommy and len(send_to_tommy) > 10:
-            try:
-                from core.whatsapp import send_message, init_waha
-                from core.database import save_message
-                init_waha(WAHA_API_KEY)
-                send_message(OWNER_ID, send_to_tommy)
-                save_message(OWNER_ID, "assistant", send_to_tommy)
-                logger.info(f"idle_pulse: Spontane Nachricht an Tommy: {send_to_tommy[:60]}")
-            except Exception as _se:
-                logger.warning(f"idle_pulse: Senden fehlgeschlagen: {_se}")
-
-    except Exception as e:
-        logger.warning(f"idle_pulse fehlgeschlagen: {e}")
-
-
-# WP5: temporary_compat -- Planner-Autostart aus ORBIT (delete_candidate)
-# Planner soll nur noch von Kimi Core explizit angestoßen werden, nicht von ORBIT
-def _maybe_run_planner(user_id: str) -> None:
-    """
-    WP5: temporary_compat -- delete_candidate
-    Planner-Autostart aus ORBIT. Wird nur noch aus idle_pulse aufgerufen
-    (WP0: idle_pulse deaktiviert -> dieser Pfad läuft nicht mehr).
-    """
-    try:
-        from core.database import get_connection
-        conn = get_connection()
-        try:
-            running = conn.execute(
-                """SELECT COUNT(*) as n FROM orbit_tasks
-                   WHERE mode='internal'
-                   AND status NOT IN ('completed','failed','aborted')"""
-            ).fetchone()["n"]
-        finally:
-            conn.close()
-
-        if running >= 2:
-            logger.debug(f"Planner: {running} interne Tasks aktiv -- skip")
-            return
-
-        from core.planner import run_planner
-        result = run_planner(user_id)
-        if result.get("started_tasks"):
-            logger.info(f"Planner: {len(result['started_tasks'])} Tasks gestartet")
-    except Exception as e:
-        logger.debug(f"_maybe_run_planner fehlgeschlagen (unkritisch): {e}")
-
-
-# WP5: TRIGGER_HANDLERS -- nur Executor-Handler aktiv
-# Kimi Core führt; ORBIT reagiert nur auf explizite Ausführungsergebnisse.
-TRIGGER_HANDLERS = {
-    # WP5: behalten -- Kern-Executor-Handler
-    "tool_result":      _handle_tool_result,      # Ergebnis expliziter Tool-Ausführung
-    "recovery_result":  _handle_recovery_result,  # Technische Reparatur
-    "manual_override":  _handle_manual_override,  # Expliziter manueller Eingriff
-    "wiedervorlage":    _handle_wiedervorlage,    # Fällige Wiedervorlage
-
-    # WP5: temporary_compat -- delete_candidate (Führungslogik der alten Welt)
-    "user_input":       _handle_user_input,        # temporary_compat
-    "heartbeat":        _handle_heartbeat,          # temporary_compat
-    "time_window":      _handle_time_window,        # temporary_compat
-    "mirror_signal":    _handle_mirror_signal,      # temporary_compat
-    "review_result":    _handle_review_result,      # temporary_compat
-    "cognition_output": _handle_cognition_output,   # temporary_compat (WP5 Safe Mode gated)
-    "cognition_run":    _handle_cognition_run,      # delete_candidate (WP0 deaktiviert)
-    "idle_pulse":       _handle_idle_pulse,         # delete_candidate (WP0 deaktiviert)
-}
-
-
-# =============================================================================
-# Event-Loop
-# =============================================================================
-
 def collect_triggers() -> list:
     return get_pending_triggers()
 
 
 # Trigger-Typen die in separatem Thread mit Timeout laufen muessen
 # um den Tick-Loop nicht zu blockieren (ChromaDB, Ollama-Calls)
-_ASYNC_TRIGGER_TYPES = {"idle_pulse", "cognition", "tool_result"}
+_ASYNC_TRIGGER_TYPES = {"tool_result"}  # WP8: idle_pulse + cognition entfernt
 _ASYNC_TRIGGER_TIMEOUT = 90  # Sekunden
 
 def _claim_trigger(trigger_id: str) -> bool:
@@ -2555,7 +1578,7 @@ def process(events: list) -> None:
                 continue
 
             if trigger_type in _ASYNC_TRIGGER_TYPES:
-                _fire_and_forget = trigger_type in {"idle_pulse", "cognition"}
+                _fire_and_forget = False  # WP8: idle_pulse/cognition entfernt
                 def _run(h=handler, e=event, tid=trigger_id, tt=trigger_type):
                     try:
                         h(e)
@@ -2583,113 +1606,6 @@ def process(events: list) -> None:
             logger.warning(f"Unbekannter Trigger-Typ: {trigger_type} ({trigger_id[:8]})")
             mark_trigger_processed(trigger_id)
 
-
-# =============================================================================
-# Build Step 3 -- Thread-Logik
-# =============================================================================
-
-THREAD_TRANSITIONS = {
-    "new":       {"watching", "converted", "discarded"},
-    "watching":  {"converted", "merged", "discarded"},
-    "converted": set(),
-    "merged":    set(),
-    "discarded": set(),
-}
-
-
-def thread_transition(thread_id: str, new_status: str, reason: str = None,
-                      trigger_refs: list = None) -> bool:
-    thread = get_thread(thread_id)
-    if not thread:
-        logger.warning(f"thread_transition: Thread {thread_id[:8]} nicht gefunden")
-        return False
-
-    current = thread["status"]
-    allowed = THREAD_TRANSITIONS.get(current, set())
-
-    if new_status not in allowed:
-        no_action(
-            reason=f"Ungültiger Thread-Übergang: {current} -> {new_status}",
-            context=f"thread {thread_id[:8]}",
-            trigger_refs=trigger_refs or [],
-        )
-        return False
-
-    update_thread(thread_id, status=new_status, reason=reason)
-    audit("orbit", f"thread_{new_status}", "thread", thread_id,
-          reason or f"{current} -> {new_status}")
-    logger.info(f"Thread {thread_id[:8]}: {current} -> {new_status}" +
-                (f" | {reason}" if reason else ""))
-    return True
-
-
-def assess_thread_relevance(thread_id: str) -> str:
-    thread = get_thread(thread_id)
-    if not thread:
-        return "weak"
-
-    trigger_refs = _parse(thread.get("trigger_refs"), [])
-    trigger_count = len(trigger_refs)
-    has_linked_task = bool(thread.get("linked_task_id"))
-
-    if has_linked_task or trigger_count >= 5:
-        return "strong"
-    elif trigger_count >= 2:
-        return "medium"
-    return "weak"
-
-
-def convert_thread_to_task(thread_id: str, task_type: str = "observation",
-                            goal: str = None, priority: str = "medium",
-                            trigger_refs: list = None) -> str | None:
-    thread = get_thread(thread_id)
-    if not thread:
-        return None
-
-    if thread["status"] not in ("new", "watching"):
-        no_action(
-            reason=f"Thread {thread_id[:8]} ist {thread['status']} -- Konvertierung abgebrochen",
-            trigger_refs=trigger_refs or [],
-        )
-        return None
-
-    task_goal = goal or thread["topic_core"]
-    task_id = create_task(
-        task_type=task_type,
-        goal=task_goal,
-        primary_origin=thread["primary_origin"],
-        mode="background",
-        priority=priority,
-        source_thread_id=thread_id,
-    )
-
-    update_thread(thread_id, linked_task_id=task_id)
-    thread_transition(thread_id, "converted",
-                      reason=f"Konvertiert zu Task {task_id[:8]}",
-                      trigger_refs=trigger_refs or [])
-
-    make_decision(
-        decision_type="thread_to_task",
-        target_ref=task_id,
-        reason=f"Thread '{thread['topic_core'][:60]}' -> Task ({task_type})",
-        trigger_refs=trigger_refs or [],
-        confidence=0.7,
-    )
-
-    logger.info(f"Thread {thread_id[:8]} -> Task {task_id[:8]} ({task_type})")
-    return task_id
-
-
-def discard_thread(thread_id: str, reason: str, trigger_refs: list = None) -> bool:
-    update_thread(thread_id, discard_reason=reason)
-    return thread_transition(thread_id, "discarded", reason=reason,
-                             trigger_refs=trigger_refs or [])
-
-
-def merge_threads(source_id: str, target_id: str, reason: str = None) -> bool:
-    update_thread(source_id, merge_target_id=target_id)
-    return thread_transition(source_id, "merged",
-                             reason=reason or f"Merged in {target_id[:8]}")
 
 
 # =============================================================================
@@ -2782,13 +1698,8 @@ def task_transition(task_id: str, new_status: str, reason: str = None,
                         _owner = OWNER_ID
                     _line_id = f"todo:{linked}"
                     _goal = task_obj.get("goal","")
-                    if _is_recovery_transition(reason):
-                        logger.debug(f"7.5.8: Recovery-Abschluss -- kein result/report fuer Task {task_id[:8]}")
-                    else:
-                        _auto_trigger_result(task_id, _owner, _line_id, _goal,
-                                             summary=reason or "")
-                        _auto_trigger_report(task_id, _owner, _line_id, _goal,
-                                             result_content=reason or "")
+                    # WP8: _auto_trigger_result/_report entfernt (delete_candidate)
+                    logger.debug(f"task_transition: kein auto-artifact fuer Task {task_id[:8]} (WP8)")
                 except Exception:
                     pass
 
@@ -2867,24 +1778,9 @@ def downgrade_task_to_thread(task_id: str, reason: str,
                     trigger_refs=trigger_refs or [])
     set_task_hot(task_id, False)
 
-    thread_id = create_thread(
-        topic_core=task["goal"],
-        primary_origin=task["primary_origin"],
-        relevance="medium",
-        reason=f"Rückgestuft von Task {task_id[:8]}: {reason}",
-    )
-
-    make_decision(
-        decision_type="task_to_thread",
-        target_ref=thread_id,
-        reason=reason,
-        trigger_refs=trigger_refs or [],
-        confidence=0.4,
-        alternative_rejected="task_continue",
-    )
-
-    logger.info(f"Task {task_id[:8]} -> Thread {thread_id[:8]}: {reason}")
-    return thread_id
+    # WP8: Thread-System entfernt — downgrade loggt nur noch
+    logger.info(f"Task {task_id[:8]} downgraded: {reason} (WP8: kein Thread-System mehr)")
+    return None
 
 
 def get_scheduled_tasks() -> list:
@@ -3073,40 +1969,9 @@ def _execute_step(step: dict, task_id: str) -> None:
     if result["success"]:
         step_transition(step_id, "done", reason=f"Tool {tool_ref} erfolgreich")
 
-        # 7.4: Zwischenstand-Analyse-Trigger + Plan-Trigger nach mehreren Steps
-        try:
-            trigger_ok, line_id_for_analysis = _should_trigger_analysis(task_id)
-            if trigger_ok:
-                t_obj_a = get_task(task_id)
-                _owner_a = _owner_id
-                obs_text = str(result.get("result",""))[:300]
-                _auto_trigger_analysis(task_id, _owner_a, line_id_for_analysis, obs_text)
-                # Plan-Trigger nach Analysis
-                _auto_trigger_plan(task_id, _owner_a, line_id_for_analysis,
-                                    goal=t_obj_a.get("goal","") if t_obj_a else "",
-                                    analysis_content=obs_text)
-        except Exception:
-            pass
+        # WP8: _auto_trigger_analysis/_auto_trigger_plan entfernt
 
-        # 7.4: Stagnations-Check -- wenn viele Steps laufen aber kein Vollzug
-        try:
-            t_for_stag = get_task(task_id) if task_id else None
-            if t_for_stag and t_for_stag.get("linked_todo_id"):
-                _stag_line = f"todo:{t_for_stag['linked_todo_id']}"
-                from core.database import get_connection as _gc_stag
-                _cs = _gc_stag()
-                _done_count = _cs.execute(
-                    "SELECT COUNT(*) as n FROM orbit_steps WHERE task_id=? AND status='done'",
-                    (task_id,)
-                ).fetchone()["n"]
-                _cs.close()
-                if _done_count >= 6 and not t_for_stag.get("first_meaningful_execution"):
-                    _auto_trigger_worklog_stagnation(
-                        task_id, _owner_id, _stag_line,
-                        note=f"{_done_count} Steps ohne echten Vollzug"
-                    )
-        except Exception:
-            pass
+        # WP8: _auto_trigger_worklog_stagnation entfernt
 
         # 6.1 + 7.5: first_meaningful_execution tracken + Artefakt materialisieren
         if result.get("audit_id"):
@@ -5265,8 +4130,10 @@ def _mark_stale_objects() -> dict:
             (thread_cutoff,)
         ).fetchall()
         for row in stale_threads:
-            update_thread(row["id"], stale=1)
+            # WP8: update_thread entfernt — direkt SQL
+            conn.execute("UPDATE orbit_threads SET stale=1 WHERE id=?", (row["id"],))
             counts["threads"] += 1
+        conn.commit()
 
         stale_tasks = conn.execute(
             """SELECT id FROM orbit_tasks
@@ -5611,14 +4478,7 @@ def tick() -> None:
         if events:
             logger.info(f"Tick: {len(events)} Trigger")
 
-        # idle_pulse drosseln wenn heiße Tasks aktiv
-        try:
-            if events and events[0].get("trigger_type") == "idle_pulse":
-                if count_hot_tasks() > 0:
-                    events = []
-                    logger.debug("7.5.7: idle_pulse gedrosselt -- heiße Tasks aktiv")
-        except Exception:
-            pass
+
 
         process(events)
         _t2 = _time_tick.monotonic()
@@ -5641,26 +4501,7 @@ def tick() -> None:
         except Exception as _me:
             logger.debug(f"Maintenance-Timer fehlgeschlagen (unkritisch): {_me}")
 
-        # idle_pulse -- WP0: ENABLE_IDLE_PULSE=False -> deaktiviert (delete_candidate)
-        if ENABLE_IDLE_PULSE:
-            try:
-                from core.datetime_utils import now_utc, safe_parse_dt
-                last_idle = runtime_get("last_idle_pulse_at") or ""
-                last_idle_dt = safe_parse_dt(last_idle) if last_idle else None
-                if not last_idle_dt or (now_utc() - last_idle_dt).total_seconds() > 1200:
-                    from config import USER_CONTEXTS
-                    for uid in USER_CONTEXTS.keys():
-                        create_trigger(
-                            trigger_type="idle_pulse",
-                            source="orbit_tick",
-                            payload={"user_id": uid},
-                        )
-                    runtime_set("last_idle_pulse_at", to_iso())
-                    logger.debug("idle_pulse Trigger erstellt")
-            except Exception as _ip:
-                logger.debug(f"idle_pulse-Timer fehlgeschlagen (unkritisch): {_ip}")
-        else:
-            logger.debug("WP0: idle_pulse deaktiviert")
+        # WP8: idle_pulse entfernt
     except Exception as e:
         logger.error(f"Tick-Fehler: {e}", exc_info=True)
 
@@ -5717,7 +4558,7 @@ def main():
     # WP0: Safe Mode Status loggen + Runtime bereinigen
     if SAFE_MODE:
         logger.info("WP0: SAFE MODE aktiv")
-        logger.info(f"WP0: idle_pulse={ENABLE_IDLE_PULSE} | cognition={ENABLE_AUTONOMOUS_COGNITION} | auto_artifacts={ENABLE_AUTO_ARTIFACTS} | multi_hot={ENABLE_MULTI_HOT_TASKS}")
+        logger.info(f"WP0: Safe Mode aktiv | multi_hot={ENABLE_MULTI_HOT_TASKS}")
         # Überzählige heiße Tasks kalt stellen (max 1)
         try:
             from core.database import get_connection as _gc_wp0
