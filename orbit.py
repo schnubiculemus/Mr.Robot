@@ -240,6 +240,8 @@ def mark_trigger_processed(trigger_id: str, linked_object_id: str = None) -> Non
 # =============================================================================
 
 # WP5: temporary_compat -- Linien-Container der alten Autonomie (delete_candidate nach ORBIT-Rückbau)
+# WP5: temporary_compat -- Thread-System (delete_candidate nach ORBIT-Rückbau)
+# Threads waren Linien-Container der alten Autonomie. Nicht mehr neue Arbeitsstruktur.
 def create_thread(topic_core: str, primary_origin: str, relevance: str = "weak",
                   reason: str = None) -> str:
     """Legt einen neuen Orbit-Thread an."""
@@ -1324,7 +1326,17 @@ def _auto_create_steps(task_id: str, goal: str, user_id: str) -> None:
     logger.info(f"Auto-Step: kein Tool erkannt fuer '{goal[:60]}' -- kein Step angelegt")
 
 
+# WP5: temporary_compat -- delete_candidate
+# _handle_user_input darf im Safe Mode keine neue Arbeitsrealität mehr bauen.
+# Kein create_task, kein create_thread, kein _auto_create_steps aus ORBIT heraus.
 def _handle_user_input(trigger: dict) -> None:
+    """WP5: Im Safe Mode no-op -- ORBIT baut keine Arbeit aus user_input."""
+    if SAFE_MODE:
+        payload = _parse(trigger.get("payload"), {})
+        logger.debug(f"WP5: _handle_user_input no-op im Safe Mode "
+                     f"(preview={payload.get('message_preview','')[:40]})")
+        return
+    # temporary_compat: alter Pfad nur wenn SAFE_MODE=False
     payload = _parse(trigger.get("payload"), {})
     user_id = payload.get("user_id", "unknown")
     preview = payload.get("message_preview", "")
@@ -1349,7 +1361,6 @@ def _handle_user_input(trigger: dict) -> None:
             confidence=0.9,
         )
         logger.info(f"Direkter Task von Tommy: {task_id[:8]}")
-        # Baustein 2: Step automatisch aus Goal ableiten
         _auto_create_steps(task_id, topic, user_id)
     elif topic:
         thread_id = create_thread(
@@ -1365,7 +1376,11 @@ def _handle_user_input(trigger: dict) -> None:
         logger.debug(f"Thread {thread_id[:8]} aus user_input angelegt")
 
 
+# WP5: temporary_compat -- Thread-Stale-Markierung (delete_candidate nach Thread-Rückbau)
 def _handle_heartbeat(trigger: dict) -> None:
+    if SAFE_MODE:
+        logger.debug("WP5: _handle_heartbeat no-op im Safe Mode")
+        return
     from core.datetime_utils import now_utc
     from datetime import timedelta
     cutoff = (now_utc() - timedelta(days=7)).isoformat()
@@ -1382,11 +1397,12 @@ def _handle_heartbeat(trigger: dict) -> None:
         logger.debug(f"Thread {row['id'][:8]} als stale markiert")
 
 
+# WP5: temporary_compat -- Wiedervorlage-Trigger (behalten -- echter Nutzwert)
 def _handle_time_window(trigger: dict) -> None:
     payload = _parse(trigger.get("payload"), {})
     window = payload.get("window", "unknown")
     logger.debug(f"time_window: {window}")
-
+    # Wiedervorlagen sind echter Nutzwert -- bleiben aktiv
     due = get_due_wiedervorlagen()
     for wv in due:
         logger.info(f"Wiedervorlage fällig: {wv['target_type']} {wv['target_ref'][:8]} -- {wv['reason']}")
