@@ -95,6 +95,7 @@ def process(request: KimiCoreRequest) -> KimiCoreResult:
     # WP3: AWC als extra_system (eigener Kanal), NICHT als doc_context
     # So verdrängt AWC nicht Fast-Track + Typed Memory
     awc_extra = ""
+    awc = None
     try:
         from active_working_context import get_active_context, format_for_prompt
         awc = get_active_context(request.user_id)
@@ -104,6 +105,28 @@ def process(request: KimiCoreRequest) -> KimiCoreResult:
             logger.debug(f"KimiCore: AWC gelesen: {awc.get('active_line','?')[:60]}")
     except Exception as _awc_e:
         logger.debug(f"KimiCore: AWC nicht verfügbar: {_awc_e}")
+
+    # WP7: Coding-Modus erkennen — gesetzt von /code Command in app.py
+    # Wenn coding_mode=True: Kimi bekommt expliziten Hinweis den Coding Agent zu nutzen.
+    _coding_mode = request.meta.get("coding_mode", False)
+    if _coding_mode:
+        _coding_hint_lines = [
+            "CODING-MODUS: Tommy hat /code verwendet. Nutze den Coding Agent.",
+            "Schreibe einen [CODE_AGENT: {...}] Block:",
+            "  mode: scaffold | patch | refactor | tests | review | read_only_analysis | explain_code",
+            "  task: klarer Auftrag",
+            "  scope: [] fuer neue Datei, oder doc_id fuer bestehende Datei",
+            "  target_doc_id: Zieldateiname im Workspace (z.B. mein_skript)",
+            "  return_format: workspace (Standard) oder text",
+            "Beispiel neue Datei:",
+            '[CODE_AGENT: {"mode": "scaffold", "task": "...", "scope": [], "target_doc_id": "skript", "return_format": "workspace"}]',
+            "Beispiel bestehende Datei:",
+            '[CODE_AGENT: {"mode": "patch", "task": "...", "scope": ["doc_id"], "return_format": "workspace"}]',
+        ]
+        _coding_hint = "\n".join(_coding_hint_lines)
+        awc_extra = (_coding_hint + "\n\n" + awc_extra).strip()
+        delegations.append("coding_mode")
+        logger.info("KimiCore: Coding-Modus aktiv (/code)")
 
     # --- Schritt 1: Erste Antwort ---
     try:

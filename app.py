@@ -134,6 +134,23 @@ def webhook():
         send_message(phone_number, reply)
         return jsonify({"status": "ok"}), 200
 
+    # --- /code Befehl → Kimi Core mit Coding-Kontext (WP7) ---
+    # Expliziter Einstieg für Coding-Aufträge.
+    # Kimi Core erkennt das coding_mode=True Flag und gibt Kimi den Coding-Kontext.
+    # Kimi delegiert dann gezielt an den Coding Agent (minimax-m2.7).
+    if text.strip().lower().startswith("/code "):
+        code_task = text.strip()[6:].strip()
+        if code_task:
+            _chat_pool.submit(_process_chat, phone_number, code_task,
+                              display_name, context_name,
+                              extra_meta={"coding_mode": True})
+            reply = "Coding Agent aktiv — ich arbeite daran."
+        else:
+            reply = "Was soll ich coden? Beispiel: /code Schreib ein Python-Skript das X macht"
+        save_message(phone_number, "assistant", reply)
+        send_message(phone_number, reply)
+        return jsonify({"status": "ok"}), 200
+
     _t = text.strip().lower()
     if _t in ["/doc stop", "/doc end", "/dokument stop", "stop", "fertig", "ende", "/stop"]:
         from core.document import clear_doc_session
@@ -338,7 +355,8 @@ def _handle_introspect(reply: str):
         return reply_cleaned, None
 
 
-def _process_chat(phone_number, text, display_name, context_name):
+def _process_chat(phone_number, text, display_name, context_name,
+                  extra_meta: dict = None):
     """
     Verarbeitet eine Chat-Nachricht im Background-Thread.
     Reihenfolge: Kimi-Call → Antwort senden → ORBIT trigger → Fast-Track.
@@ -347,6 +365,8 @@ def _process_chat(phone_number, text, display_name, context_name):
     - Kimi-Antwort hat Vorrang (zeitkritisch)
     - ORBIT kann die vollständige Interaktion als Kontext nutzen
     - Keine Memory-Race-Conditions
+
+    extra_meta: optionale Zusatzinfos für Kimi Core, z.B. {"coding_mode": True} für /code
     """
     lock = _get_user_lock(phone_number)
     with lock:
@@ -355,12 +375,15 @@ def _process_chat(phone_number, text, display_name, context_name):
 
             # WP1: Kimi Core ist der führende Einstiegspunkt
             from kimi_core import KimiCoreRequest, process as kimi_core_process
+            _meta = {"display_name": display_name}
+            if extra_meta:
+                _meta.update(extra_meta)
             core_request = KimiCoreRequest(
                 user_id=phone_number,
                 text=text,
                 context_name=context_name,
                 chat_history=history,
-                meta={"display_name": display_name},
+                meta=_meta,
             )
             core_result = kimi_core_process(core_request)
             reply = core_result.reply

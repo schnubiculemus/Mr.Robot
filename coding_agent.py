@@ -66,10 +66,13 @@ class CodingRequest:
     mode: str                   # Einer der definierten Modi
     task: str                   # Was soll gemacht werden (klarer Auftrag)
     scope_files: list[str]      # Explizit erlaubte Dateien (Workspace doc_ids oder Pfade)
+                                # Leer = neue Datei erlaubt (scaffold)
     active_line: str = ""       # Aktive Arbeitslinie aus AWC
     active_goal: str = ""       # Aktives Ziel aus AWC
     context_note: str = ""      # Optionaler Zusatzkontext
-    return_format: str = "text" # "text" | "patch" | "json"
+    return_format: str = "workspace"  # "workspace" (default) → code_file im V2-Workspace
+                                      # "text" → nur als Chattext zurückgeben
+    target_doc_id: str = ""     # Ziel-doc_id im V2-Workspace für neue Dateien
 
 
 @dataclass
@@ -109,15 +112,21 @@ class CodingResult:
 # Scope-Validierung
 # =============================================================================
 
-def _validate_scope(scope_files: list[str]) -> tuple[bool, str]:
+def _validate_scope(scope_files: list[str], mode: str = "") -> tuple[bool, str]:
     """
     Prüft ob der Scope gültig ist.
-    - Mindestens eine Datei muss angegeben sein
+
+    Neue Datei (scaffold, leerer scope_files): erlaubt — target_doc_id wird als Ziel genutzt.
+    Bestehende Datei: scope_files muss mindestens eine Datei enthalten.
+
     - Maximal 10 Dateien pro Auftrag
     - Keine absoluten Pfade außerhalb des Workspace
     """
+    # scaffold darf mit leerem Scope starten — neue Datei anlegen
     if not scope_files:
-        return False, "Kein Scope angegeben — mindestens eine Datei erforderlich"
+        if mode == "scaffold":
+            return True, ""
+        return False, "Kein Scope angegeben — mindestens eine Datei erforderlich (oder mode=scaffold für neue Datei)"
     if len(scope_files) > 10:
         return False, f"Scope zu groß: {len(scope_files)} Dateien (max 10)"
     for f in scope_files:
@@ -215,8 +224,8 @@ def run(request: CodingRequest) -> CodingResult:
     Einziger Einstiegspunkt — wird nur von Kimi Core aufgerufen.
     Gibt immer CodingResult zurück — spricht nie direkt mit dem Nutzer.
     """
-    # Scope validieren
-    scope_ok, scope_err = _validate_scope(request.scope_files)
+    # Scope validieren (scaffold darf leeren Scope haben)
+    scope_ok, scope_err = _validate_scope(request.scope_files, mode=request.mode)
     if not scope_ok:
         logger.warning(f"CodingAgent: Scope-Fehler: {scope_err}")
         return CodingResult(ok=False, mode=request.mode, output="", error=scope_err)
@@ -270,17 +279,29 @@ def run(request: CodingRequest) -> CodingResult:
         logger.error(f"CodingAgent: Modell-Call fehlgeschlagen: {e}")
         return CodingResult(ok=False, mode=request.mode, output="", error=str(e))
 
-    # Write-Modi: Ergebnis in Workspace schreiben wenn doc_id angegeben
+    # Write-Modi: Ergebnis in V2-Workspace schreiben
+    # Standard (return_format="workspace"): immer schreiben für alle Write-Modi
+    # "text": nur als Chattext zurückgeben, kein Workspace-Write
     files_written = []
     if request.mode in WRITE_MODES and request.return_format != "text":
-        # Ergebnis als Code-Datei im Workspace speichern
-        # doc_id: erster scope_file ohne Pfad-Präfix als Basis
-        first_scope = request.scope_files[0] if request.scope_files else "coding_result"
-        base_name = os.path.basename(first_scope).replace(".py", "").replace(".md", "")
-        result_doc_id = f"code_{base_name}"
+        # Ziel-doc_id bestimmen:
+        # 1. Explizit als target_doc_id angegeben (neue Datei via scaffold)
+        # 2. Aus erstem Scope-File abgeleitet (bestehende Datei)
+        # 3. Fallback: coding_result
+        if request.target_doc_id:
+            result_doc_id = request.target_doc_id
+        elif request.scope_files:
+            first_scope = request.scope_files[0]
+            base_name = os.path.basename(first_scope).replace(".py", "").replace(".md", "")
+            result_doc_id = f"code_{base_name}"
+        else:
+            result_doc_id = "coding_result"
+
         if _write_result_to_workspace(request.owner_id, result_doc_id, output):
             files_written.append(result_doc_id)
             logger.info(f"CodingAgent: Ergebnis in Workspace geschrieben: {result_doc_id}")
+        else:
+            logger.warning(f"CodingAgent: Workspace-Write fehlgeschlagen für {result_doc_id}")
 
     logger.info(f"CodingAgent: fertig — {len(output)} Zeichen, "
                f"gelesen={files_read}, geschrieben={files_written}")
@@ -341,6 +362,7 @@ def extract_coding_request(reply: str, owner_id: str,
         active_line=(awc or {}).get("active_line", ""),
         active_goal=(awc or {}).get("active_goal", ""),
         context_note=payload.get("context", ""),
-        return_format=payload.get("return_format", "text"),
+        return_format=payload.get("return_format", "workspace"),
+        target_doc_id=payload.get("target_doc_id", ""),
     )
     return reply_cleaned, req
