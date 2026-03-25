@@ -201,6 +201,34 @@ def _extract_moltbook_actions(text: str, source: str) -> tuple[str, list[Action]
 
 
 # =============================================================================
+# WP6: Zugriffsmodell — welche Action-Typen welchen Modus haben
+# =============================================================================
+#
+# READ   — werden in core/tools.py verarbeitet (zweiter Kimi-Call mit Ergebnis)
+# WRITE  — werden hier verarbeitet, nur wenn write_allowed=True
+# ALWAYS — Proposals und Moltbook: immer erlaubt, keine Zustandsänderung am Nutzer-Daten-Kern
+#
+# Warum diese Trennung:
+#   Ein Modell-Marker allein ("Kimi hat TODO_ACTION geschrieben") ist kein ausreichender
+#   Grund für eine verändernde Aktion. Write darf nur laufen wenn:
+#     A. explizite Nutzeranweisung erkannt (write_allowed=True, gesetzt in kimi_core.py)
+#     B. klar bestätigte Kimi-Absicht nach Vorschlag
+#     C. zukünftiger bewusst gesetzter Modus
+#   Nicht ausreichend: "das Modell hat einen Write-Marker erzeugt"
+#
+_WRITE_ACTION_TYPES = {
+    "todo.create", "todo.complete", "todo.delete", "todo.update", "todo.block",
+    "calendar.create", "calendar.update", "calendar.delete",
+}
+
+# READ-Aktionen wurden bereits in core/tools.py verarbeitet — hier überspringen
+_READ_ACTION_TYPES = {
+    "calendar.list",
+    "todo.list",
+}
+
+
+# =============================================================================
 # Phase B — Ausführung
 # =============================================================================
 
@@ -209,13 +237,43 @@ def execute_actions(
     user_id: str,
     source: str,
     context: dict | None = None,
+    write_allowed: bool = False,
 ) -> list[ActionResult]:
     """
     Führt alle Actions aus. Jede Action geht durch einen dedizierten Executor.
     Gibt Liste von ActionResults zurück — jedes mit Verifikation.
+
+    WP6 Write-Gate:
+      write_allowed=False (default): WRITE-Aktionen (_WRITE_ACTION_TYPES) werden blockiert.
+        → Kein expliziter Schreibauftrag vom Nutzer erkannt.
+      write_allowed=True: WRITE-Aktionen werden ausgeführt.
+        → Gesetzt von Kimi Core wenn explizite Nutzeranweisung erkannt wurde.
+
+    Immer erlaubt (unabhängig von write_allowed): proposal.create, moltbook.*
+    Übersprungen (READ läuft in core/tools.py): calendar.list, todo.list
     """
     results = []
     for action in actions:
+        # READ-Aktionen bereits in core/tools.py verarbeitet — hier überspringen
+        if action.type in _READ_ACTION_TYPES:
+            logger.debug(f"execute_actions: {action.type} übersprungen (READ via tools.py)")
+            continue
+
+        # WRITE-Gate
+        if action.type in _WRITE_ACTION_TYPES and not write_allowed:
+            logger.info(
+                f"execute_actions: WRITE blockiert — {action.type} "
+                f"(source={source}, write_allowed=False). "
+                f"Kein expliziter Schreibauftrag vom Nutzer."
+            )
+            results.append(ActionResult(
+                ok=False,
+                type=action.type,
+                error="write_not_allowed",
+                message=None,
+            ))
+            continue
+
         result = _execute_single(action, user_id, context)
         results.append(result)
         if result.ok:
@@ -275,9 +333,27 @@ def _run_todo(action: Action, user_id: str, context: dict | None) -> ActionResul
             task_template=tmpl,
         )
         if todo:
-            # ORBIT-Task nur wenn execution_mode es explizit verlangt
+            # WP6 ORBIT-Guard: ORBIT-Aktivierung nur als ausdrücklicher Sonderfall.
+            # Normales Todo-Write darf ORBIT nicht automatisch lostrigen.
+            # Bedingungen:
+            #   1. execution_mode muss explizit orbit_internal oder orbit_chat sein
+            #   2. SAFE_MODE muss False sein (orbit.SAFE_MODE)
+            # Standardpfad: execution_mode="none" → kein ORBIT, normales Todo
             exec_mode_stored = todo.get("execution_mode", "none")
-            if exec_mode_stored in ("orbit_internal", "orbit_chat"):
+            _orbit_allowed = exec_mode_stored in ("orbit_internal", "orbit_chat")
+            if _orbit_allowed:
+                try:
+                    import orbit as _orbit_check
+                    if getattr(_orbit_check, "SAFE_MODE", True):
+                        _orbit_allowed = False
+                        logger.info(
+                            f"_run_todo: ORBIT blockiert — SAFE_MODE=True "
+                            f"(Todo #{todo['id']}, exec_mode={exec_mode_stored})"
+                        )
+                except Exception:
+                    _orbit_allowed = False
+
+            if _orbit_allowed:
                 try:
                     import orbit as _orbit
                     orbit_mode = "internal" if exec_mode_stored == "orbit_internal" else "chat"
@@ -294,7 +370,6 @@ def _run_todo(action: Action, user_id: str, context: dict | None) -> ActionResul
                     )
                     from core.todo_service import start_todo
                     start_todo(todo["id"], task_id)
-                    # Ersten Step je nach task_template
                     tmpl_stored = todo.get("task_template", "general")
                     if tmpl_stored == "analysis":
                         step_desc = '{"action": "list", "project": "kimi"}'
@@ -684,16 +759,19 @@ def process_kimi_output(
     raw_text: str,
     visibility: str = "public",
     context: dict | None = None,
+    write_allowed: bool = False,
 ) -> ProcessResult:
     """
     DIE einzige Funktion die Kimi-Ausgaben interpretiert.
 
     Args:
-        source:     "chat" | "idle_pulse" | "autonomous_reflection" | "inner_dialogue" | "diary" | ...
-        user_id:    User-ID
-        raw_text:   Kimis roher Antwort-Text
-        visibility: "public" → Antwort geht an Tommy | "internal" → nur Memory/ORBIT
-        context:    Optional: task_id, thread_id, display_name etc.
+        source:        "chat" | "idle_pulse" | "autonomous_reflection" | "inner_dialogue" | "diary" | ...
+        user_id:       User-ID
+        raw_text:      Kimis roher Antwort-Text
+        visibility:    "public" → Antwort geht an Tommy | "internal" → nur Memory/ORBIT
+        context:       Optional: task_id, thread_id, display_name etc.
+        write_allowed: WP6 Write-Gate. True nur wenn explizite Nutzeranweisung erkannt.
+                       Default False — Modell-Marker allein reichen nicht für WRITE.
 
     Returns:
         ProcessResult mit cleaned_text, actions, results, public_appendix, internal_events
@@ -704,8 +782,8 @@ def process_kimi_output(
     # Phase A: Extraktion
     cleaned_text, actions = extract_actions(raw_text, source)
 
-    # Phase B: Ausführung
-    results = execute_actions(actions, user_id, source, context)
+    # Phase B: Ausführung (mit WP6 Write-Gate)
+    results = execute_actions(actions, user_id, source, context, write_allowed=write_allowed)
 
     # Phase B.5: LLM-Extraction wenn kein expliziter Proposal-Block vorhanden
     # Kimi extrahiert strukturiert aus ihrem eigenen Text — robuster als Regex

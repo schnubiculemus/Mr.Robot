@@ -229,6 +229,24 @@ def process(request: KimiCoreRequest) -> KimiCoreResult:
 
     # --- Schritt 5: Output-Interpretation ---
     # Kimi Core verarbeitet Proposals, Todos (Write), Calendar (Write) etc. aus dem Reply
+    #
+    # WP6 Write-Gate: write_allowed nur wenn explizite Nutzeranweisung erkannt.
+    # Modell-Marker allein reichen nicht — Tommy muss es klar angefordert haben.
+    _write_triggers = [
+        # Todos
+        "leg an", "anlegen", "erstell", "trag ein", "eintragen", "notier",
+        "mach ein todo", "todo anlegen", "aufgabe anlegen", "aufgabe erstellen",
+        "hak ab", "abhaken", "als erledigt", "erledigt markieren",
+        "lösch das todo", "todo löschen",
+        # Kalender
+        "trag ein", "termin anlegen", "termin erstellen", "mach einen termin",
+        "lösch den termin", "termin löschen", "termin ändern", "termin verschieben",
+        "block", "blockiere",
+    ]
+    _text_lower = request.text.lower()
+    _write_allowed = any(t in _text_lower for t in _write_triggers)
+    if _write_allowed:
+        logger.info(f"KimiCore: write_allowed=True (explizite Nutzeranweisung erkannt)")
     try:
         from core.kimi_output import process_kimi_output
         proc = process_kimi_output(
@@ -237,6 +255,7 @@ def process(request: KimiCoreRequest) -> KimiCoreResult:
             raw_text=reply,
             visibility="public",
             context=request.meta,
+            write_allowed=_write_allowed,
         )
         reply = proc.to_reply()
     except Exception as e:
