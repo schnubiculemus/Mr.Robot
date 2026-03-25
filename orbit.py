@@ -1978,14 +1978,16 @@ def _e_send_summary(task: dict, reflection: str, user_id: str, style: str = "sum
         update_task(task_id, release_state="ready_for_release")
 
 
+# WP5: delete_candidate -- autonome Task-Anbahnung (ORBIT führt nicht mehr)
 def _maybe_autonomous_task(thread_id: str, topic: str, user_id: str) -> None:
     """
-    Baustein 3 -- Autonome Tool-Nutzung.
-    Wenn ORBIT einen Thread auf medium hochstuft und das Thema tool-relevant ist,
-    legt ORBIT selbst einen Task an -- ohne Tommy zu fragen.
-    Ergebnis wird proaktiv als Nachricht gesendet.
+    WP5: STILLGELEGT -- delete_candidate
+    Autonome Task-Anbahnung aus Kognitionsergebnissen.
+    ORBIT darf keine Tasks aus eigenem Antrieb lostreten -- Kimi Core führt.
     """
-    topic_lower = topic.lower()
+    logger.debug(f"WP5: _maybe_autonomous_task stillgelegt")
+    return  # WP5: stilllegen -- delete_candidate
+    topic_lower = topic.lower()  # toter Code
 
     # Kalender-relevante Themen
     if any(w in topic_lower for w in ["kalender", "termin", "meeting", "besprechung", "calendar"]):
@@ -2037,12 +2039,15 @@ def _maybe_autonomous_task(thread_id: str, topic: str, user_id: str) -> None:
     logger.debug(f"Baustein 3: kein Tool-Trigger fuer '{topic[:60]}'")
 
 
+# WP5: temporary_compat -- autonome Task-Anbahnung via Kognition (delete_candidate)
 def _handle_cognition_output(trigger: dict) -> None:
     """
-    cognition_output: Kognitions-Modul hat etwas Operatives geliefert.
-    ORBIT legt Thread an und prüft ob mehrere Outputs dasselbe Thema berühren.
-    Bei mehreren Outputs in 24 Stunden: Thread-Relevanz auf 'medium' hochstufen.
+    WP5: temporary_compat -- delete_candidate
+    Im Safe Mode: deaktiviert. ORBIT startet keine Tasks aus Kognitionsergebnissen.
     """
+    if SAFE_MODE:
+        logger.debug("WP5: _handle_cognition_output im Safe Mode deaktiviert")
+        return
     payload = _parse(trigger.get("payload"), {})
     source = payload.get("source", "unknown")
     topic = payload.get("topic_core", "")
@@ -2429,10 +2434,13 @@ def _handle_idle_pulse(trigger: dict) -> None:
         logger.warning(f"idle_pulse fehlgeschlagen: {e}")
 
 
+# WP5: temporary_compat -- Planner-Autostart aus ORBIT (delete_candidate)
+# Planner soll nur noch von Kimi Core explizit angestoßen werden, nicht von ORBIT
 def _maybe_run_planner(user_id: str) -> None:
     """
-    Startet den Planner wenn kein interner Task laeuft.
-    Aufgerufen aus idle_pulse und nach Task-Abschluss.
+    WP5: temporary_compat -- delete_candidate
+    Planner-Autostart aus ORBIT. Wird nur noch aus idle_pulse aufgerufen
+    (WP0: idle_pulse deaktiviert -> dieser Pfad läuft nicht mehr).
     """
     try:
         from core.database import get_connection
@@ -2458,19 +2466,24 @@ def _maybe_run_planner(user_id: str) -> None:
         logger.debug(f"_maybe_run_planner fehlgeschlagen (unkritisch): {e}")
 
 
+# WP5: TRIGGER_HANDLERS -- nur Executor-Handler aktiv
+# Kimi Core führt; ORBIT reagiert nur auf explizite Ausführungsergebnisse.
 TRIGGER_HANDLERS = {
-    "user_input":       _handle_user_input,
-    "heartbeat":        _handle_heartbeat,
-    "time_window":      _handle_time_window,
-    "tool_result":      _handle_tool_result,
-    "cognition_output": _handle_cognition_output,
-    "cognition_run":    _handle_cognition_run,
-    "mirror_signal":    _handle_mirror_signal,
-    "review_result":    _handle_review_result,
-    "manual_override":  _handle_manual_override,
-    "recovery_result":  _handle_recovery_result,
-    "wiedervorlage":    _handle_wiedervorlage,
-    "idle_pulse":       _handle_idle_pulse,
+    # WP5: behalten -- Kern-Executor-Handler
+    "tool_result":      _handle_tool_result,      # Ergebnis expliziter Tool-Ausführung
+    "recovery_result":  _handle_recovery_result,  # Technische Reparatur
+    "manual_override":  _handle_manual_override,  # Expliziter manueller Eingriff
+    "wiedervorlage":    _handle_wiedervorlage,    # Fällige Wiedervorlage
+
+    # WP5: temporary_compat -- delete_candidate (Führungslogik der alten Welt)
+    "user_input":       _handle_user_input,        # temporary_compat
+    "heartbeat":        _handle_heartbeat,          # temporary_compat
+    "time_window":      _handle_time_window,        # temporary_compat
+    "mirror_signal":    _handle_mirror_signal,      # temporary_compat
+    "review_result":    _handle_review_result,      # temporary_compat
+    "cognition_output": _handle_cognition_output,   # temporary_compat (WP5 Safe Mode gated)
+    "cognition_run":    _handle_cognition_run,      # delete_candidate (WP0 deaktiviert)
+    "idle_pulse":       _handle_idle_pulse,         # delete_candidate (WP0 deaktiviert)
 }
 
 
@@ -5589,7 +5602,9 @@ def tick() -> None:
         _t2 = _time_tick.monotonic()
         logger.debug(f"Tick: scheduler={_t1-_t0:.1f}s | triggers={_t2-_t1:.1f}s")
 
+        # WP5: temporary_compat -- check_proactive() (Safe Mode gibt early return)
         check_proactive()
+        # WP5: temporary_compat -- run_recovery() (technische Reparatur, kein Nutzpfad)
         run_recovery()
 
         # Maintenance alle ~30 Minuten
