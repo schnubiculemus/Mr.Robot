@@ -5,216 +5,196 @@
 <div class="page-header" style="display:flex;align-items:center;justify-content:space-between">
   <div>
     <h1>Workspace</h1>
-    <p style="color:var(--text-3);font-size:13px">Kimis Artefakt-Werkbank — linienbasiert, versioniert, auditiert</p>
+    <p style="color:var(--text-3);font-size:13px">V2-Werkbank — Notizen und Code-Dateien</p>
   </div>
   <div style="display:flex;gap:8px">
-    <button class="btn btn-primary" onclick="showTab('artifacts')" id="tab-artifacts">Artefakte</button>
-    <button class="btn btn-secondary" onclick="showTab('lines')" id="tab-lines">Linien</button>
-    <button class="btn btn-secondary" onclick="showTab('legacy')" id="tab-legacy">Legacy</button>
-    <button class="btn btn-secondary" onclick="showTab('system')" id="tab-system" style="opacity:0.6">System</button>
+    <button class="btn btn-primary" onclick="showTab('v2')" id="tab-v2">V2-Dokumente</button>
+    <button class="btn btn-secondary" onclick="showTab('legacy')" id="tab-legacy" style="opacity:0.55;font-size:12px">Legacy-Artefakte</button>
   </div>
 </div>
 
-<div id="ws-stats" style="display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap"></div>
+<!-- V2 Hauptsicht -->
+<div id="tab-content-v2">
+  <div id="v2-leading" style="margin-bottom:20px"></div>
 
-<div id="tab-content-artifacts">
-  <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">
-    <select id="filter-type" onchange="loadArtifacts()" style="padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text-1);font-size:13px">
+  <div style="font-size:12px;color:var(--text-3);margin-bottom:10px;text-transform:uppercase;letter-spacing:0.05em">Alle V2-Dokumente</div>
+  <div id="v2-docs-list"><div class="loading">Lade V2-Dokumente...</div></div>
+
+  <div id="v2-doc-modal" style="display:none;margin-top:20px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+      <div style="font-weight:600;font-size:14px" id="v2-modal-title"></div>
+      <button onclick="closeV2Modal()" style="background:none;border:none;cursor:pointer;font-size:16px;color:var(--text-3)">✕</button>
+    </div>
+    <div id="v2-modal-meta" style="font-size:11px;color:var(--text-3);margin-bottom:8px"></div>
+    <pre id="v2-modal-content" style="background:var(--bg);padding:14px;border-radius:var(--radius);font-size:12px;font-family:var(--font-mono);overflow-x:auto;white-space:pre-wrap;max-height:500px;overflow-y:auto;border:1px solid var(--border)"></pre>
+  </div>
+</div>
+
+<!-- Legacy-Sicht (einklappbar, sekundär) -->
+<div id="tab-content-legacy" style="display:none">
+  <div style="padding:12px 16px;background:#1c1917;border:1px solid #44403c;border-radius:var(--radius-lg);margin-bottom:16px;font-size:12px;color:#a8a29e;display:flex;align-items:center;gap:8px">
+    <span style="background:#44403c;color:#d6d3d1;font-size:10px;padding:2px 7px;border-radius:99px;font-weight:600">LEGACY</span>
+    Alter Artifact-Workspace — WP8: Altbestand / nicht mehr Hauptpfad. V2-Hauptpfad: Tab "V2-Dokumente".
+  </div>
+  <div id="legacy-stats" style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap"></div>
+  <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+    <select id="filter-type" onchange="loadLegacyArtifacts()" style="padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text-1);font-size:13px">
       <option value="">Alle Typen</option>
       <option value="brief">Brief</option><option value="analysis">Analysis</option>
-      <option value="plan">Plan</option><option value="implementation">Implementation</option>
-      <option value="result">Result</option><option value="report">Report</option>
+      <option value="plan">Plan</option><option value="result">Result</option><option value="report">Report</option>
     </select>
-    <select id="filter-status" onchange="loadArtifacts()" style="padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text-1);font-size:13px">
+    <select id="filter-status" onchange="loadLegacyArtifacts()" style="padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text-1);font-size:13px">
       <option value="">Alle Status</option>
       <option value="active">Active</option><option value="draft">Draft</option><option value="final">Final</option>
     </select>
   </div>
-  <div id="artifact-list"><div class="loading">Lade Artefakte...</div></div>
-</div>
+  <div id="legacy-list"><div class="loading">Lade Legacy-Artefakte...</div></div>
 
-<div id="tab-content-lines" style="display:none">
-  <div id="lines-list"><div class="loading">Lade Linien...</div></div>
-</div>
-
-<div id="tab-content-system" style="display:none">
-  <div style="padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:16px;font-size:13px;color:var(--text-3)">
-    System-Artefakte — Recovery, Diagnostics, interne Spuren. Nicht für normale Arbeit.
-  </div>
-  <div id="system-list"><div class="loading">Lade System-Artefakte...</div></div>
-</div>
-
-<div id="tab-content-legacy" style="display:none">
-  <div style="padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:16px;font-size:13px;color:var(--text-3)">
-    Legacy-Dateien (flacher Workspace). Neue Writes laufen ueber Artefakte.
-  </div>
-  <div id="legacy-list"></div>
-</div>
-
-<div id="modal-backdrop" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:100;align-items:center;justify-content:center">
-  <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:24px;width:800px;max-width:96vw;max-height:90vh;display:flex;flex-direction:column;gap:12px;box-shadow:var(--shadow-lg)">
-    <div style="display:flex;align-items:center;justify-content:space-between">
-      <div style="font-size:15px;font-weight:600" id="modal-title"></div>
-      <button onclick="closeModal()" style="background:none;border:none;cursor:pointer;font-size:18px;color:var(--text-3)">x</button>
-    </div>
-    <div id="modal-meta" style="font-size:12px;color:var(--text-3)"></div>
-    <textarea id="modal-content" style="flex:1;min-height:300px;padding:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text-1);font-size:13px;font-family:var(--font-mono);resize:vertical;line-height:1.5" readonly></textarea>
-    <div style="display:flex;gap:8px;justify-content:flex-end">
-      <select id="modal-status" style="padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text-1);font-size:13px">
-        <option value="draft">Draft</option><option value="active">Active</option>
-        <option value="final">Final</option><option value="archived">Archived</option>
-      </select>
-      <button class="btn btn-primary" onclick="saveStatus()">Status setzen</button>
+  <div id="legacy-modal-backdrop" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:100;align-items:center;justify-content:center">
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:24px;width:800px;max-width:96vw;max-height:90vh;display:flex;flex-direction:column;gap:12px;box-shadow:var(--shadow-lg)">
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <div style="font-size:15px;font-weight:600" id="legacy-modal-title"></div>
+        <button onclick="closeLegacyModal()" style="background:none;border:none;cursor:pointer;font-size:18px;color:var(--text-3)">✕</button>
+      </div>
+      <div id="legacy-modal-meta" style="font-size:12px;color:var(--text-3)"></div>
+      <textarea id="legacy-modal-content" style="flex:1;min-height:300px;padding:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);color:var(--text-1);font-size:13px;font-family:var(--font-mono);resize:vertical;line-height:1.5" readonly></textarea>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <span style="font-size:11px;color:#78716c;align-self:center">Legacy-Write deaktiviert (WP8)</span>
+      </div>
     </div>
   </div>
 </div>
 
 <script>
+// ── V2 ───────────────────────────────────────────────────────────────────────
+
+async function loadV2() {
+  // Führendes Dokument
+  try {
+    const lr = await fetch('/api/v2/workspace/leading');
+    const ld = await lr.json();
+    const leadingEl = document.getElementById('v2-leading');
+    if (ld.leading_doc) {
+      leadingEl.innerHTML =
+        '<div style="background:var(--surface);border:1px solid #10b981;border-radius:var(--radius-lg);padding:14px 18px;margin-bottom:4px">' +
+        '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">' +
+        '<span style="font-size:10px;background:#d1fae5;color:#065f46;padding:2px 8px;border-radius:99px;font-weight:600;text-transform:uppercase">Führendes Dokument</span>' +
+        '<span style="font-size:13px;font-weight:600">' + ld.leading_doc + '</span></div>' +
+        '<div style="font-size:12px;color:var(--text-3)">Aktives Arbeitsdokument</div></div>';
+    } else {
+      leadingEl.innerHTML = '<div style="font-size:12px;color:var(--text-3);padding:8px 0">Kein führendes Dokument aktiv.</div>';
+    }
+  } catch(e) {}
+
+  // Alle V2-Dokumente
+  try {
+    const dr = await fetch('/api/v2/workspace/documents');
+    const docs = await dr.json();
+    const el = document.getElementById('v2-docs-list');
+    if (!docs || !docs.length) {
+      el.innerHTML = '<div style="color:var(--text-3);font-size:13px;padding:16px">Keine V2-Dokumente vorhanden.</div>';
+      return;
+    }
+    el.innerHTML = docs.map(d => {
+      const ts = d.modified ? new Date(d.modified * 1000).toLocaleString('de',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
+      const sizeKb = d.size ? (d.size / 1024).toFixed(1) + ' KB' : '';
+      return '<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:12px 16px;margin-bottom:8px;cursor:pointer;transition:border-color 0.15s" ' +
+        'onmouseover="this.style.borderColor=\'#10b981\'" onmouseout="this.style.borderColor=\'var(--border)\'" ' +
+        'onclick="openV2Doc(\'' + d.doc_id + '\')">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between">' +
+        '<span style="font-size:13px;font-weight:500;font-family:var(--font-mono)">' + d.doc_id + '</span>' +
+        '<span style="font-size:11px;color:var(--text-3)">' + sizeKb + (ts ? ' &middot; ' + ts : '') + '</span></div></div>';
+    }).join('');
+  } catch(e) {
+    document.getElementById('v2-docs-list').innerHTML = '<div style="color:var(--text-3);font-size:13px">V2-Dokumente nicht verfügbar.</div>';
+  }
+}
+
+async function openV2Doc(docId) {
+  try {
+    const r = await fetch('/api/v2/workspace/documents/' + docId);
+    const d = await r.json();
+    document.getElementById('v2-modal-title').textContent = docId;
+    document.getElementById('v2-modal-meta').textContent = d.size ? d.size + ' Zeichen' : '';
+    document.getElementById('v2-modal-content').textContent = d.content || '(leer)';
+    document.getElementById('v2-doc-modal').style.display = 'block';
+    document.getElementById('v2-doc-modal').scrollIntoView({behavior:'smooth',block:'nearest'});
+  } catch(e) {}
+}
+
+function closeV2Modal() {
+  document.getElementById('v2-doc-modal').style.display = 'none';
+}
+
+// ── Legacy ────────────────────────────────────────────────────────────────────
+
 const TYPE_COLORS = {
   brief:'#dbeafe|#1e40af',analysis:'#ede9fe|#5b21b6',plan:'#fef3c7|#92400e',
-  implementation:'#d1fae5|#065f46',result:'#dcfce7|#166534',report:'#f3f4f6|#374151',
-  worklog:'#fce7f3|#9d174d',patch:'#ffedd5|#c2410c',test:'#e0f2fe|#0369a1',review:'#fef9c3|#854d0e'
+  result:'#dcfce7|#166534',report:'#f3f4f6|#374151',worklog:'#fce7f3|#9d174d'
 };
-const STATUS_COLORS = {
-  draft:'#f3f4f6|#6b7280',active:'#d1fae5|#065f46',final:'#dbeafe|#1e40af',
-  superseded:'#fef3c7|#92400e',archived:'#f9fafb|#9ca3af'
-};
-const QUALITY_COLORS = {
-  raw:'#fef3c7|#92400e', draft:'#f3f4f6|#6b7280', reviewable:'#dbeafe|#1e40af',
-  publishable:'#d1fae5|#065f46', rejected:'#fee2e2|#991b1b'
-};
-function qualityBadge(q) {
-  if (!q || q === 'draft') return '';
-  const [bg,c]=(QUALITY_COLORS[q]||'#f3f4f6|#6b7280').split('|');
-  return '<span style="font-size:10px;padding:2px 6px;border-radius:4px;font-weight:500;background:'+bg+';color:'+c+'">'+q+'</span>';
-}
-let currentArtifactId = null;
-
 function typeBadge(t) {
   const [bg,c]=(TYPE_COLORS[t]||'#f3f4f6|#6b7280').split('|');
   return '<span style="font-size:10px;font-weight:600;padding:2px 7px;border-radius:99px;text-transform:uppercase;background:'+bg+';color:'+c+'">'+t+'</span>';
 }
-function statusBadge(s) {
-  const [bg,c]=(STATUS_COLORS[s]||'#f3f4f6|#6b7280').split('|');
-  return '<span style="font-size:10px;padding:2px 6px;border-radius:4px;font-weight:500;background:'+bg+';color:'+c+'">'+s+'</span>';
+
+async function loadLegacyStats() {
+  try {
+    const r = await fetch('/api/workspace/stats');
+    const d = await r.json();
+    if (d._legacy_compat) { document.getElementById('legacy-stats').innerHTML = ''; return; }
+    document.getElementById('legacy-stats').innerHTML =
+      '<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:10px 14px;font-size:12px;color:var(--text-3)">' +
+      'Legacy-Artefakte gesamt: <strong>' + (d.total||0) + '</strong></div>';
+  } catch(e) {}
 }
 
-async function loadStats() {
-  const res = await fetch('/api/workspace/stats');
-  const d = await res.json();
-  const byType = Object.fromEntries((d.by_type||[]).map(x=>[x.artifact_type,x.n]));
-  const cards = [
-    ['Gesamt', d.total||0, ''],
-    ['Vollzug', d.materialized||0, 'color:#10b981'],
-  ].concat(Object.entries(byType).slice(0,3).map(([t,n])=>[t,n,'']));
-  document.getElementById('ws-stats').innerHTML = cards.map(([l,v,s])=>
-    '<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:12px 18px;min-width:100px"><div style="font-size:11px;color:var(--text-3);text-transform:uppercase">'+l+'</div><div style="font-size:22px;font-weight:600;'+s+'">'+v+'</div></div>'
-  ).join('');
-}
-
-async function loadArtifacts() {
+async function loadLegacyArtifacts() {
   const type = document.getElementById('filter-type').value;
   const status = document.getElementById('filter-status').value;
   let url = '/api/workspace/artifacts/recent?limit=30';
   if (type) url += '&type='+type;
   if (status) url += '&status='+status;
-  const res = await fetch(url);
-  const arts = await res.json();
-  const el = document.getElementById('artifact-list');
-  if (!arts.length) { el.innerHTML = '<div style="color:var(--text-3);font-size:13px;padding:16px">Keine Artefakte.</div>'; return; }
-  el.innerHTML = arts.map(a => {
-    const ts = new Date(a.created_at).toLocaleString('de',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
-    return '<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:14px 16px;margin-bottom:8px;cursor:pointer" onclick="openArtifact('+a.id+')">'+
-      '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;flex-wrap:wrap">'+typeBadge(a.artifact_type)+statusBadge(a.status)+qualityBadge(a.quality_state)+
-      (a.is_materialized_execution ? '<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:#d1fae5;color:#065f46;font-weight:500">Vollzug</span>' : '')+
-      '<span style="font-size:12px;color:var(--text-3)">#'+a.id+' v'+a.version+'</span></div>'+
-      '<div style="font-size:13px;font-weight:500">'+a.filename+'</div>'+
-      '<div style="font-size:12px;color:var(--text-3);margin-top:2px">'+a.line_id+' &middot; '+(a.purpose||'')+' &middot; '+ts+'</div></div>';
-  }).join('');
-}
-
-async function loadLines() {
-  const res = await fetch('/api/workspace/lines');
-  const lines = await res.json();
-  const el = document.getElementById('lines-list');
-  if (!lines.length) { el.innerHTML = '<div style="color:var(--text-3);font-size:13px;padding:16px">Keine Linien.</div>'; return; }
-  el.innerHTML = lines.map(l => {
-    const ts = l.last_workspace_write_at ? new Date(l.last_workspace_write_at).toLocaleString('de',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '-';
-    return '<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:14px 16px;margin-bottom:8px">'+
-      '<div style="display:flex;justify-content:space-between"><span style="font-size:13px;font-weight:500">'+l.line_id+'</span>'+
-      '<span style="font-size:12px;color:var(--text-3)">'+l.artifact_count+' Artefakte &middot; '+ts+'</span></div>'+
-      (l.latest_materialized_artifact_id ? '<div style="font-size:11px;color:#10b981;margin-top:3px">Vollzug materialisiert</div>' : '')+
-      '</div>';
-  }).join('');
-}
-
-async function loadLegacy() {
+  const el = document.getElementById('legacy-list');
   try {
-    const res = await fetch('/api/workspace/files');
-    const files = await res.json();
-    const el = document.getElementById('legacy-list');
-    el.innerHTML = files.map(f =>
-      '<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:10px 14px;margin-bottom:6px;display:flex;align-items:center;gap:10px">'+
-      '<span style="font-family:var(--font-mono);font-size:13px;flex:1">'+f.name+'</span>'+
-      '<span style="font-size:12px;color:var(--text-3)">'+f.lines+' Zeilen</span></div>'
-    ).join('') || '<div style="color:var(--text-3);font-size:13px">Keine Legacy-Dateien.</div>';
-  } catch(e) { document.getElementById('legacy-list').innerHTML = '<div style="color:var(--text-3);font-size:13px">Legacy nicht verfuegbar.</div>'; }
+    const r = await fetch(url);
+    const arts = await r.json();
+    if (!arts.length) { el.innerHTML = '<div style="color:var(--text-3);font-size:13px;padding:16px">Keine Legacy-Artefakte.</div>'; return; }
+    el.innerHTML = arts.map(a => {
+      const ts = new Date(a.created_at).toLocaleString('de',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+      return '<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:12px 16px;margin-bottom:6px;cursor:pointer;opacity:0.8" onclick="openLegacyArtifact('+a.id+')">' +
+        '<div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">'+typeBadge(a.artifact_type)+
+        '<span style="font-size:11px;color:var(--text-3)">#'+a.id+' v'+a.version+'</span></div>' +
+        '<div style="font-size:13px">'+a.filename+'</div>' +
+        '<div style="font-size:11px;color:var(--text-3);margin-top:2px">'+a.line_id+' &middot; '+ts+'</div></div>';
+    }).join('');
+  } catch(e) { el.innerHTML = '<div style="color:var(--text-3);font-size:13px">Legacy nicht verfügbar.</div>'; }
 }
 
-async function openArtifact(id) {
-  currentArtifactId = id;
-  const res = await fetch('/api/workspace/artifacts/'+id);
-  const d = await res.json();
+async function openLegacyArtifact(id) {
+  const r = await fetch('/api/workspace/artifacts/'+id);
+  const d = await r.json();
   const a = d.artifact;
-  document.getElementById('modal-title').textContent = a.filename;
-  document.getElementById('modal-meta').innerHTML = typeBadge(a.artifact_type)+' '+statusBadge(a.status)+'&nbsp; Linie: '+a.line_id+'&nbsp; v'+a.version+'&nbsp; '+(a.created_at||'').substring(0,16);
-  document.getElementById('modal-content').value = d.content || '(leer)';
-  document.getElementById('modal-status').value = a.status;
-  document.getElementById('modal-backdrop').style.display = 'flex';
+  document.getElementById('legacy-modal-title').textContent = a.filename;
+  document.getElementById('legacy-modal-meta').innerHTML = typeBadge(a.artifact_type)+' Linie: '+a.line_id+' v'+a.version;
+  document.getElementById('legacy-modal-content').value = d.content || '(leer)';
+  document.getElementById('legacy-modal-backdrop').style.display = 'flex';
 }
 
-async function saveStatus() {
-  const status = document.getElementById('modal-status').value;
-  await fetch('/api/workspace/artifacts/'+currentArtifactId+'/status', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({status})
-  });
-  closeModal(); loadArtifacts(); loadStats();
-}
+function closeLegacyModal() { document.getElementById('legacy-modal-backdrop').style.display='none'; }
+document.getElementById('legacy-modal-backdrop').addEventListener('click',e=>{if(e.target===e.currentTarget)closeLegacyModal();});
 
-function closeModal() { document.getElementById('modal-backdrop').style.display='none'; }
-document.getElementById('modal-backdrop').addEventListener('click',e=>{if(e.target===e.currentTarget)closeModal();});
+// ── Tabs ──────────────────────────────────────────────────────────────────────
 
 function showTab(tab) {
-  ['artifacts','lines','legacy','system'].forEach(t=>{
-    document.getElementById('tab-content-'+t).style.display=t===tab?'':'none';
-    document.getElementById('tab-'+t).className='btn '+(t===tab?'btn-primary':'btn-secondary');
+  ['v2','legacy'].forEach(t => {
+    document.getElementById('tab-content-'+t).style.display = t===tab ? '' : 'none';
+    const btn = document.getElementById('tab-'+t);
+    btn.className = 'btn ' + (t===tab ? 'btn-primary' : 'btn-secondary');
   });
-  if(tab==='lines') loadLines();
-  if(tab==='legacy') loadLegacy();
-  if(tab==='system') loadSystem();
+  if (tab==='legacy') { loadLegacyStats(); loadLegacyArtifacts(); }
 }
 
-async function loadSystem() {
-  const res = await fetch('/api/workspace/artifacts/recent?limit=30&show_system=1');
-  const all = await res.json();
-  const arts = all.filter(a => a.visibility_class && a.visibility_class !== 'workspace');
-  const el = document.getElementById('system-list');
-  if (!arts.length) { el.innerHTML = '<div style="color:var(--text-3);font-size:13px;padding:16px">Keine System-Artefakte.</div>'; return; }
-  el.innerHTML = arts.map(a => {
-    const ts = new Date(a.created_at).toLocaleString('de',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
-    return '<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:14px 16px;margin-bottom:8px;opacity:0.7">'+
-      '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">'+typeBadge(a.artifact_type)+
-      '<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:#fee2e2;color:#991b1b">'+( a.visibility_class||'system')+'</span>'+
-      qualityBadge(a.quality_state)+
-      '<span style="font-size:12px;color:var(--text-3)">#'+a.id+'</span></div>'+
-      '<div style="font-size:13px">'+a.filename+'</div>'+
-      '<div style="font-size:12px;color:var(--text-3);margin-top:2px">'+a.line_id+' · '+ts+'</div>'+
-      (a.quality_notes ? '<div style="font-size:11px;color:#9ca3af;margin-top:3px">'+a.quality_notes+'</div>' : '')+
-      '</div>';
-  }).join('');
-}
-
-loadStats(); loadArtifacts();
+// Start: V2 laden
+loadV2();
 </script>
 {% endblock %}
