@@ -1,30 +1,30 @@
 """
-SchnuBot.ai -- ORBIT
-Autonome operative Exekutive (Build Step 1: Datenmodell & Persistenz)
+SchnuBot.ai -- ORBIT V2
 
-Architektur-Referenz: ORBIT Gesamtkonzept v1.0
+WP5: ORBIT ist technischer Executor, nicht Führungsinstanz.
 
-Ebenen:
-    KOGNITION -> MEMORY -> ORBIT -> TOOLS -> COMMUNICATION
+Rolle in V2:
+    Kimi Core führt.
+    ORBIT dient als technischer Executor für explizite Ausführungsschritte.
 
-ORBIT ist die Schicht die aus Denken, Kontext und Regeln
-konkrete operative Entscheidungen macht.
+Was ORBIT noch darf:
+    - explizite Ausführungseinheiten (Tasks/Steps) abarbeiten
+    - technische Restläufe (Recovery, Maintenance)
+    - Kompatibilitätsschicht für Altpfade (temporary_compat)
+    - Status und Fehler zurückmelden an Kimi Core
 
-Service: schnubot-orbit.service
-Tick: ORBIT_TICK_SECONDS (Standard: 20s)
+Was ORBIT nicht mehr darf:
+    - autonome Arbeitslogik lostreten
+    - Priorisierung von Linien/Tasks entscheiden
+    - Dokumente/Artefakte aus eigenem Antrieb erzeugen
+    - Trigger als Primärsteuerung
+    - Führungsrolle neben oder über Kimi Core
 
-Build-Reihenfolge:
-    1. ✓ Datenmodell & Persistenz
-    2. ✓ Trigger- & Decision-Envelope-Modell
-    3. ✓ Threads, Tasks, Steps
-    4. ✓ Quality Gate & Innere Konsultation
-    5. ✓ Policies
-    6. ✓ Routinen
-    7. ✓ Tool-Klassifikation
-    8. ✓ Proaktivitaet
-    9.   Dashboard /orbit
-   10. ✓ Recovery / Integritaet / Konfliktaufloesung
-   P2. ✓ Introspektions-Tool Phase 2
+Architekturebenen V2:
+    Kimi Core --> Memory --> Workspace --> Tools
+                        --> ORBIT (Executor, wenn delegiert)
+
+Altbezeichnung "Autonome operative Exekutive" ist aufgehoben (WP5).
 """
 
 import os
@@ -239,6 +239,7 @@ def mark_trigger_processed(trigger_id: str, linked_object_id: str = None) -> Non
 # Threads (orbit_threads)
 # =============================================================================
 
+# WP5: temporary_compat -- Linien-Container der alten Autonomie (delete_candidate nach ORBIT-Rückbau)
 def create_thread(topic_core: str, primary_origin: str, relevance: str = "weak",
                   reason: str = None) -> str:
     """Legt einen neuen Orbit-Thread an."""
@@ -259,6 +260,7 @@ def create_thread(topic_core: str, primary_origin: str, relevance: str = "weak",
     return tid
 
 
+# WP5: temporary_compat -- Thread-Lesen (delete_candidate nach ORBIT-Rückbau)
 def get_thread(thread_id: str) -> dict | None:
     """Holt einen Thread by ID."""
     conn = get_connection()
@@ -271,6 +273,7 @@ def get_thread(thread_id: str) -> dict | None:
         conn.close()
 
 
+# WP5: temporary_compat -- Thread-Lesen (delete_candidate nach ORBIT-Rückbau)
 def get_threads(status: str = None, relevance: str = None, limit: int = 50) -> list:
     """Holt Threads, optional gefiltert."""
     conn = get_connection()
@@ -294,6 +297,7 @@ def get_threads(status: str = None, relevance: str = None, limit: int = 50) -> l
         conn.close()
 
 
+# WP5: temporary_compat -- Thread-Update (delete_candidate nach ORBIT-Rückbau)
 def update_thread(thread_id: str, **kwargs) -> None:
     """Aktualisiert Felder eines Threads."""
     if not kwargs:
@@ -954,6 +958,7 @@ def no_action(reason: str, context: str = "", trigger_refs: list = None) -> str:
 # =============================================================================
 
 
+# WP5: delete_candidate -- 7.4: Brief-Auto-Trigger
 def _auto_trigger_brief(task_id: str, owner_id: str, line_id: str, goal: str) -> None:
     """7.4: Erzeugt automatisch ein brief-Artefakt beim Linienstart.
     WP0: ENABLE_AUTO_ARTIFACTS=False -> deaktiviert (delete_candidate)"""
@@ -995,6 +1000,7 @@ def _auto_trigger_brief(task_id: str, owner_id: str, line_id: str, goal: str) ->
         logger.debug(f"_auto_trigger_brief fehlgeschlagen (unkritisch): {e}")
 
 
+# WP5: delete_candidate -- 7.4: Result-Auto-Trigger
 def _auto_trigger_result(task_id: str, owner_id: str, line_id: str,
                           goal: str, summary: str = "") -> None:
     """7.4: Materialisiert automatisch ein result-Artefakt bei Task-Abschluss.
@@ -1090,6 +1096,7 @@ def _auto_trigger_worklog_stagnation(task_id: str, owner_id: str, line_id: str,
         logger.debug(f"_auto_trigger_worklog_stagnation fehlgeschlagen: {e}")
 
 
+# WP5: delete_candidate -- 7.4: Plan-Auto-Trigger
 def _auto_trigger_plan(task_id: str, owner_id: str, line_id: str,
                         goal: str = "", analysis_content: str = "") -> None:
     """
@@ -1133,6 +1140,7 @@ def _auto_trigger_plan(task_id: str, owner_id: str, line_id: str,
         logger.debug(f"_auto_trigger_plan fehlgeschlagen: {e}")
 
 
+# WP5: delete_candidate -- 7.4: Report-Auto-Trigger
 def _auto_trigger_report(task_id: str, owner_id: str, line_id: str,
                           goal: str = "", result_content: str = "") -> None:
     """
@@ -1176,6 +1184,7 @@ def _auto_trigger_report(task_id: str, owner_id: str, line_id: str,
         logger.debug(f"_auto_trigger_report fehlgeschlagen: {e}")
 
 
+# WP5: delete_candidate -- 7.4: Analysis-Auto-Trigger
 def _auto_trigger_analysis(task_id: str, owner_id: str, line_id: str,
                              observations: str = "") -> None:
     """
@@ -1214,6 +1223,7 @@ def _auto_trigger_analysis(task_id: str, owner_id: str, line_id: str,
         logger.debug(f"_auto_trigger_analysis fehlgeschlagen (unkritisch): {e}")
 
 
+# WP5: delete_candidate -- Analyse-Trigger-Entscheid
 def _should_trigger_analysis(task_id: str) -> tuple[bool, str]:
     """
     Prueft ob ein Zwischenstand-Trigger sinnvoll ist:
@@ -1246,6 +1256,7 @@ def _should_trigger_analysis(task_id: str) -> tuple[bool, str]:
         return False, ""
 
 
+# WP5: delete_candidate -- autonome Step-Erzeugung
 def _auto_create_steps(task_id: str, goal: str, user_id: str) -> None:
     """
     Baustein 2 -- Kimi leitet aus einem Goal automatisch Steps ab.
@@ -3655,6 +3666,7 @@ def _policy_score(policy: dict) -> float:
     return round(max(0.0, min(1.0, score)), 3)
 
 
+# WP5: temporary_compat -- Policy/Routine war ORBIT-Führungslogik (delete_candidate)
 def activate_policy(policy_id: str, reason: str, trigger_refs: list = None) -> bool:
     policy = get_connection().execute(
         "SELECT * FROM orbit_policies WHERE id = ?", (policy_id,)
@@ -3688,6 +3700,7 @@ def activate_policy(policy_id: str, reason: str, trigger_refs: list = None) -> b
     return True
 
 
+# WP5: temporary_compat -- Policy/Routine war ORBIT-Führungslogik (delete_candidate)
 def suppress_policy(policy_id: str, reason: str) -> bool:
     update_policy(policy_id, status="suppressed", reason=reason)
     audit("orbit", "policy_suppressed", "policy", policy_id, reason)
@@ -3764,6 +3777,7 @@ def mark_policy_stale(policy_id: str) -> None:
     audit("orbit", "policy_stale", "policy", policy_id, "stale")
 
 
+# WP5: temporary_compat -- Policy/Routine war ORBIT-Führungslogik (delete_candidate)
 def run_policy_review(user_id: str = None) -> dict:
     from core.datetime_utils import now_utc, safe_parse_dt
     from datetime import timedelta
@@ -3807,6 +3821,7 @@ def run_policy_review(user_id: str = None) -> dict:
     return summary
 
 
+# WP5: temporary_compat -- Policy/Routine war ORBIT-Führungslogik (delete_candidate)
 def bootstrap_policies(user_id: str) -> int:
     try:
         from memory.memory_store import get_active_collection
@@ -3877,6 +3892,7 @@ def _validate_bindings(bindings: dict) -> dict:
     return {k: bindings[k] for k in keys}
 
 
+# WP5: temporary_compat -- Policy/Routine war ORBIT-Führungslogik (delete_candidate)
 def activate_routine(routine_id: str, reason: str, trigger_refs: list = None) -> bool:
     conn = get_connection()
     try:
@@ -3949,6 +3965,7 @@ def get_routines_for_trigger(trigger_type: str) -> list:
         conn.close()
 
 
+# WP5: temporary_compat -- Policy/Routine war ORBIT-Führungslogik (delete_candidate)
 def execute_routine(routine_id: str, context: dict = None, trigger_refs: list = None) -> dict:
     conn = get_connection()
     try:
@@ -4070,6 +4087,7 @@ def mark_routine_stale(routine_id: str) -> None:
     audit("orbit", "routine_stale", "routine", routine_id, "stale")
 
 
+# WP5: temporary_compat -- Policy/Routine war ORBIT-Führungslogik (delete_candidate)
 def run_routine_review() -> dict:
     from core.datetime_utils import now_utc
     from datetime import timedelta
@@ -5535,6 +5553,7 @@ def _run_maintenance() -> None:
     except Exception as e:
         logger.warning(f"Maintenance fehlgeschlagen: {e}")
 
+# WP5: technischer Infrastrukturpuls -- keine führende Arbeitslogik mehr
 def tick() -> None:
     if not ORBIT_ENABLED:
         logger.debug("ORBIT Not-Aus aktiv -- kein Tick")
