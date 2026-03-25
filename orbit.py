@@ -1063,8 +1063,12 @@ def _auto_trigger_worklog_stagnation(task_id: str, owner_id: str, line_id: str,
                                       note: str = "") -> None:
     """
     7.4: Stagnations-Trigger -- wenn Task laengere Zeit ohne Fortschritt laueft.
-    Schreibt einen Worklog-Eintrag als Protokoll.
+    WP4: temporary_compat -- delete_candidate (Legacy-Worklog-Write)
+    Im Safe Mode / ENABLE_AUTO_ARTIFACTS=False blockiert.
     """
+    if SAFE_MODE or not ENABLE_AUTO_ARTIFACTS:
+        logger.debug(f"WP4: _auto_trigger_worklog_stagnation im Safe Mode blockiert fuer Task {task_id[:8]}")
+        return
     try:
         from core.gate_service import execute_write
         entry = f"Stagnation erkannt -- Task {task_id[:8]} ohne neuen Fortschritt."

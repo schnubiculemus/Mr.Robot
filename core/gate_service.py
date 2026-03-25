@@ -986,6 +986,14 @@ def preflight_artifact(action: str, params: dict) -> tuple[bool, str]:
             return False, f"Artifact #{artifact_id} nicht gefunden"
 
     elif action == "worklog_append":
+        # WP4: temporary_compat -- delete_candidate (Legacy-Worklog)
+        # Im Safe Mode blockiert -- kein Legacy-Write im normalen V2-Betrieb
+        try:
+            from orbit import SAFE_MODE as _SM_GWL
+        except Exception:
+            _SM_GWL = False
+        if _SM_GWL:
+            return False, "WP4 Safe Mode: worklog_append ist Legacy -- im V2-Betrieb nicht erlaubt"
         if not params.get("content", "").strip():
             return False, "Worklog-Inhalt darf nicht leer sein"
         if not params.get("line_id", ""):

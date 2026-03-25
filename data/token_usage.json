@@ -96,9 +96,15 @@
     "calls": 269
   },
   "2026-03-24": {
-    "prompt": 2289285,
-    "completion": 395792,
-    "total": 2685077,
-    "calls": 257
+    "prompt": 2407368,
+    "completion": 402095,
+    "total": 2809463,
+    "calls": 264
+  },
+  "2026-03-25": {
+    "prompt": 349317,
+    "completion": 14937,
+    "total": 364254,
+    "calls": 21
   }
 }
