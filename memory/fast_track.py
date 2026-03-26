@@ -277,3 +277,42 @@ def _extract_core_phrase(message, trigger):
         return sentences[0][:200].strip()
 
     return message[:200].strip()
+
+
+# =============================================================================
+# WP9: Fast-Track-Chunks für Kognitions-Schleife
+# =============================================================================
+
+def get_fast_track_chunks(user_id: str = None, limit: int = 10) -> list:
+    """
+    Gibt die zuletzt gespeicherten Fast-Track-Chunks zurück.
+    Fast-Track-Chunks haben den Tag "fast-track" und sind hochrelevante
+    kurzfristige Entscheidungen, Präferenzen und Hard Facts.
+
+    Genutzt von:
+    - memory/retrieval.py (ollama_client Build-System-Prompt)
+    - cognition_service.py (WP9 Inputquelle)
+
+    Args:
+        user_id: optional, wird aktuell nicht gefiltert (single-user System)
+        limit:   maximale Anzahl Chunks
+
+    Returns:
+        Liste von Chunk-Dicts, neueste zuerst
+    """
+    try:
+        from memory.memory_store import query_active
+        chunks = query_active(
+            "fast track entscheidung präferenz regel ab jetzt",
+            n_results=limit,
+            where_filter={"chunk_type": {"$in": ["decision", "preference", "hard_fact"]}},
+        )
+        # Auf fast-track-getaggte Chunks filtern
+        ft_chunks = [
+            c for c in chunks
+            if "fast-track" in (c.get("tags") or [])
+        ]
+        return ft_chunks[:limit]
+    except Exception as e:
+        logger.debug(f"get_fast_track_chunks fehlgeschlagen: {e}")
+        return []

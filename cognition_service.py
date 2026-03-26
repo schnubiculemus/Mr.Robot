@@ -157,13 +157,20 @@ def poll_cognition_queue(user_id: str) -> list[dict]:
         return []
 
 
-def mark_request_done(request_id: int) -> None:
+def mark_request_done(request_id: int, status: str = "done") -> None:
+    """
+    Markiert einen Request als abgeschlossen.
+    status: "done" (Erfolg) | "failed" (Reflexion fehlgeschlagen) | "discarded" (verworfen)
+    """
+    valid_statuses = {"done", "failed", "discarded"}
+    if status not in valid_statuses:
+        status = "failed"
     try:
         conn = _get_conn()
         try:
             conn.execute(
-                "UPDATE cognition_requests SET status='done', done_at=? WHERE id=?",
-                (_now_iso(), request_id)
+                "UPDATE cognition_requests SET status=?, done_at=? WHERE id=?",
+                (status, _now_iso(), request_id)
             )
             conn.commit()
         finally:
@@ -736,13 +743,15 @@ def main():
                 discard_stale_requests()
                 pending = poll_cognition_queue(user_id)
                 for req in pending:
+                    _req_success = False
                     try:
                         ctx = req.get("source_context", "")
-                        run_reflection(user_id, "post_interaction", source_context=ctx)
+                        n = run_reflection(user_id, "post_interaction", source_context=ctx)
+                        _req_success = (n >= 0)  # auch 0 Denkformen = kein Fehler
                     except Exception as e:
                         logger.error(f"Post-Interaction Reflexion fehlgeschlagen: {e}")
                     finally:
-                        mark_request_done(req["id"])
+                        mark_request_done(req["id"], status="done" if _req_success else "failed")
                 last_queue_check = now
 
             # ── Takt-Fenster: alle MAIN_LOOP_SLEEP_SECONDS ──────────────────
