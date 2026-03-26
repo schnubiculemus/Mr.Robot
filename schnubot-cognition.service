@@ -1,0 +1,20 @@
+[Unit]
+Description=SchnuBot Cognitive Service (WP9) — Kimis innere kognitive Schleife
+Documentation=file:///opt/whatsapp-bot/WP9_COGNITIVE_LOOP.md
+After=network.target schnubot.service
+Wants=schnubot.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/whatsapp-bot
+ExecStart=/opt/whatsapp-bot/venv/bin/python3 /opt/whatsapp-bot/cognition_service.py
+Restart=always
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/opt/whatsapp-bot
+
+[Install]
+WantedBy=multi-user.target
