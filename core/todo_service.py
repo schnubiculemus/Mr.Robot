@@ -104,10 +104,8 @@ def complete_todo(todo_id: int, summary: str = None, task_id: str = None) -> boo
             )
             conn.commit()
 
-            # Proposal auf implemented wenn verknüpft
-            if todo.get("proposal_id"):
-                from core.proposal_service import mark_implemented
-                mark_implemented(todo["proposal_id"], task_id=task_id)
+            # WP10: keine automatische Proposal-Kopplung bei Todo-Abschluss
+            # (legacy mark_implemented entfernt — WP10 kennt kein "implemented")
 
             # Goal-Fortschritt
             if todo.get("goal_id"):

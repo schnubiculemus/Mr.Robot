@@ -741,117 +741,59 @@ def verify_calendar(action: str, params: dict) -> tuple[bool, str]:
 # =============================================================================
 
 def preflight_proposal(action: str, params: dict, owner_id: str) -> tuple[bool, str]:
-    """Preflight fuer Proposal-Statusaenderungen."""
-    from core.database import get_connection
+    """WP10: Preflight fuer Proposal-Statusaenderungen — liest wp10_proposals."""
+    from core.proposal_service_wp10 import get_proposal
     proposal_id = params.get("id") or params.get("proposal_id")
-
     if not proposal_id:
         return False, "Keine Proposal-ID angegeben"
-
-    conn = get_connection()
-    try:
-        row = conn.execute(
-            "SELECT * FROM kimi_proposals WHERE id=?", (int(proposal_id),)
-        ).fetchone()
-        if not row:
-            return False, f"Proposal #{proposal_id} nicht gefunden"
-        proposal = dict(row)
-
-        # Zulässige Statusübergänge
-        valid_transitions = {
-            "approve": {"pending", "deferred"},
-            "reject":  {"pending", "deferred"},
-            "defer":   {"pending"},
-        }
-        current = proposal.get("status", "pending")
-        if action not in valid_transitions:
-            return False, f"Unbekannte Proposal-Aktion: {action}"
-        if current not in valid_transitions[action]:
-            return False, f"Proposal ist bereits '{current}' -- {action} nicht erlaubt"
-
-    finally:
-        conn.close()
-
+    proposal = get_proposal(int(proposal_id))
+    if not proposal:
+        return False, f"WP10 Proposal #{proposal_id} nicht gefunden"
+    current = proposal.get("status", "open")
+    if current != "open":
+        return False, f"Proposal ist bereits '{current}' — Aktion nicht erlaubt"
     return True, "ok"
 
 
 def execute_proposal_action(action: str, params: dict) -> dict:
-    """
-    5.6.2: Fuehrt eine Proposal-Statusaenderung aus -- ueber proposal_service.
-    Strukturierte Rueckgabe mit ok, state, id.
-    """
+    """WP10: Proposal-Statusaenderung — kein auto-Todo, kein auto-Task."""
     proposal_id = int(params.get("id") or params.get("proposal_id", 0))
     if not proposal_id:
         return {"success": False, "error": "Keine Proposal-ID", "id": None}
 
-    status_map = {"approve": "approved", "reject": "rejected", "defer": "deferred"}
+    status_map = {"approve": "accepted", "accept": "accepted",
+                  "reject": "rejected", "defer": "withdrawn"}
     new_status = status_map.get(action)
     if not new_status:
         return {"success": False, "error": f"Unbekannte Aktion: {action}", "id": proposal_id}
 
     try:
-        # Service-Layer bevorzugen
-        if action == "approve":
-            from core.proposal_service import approve_proposal
-            from config import OWNER_ID
-            result = approve_proposal(proposal_id, OWNER_ID)
-            ok = result is not None
-        elif action == "reject":
-            from core.proposal_service import reject_proposal
-            ok = reject_proposal(proposal_id)
-        elif action == "defer":
-            from core.proposal_service import defer_proposal
-            ok = defer_proposal(proposal_id)
-        else:
-            ok = False
-
+        from core.proposal_service_wp10 import update_proposal_status
+        ok = update_proposal_status(proposal_id, new_status)
         return {"success": ok,
-                "result": f"Proposal #{proposal_id} -> {new_status}" if ok else "Service-Fehler",
+                "result": f"WP10 Proposal #{proposal_id} -> {new_status}" if ok else "Fehler",
                 "id": proposal_id, "new_status": new_status if ok else None}
-    except ImportError:
-        # Fallback: direkter DB-Write wenn proposal_service nicht verfuegbar
-        logger.warning("proposal_service nicht gefunden -- Fallback auf direkten DB-Write")
-        try:
-            from core.database import get_connection
-            import datetime
-            now = datetime.datetime.now(datetime.timezone.utc).isoformat()
-            conn = get_connection()
-            conn.execute("UPDATE kimi_proposals SET status=?, updated_at=? WHERE id=?",
-                         (new_status, now, proposal_id))
-            conn.commit()
-            conn.close()
-            return {"success": True, "result": f"Proposal #{proposal_id} -> {new_status}",
-                    "id": proposal_id, "new_status": new_status}
-        except Exception as e2:
-            return {"success": False, "error": str(e2)[:200], "id": proposal_id}
     except Exception as e:
         return {"success": False, "error": str(e)[:200], "id": proposal_id}
 
 
 def verify_proposal(action: str, params: dict, write_result: dict) -> tuple[bool, str]:
-    """Verifiziert Proposal-Statusaenderung."""
-    from core.database import get_connection
+    """WP10: Verifiziert Proposal-Statusaenderung in wp10_proposals."""
+    from core.proposal_service_wp10 import get_proposal
     proposal_id = params.get("id") or params.get("proposal_id") or (write_result or {}).get("id")
     if not proposal_id:
         return True, "ok (kein Verify ohne ID)"
-
-    expected = {"approve": "approved", "reject": "rejected", "defer": "deferred"}.get(action)
+    expected = {"approve": "accepted", "accept": "accepted",
+                "reject": "rejected", "defer": "withdrawn"}.get(action)
     if not expected:
         return True, "ok"
-
-    conn = get_connection()
-    try:
-        row = conn.execute(
-            "SELECT status FROM kimi_proposals WHERE id=?", (int(proposal_id),)
-        ).fetchone()
-        if not row:
-            return False, f"Proposal #{proposal_id} nach Write nicht gefunden"
-        actual = row["status"]
-        if actual != expected:
-            return False, f"Status nicht geaendert: erwartet {expected}, ist {actual}"
-        return True, f"Proposal #{proposal_id} verifiziert: status={actual}"
-    finally:
-        conn.close()
+    proposal = get_proposal(int(proposal_id))
+    if not proposal:
+        return False, f"WP10 Proposal #{proposal_id} nach Write nicht gefunden"
+    actual = proposal.get("status")
+    if actual != expected:
+        return False, f"Status nicht geaendert: erwartet {expected}, ist {actual}"
+    return True, f"WP10 Proposal #{proposal_id} verifiziert: status={actual}"
 
 
 # =============================================================================

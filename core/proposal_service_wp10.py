@@ -135,6 +135,11 @@ def create_proposal(
         logger.warning(f"create_proposal: unbekannter Typ '{proposal_type}' → 'other'")
         proposal_type = "other"
 
+    try:
+        init_wp10_proposals_table()
+    except Exception:
+        pass
+
     now = to_iso()
     try:
         conn = get_connection()

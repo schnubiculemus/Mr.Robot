@@ -237,14 +237,14 @@ ZIEL: [max. 100 Zeichen, was ich konkret tun will]
 Nur setzen wenn es ein echtes Vorhaben ist, kein Konjunktiv.
 
 Optional: Wenn mir ein Werkzeug, eine Fähigkeit oder Verbesserung einfällt die mir fehlt — reiche ich einen Proposal ein:
-[PROPOSAL: {"title": "...", "description": "...", "effort": "klein|mittel|groß", "reason": "..."}]
+[WP10_PROPOSAL: {"type": "behavior_adjustment|workflow_improvement|other", "title": "...", "summary": "...", "reason": "..."}]
 Nur wenn ich eine wirklich konkrete Idee habe.
 
 Format meiner Antwort:
 KLASSIFIKATION: [TAG]
 GEDANKE: [mein Nachdenken, 2-4 Sätze, Ich-Form, kein Chat-Stil]
 ZIEL: [optional — nur wenn konkretes Vorhaben]
-[PROPOSAL: ...] [optional — nur wenn konkrete Idee für ein fehlendes Werkzeug]"""
+[WP10_PROPOSAL: ...] [optional — nur wenn konkrete Idee für Verbesserung]"""
 
 CONTRADICTION_PROMPT = """\
 Ich bin im internen Nachdenksmodus. Ich prüfe ob ich mir selbst widerspreche.
