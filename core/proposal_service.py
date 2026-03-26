@@ -1,8 +1,17 @@
 """
-core/proposal_service.py — Proposals Service
+core/proposal_service.py — LEGACY_COMPAT (WP10)
 
-Einzige Stelle die Proposals schreibt und Status-Übergänge durchführt.
-Alle Übergänge laufen in Transaktionen.
+Status: legacy_compat — durch core/proposal_service_wp10.py ersetzt.
+Diese Datei ist delete_candidate.
+
+Probleme mit diesem alten System:
+  - approve_proposal() erzeugt automatisch Todos (widerspricht WP10)
+  - Status-Modell (pending/approved/deferred) ist nicht WP10-konform
+  - kimi_proposals Tabelle bleibt als Altbestand erhalten
+
+V2-Hauptpfad: core/proposal_service_wp10.py + wp10_proposals
+Dashboard: /proposals zeigt jetzt WP10-Proposals
+Kimi-Marker: [WP10_PROPOSAL:] statt [PROPOSAL:]
 """
 import logging
 from core.datetime_utils import to_iso

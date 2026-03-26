@@ -146,30 +146,18 @@ def _extract_todo_actions(text: str, source: str) -> tuple[str, list[Action]]:
 
 
 def _extract_proposal_actions(text: str, source: str) -> tuple[str, list[Action]]:
-    pattern = re.compile(r'\[PROPOSAL:\s*(\{.*?\})\s*\]', re.DOTALL)
-    matches = list(pattern.finditer(text))
-    if not matches:
+    """
+    WP10: legacy_compat — alter [PROPOSAL:] Marker deaktiviert.
+    Kimi nutzt jetzt nur noch [WP10_PROPOSAL:] — verarbeitet von _extract_wp10_proposal_actions().
+    Alter Marker wird still entfernt, kein Action erzeugt.
+    """
+    pattern = re.compile(r'\[PROPOSAL:\s*\{.*?\}\s*\]', re.DOTALL)
+    if not pattern.search(text):
         return text, []
-
     cleaned = pattern.sub("", text).strip()
     cleaned = re.sub(r'\n{3,}', '\n\n', cleaned).strip()
-
-    actions = []
-    for match in matches:
-        try:
-            raw = match.group(1).replace('\n', ' ').replace('\r', '')
-            payload = json.loads(raw)
-            actions.append(Action(
-                type="proposal.create",
-                payload=payload,
-                source=source,
-                raw_fragment=match.group(0),
-                confidence=1.0,
-            ))
-        except json.JSONDecodeError as e:
-            logger.warning(f"extract_actions: PROPOSAL JSON-Fehler: {e}")
-
-    return cleaned, actions
+    logger.debug("_extract_proposal_actions: alter [PROPOSAL:] Marker entfernt (legacy_compat WP10)")
+    return cleaned, []
 
 
 def _extract_calendar_actions(text: str, source: str) -> tuple[str, list[Action]]:
@@ -535,27 +523,13 @@ def _run_todo(action: Action, user_id: str, context: dict | None,
 
 
 def _run_proposal(action: Action, user_id: str, context: dict | None) -> ActionResult:
-    from core.proposals import save_proposal
-    payload = action.payload
-
-    proposal_id = save_proposal(payload, source=action.source, user_id=user_id)
-
-    if proposal_id is not None:
-        title = payload.get("title", "Vorschlag")
-        return ActionResult(
-            ok=True,
-            type=action.type,
-            object_type="proposal",
-            object_id=proposal_id,
-            message=f"Vorschlag eingereicht: {title}",
-            dashboard_visible=True,
-        )
-    else:
-        return ActionResult(
-            ok=False,
-            type=action.type,
-            error="Proposal konnte nicht gespeichert werden",
-        )
+    """WP10: legacy_compat — alter proposal.create deaktiviert. Nutze WP10_PROPOSAL."""
+    logger.debug("_run_proposal: legacy_compat — proposal.create ist WP10 abgelöst")
+    return ActionResult(
+        ok=False,
+        type=action.type,
+        error="legacy_compat: Nutze [WP10_PROPOSAL:] statt [PROPOSAL:] (WP10)",
+    )
 
 
 def _run_wp10_proposal(action: Action, user_id: str, context: dict | None) -> ActionResult:
@@ -932,25 +906,9 @@ def process_kimi_output(
         allow_orbit_intent=allow_orbit_intent,
     )
 
-    # Phase B.5: LLM-Extraction wenn kein expliziter Proposal-Block vorhanden
-    # Kimi extrahiert strukturiert aus ihrem eigenen Text — robuster als Regex
-    proposal_results = [r for r in results if r.ok and r.object_type == "proposal"]
-    if not proposal_results and visibility == "public":
-        try:
-            llm_proposals = _extract_proposals_via_llm(raw_text, user_id)
-            if llm_proposals:
-                llm_actions = [
-                    Action(type="proposal.create", payload=p, source=f"{source}:llm_extraction",
-                           raw_fragment=None, confidence=0.8)
-                    for p in llm_proposals
-                ]
-                llm_results = execute_actions(llm_actions, user_id, source, context)
-                results.extend(llm_results)
-                for r in llm_results:
-                    if r.ok:
-                        logger.info(f"process_kimi_output: LLM-Proposal gespeichert #{r.object_id}")
-        except Exception as _llm_e:
-            logger.debug(f"process_kimi_output: LLM-Extraction fehlgeschlagen (unkritisch): {_llm_e}")
+    # WP10: LLM-Proposal-Extraction deaktiviert — legacy_compat
+    # Proposals laufen jetzt ausschließlich über [WP10_PROPOSAL:] Marker
+    # _extract_proposals_via_llm() bleibt als Funktion erhalten (delete_candidate)
 
     # G: cleaned_text gegen results absichern -- keine falschen Bestätigungen
     if visibility == "public" and cleaned_text:

@@ -661,8 +661,11 @@ def api_workspace_artifact(artifact_id):
 @app.route("/api/workspace/artifacts/<int:artifact_id>/status", methods=["POST"])
 @require_auth
 def api_workspace_artifact_status(artifact_id):
-    """WP8: Legacy-Write deaktiviert. delete_candidate."""
-    return jsonify({"ok": False, "reason": "WP8: Legacy-Artifact-Write deaktiviert."})
+    """Status eines Artifacts aendern."""
+    from core.workspace_artifact_service import set_artifact_status
+    data = request.json or {}
+    ok = set_artifact_status(artifact_id, data.get("status",""), actor="dashboard")
+    return jsonify({"ok": ok})
 
 
 @app.route("/api/workspace/stats")
@@ -2247,16 +2250,33 @@ def proposals_page():
 @app.route("/api/proposals")
 @require_auth
 def api_proposals_get():
-    status = request.args.get("status", "pending")
+    """WP10: liefert wp10_proposals — einzige aktive Proposal-Wahrheit."""
+    from config import USER_CONTEXTS
+    user_id = list(USER_CONTEXTS.keys())[0]
+    status = request.args.get("status", "open")
+    proposal_type = request.args.get("type")
     try:
-        from core.proposals import get_proposals
-        proposals = get_proposals(status=status if status != "all" else None)
-        all_p = get_proposals(status=None)
+        from core.proposal_service_wp10 import list_proposals
+        # Status-Mapping: alte UI-Begriffe auf WP10-Status
+        status_map = {"pending": "open", "approved": "accepted",
+                      "rejected": "rejected", "deferred": "withdrawn", "all": None}
+        wp10_status = status_map.get(status, status)
+        proposals = list_proposals(
+            owner_id=user_id,
+            status=wp10_status,
+            proposal_type=proposal_type,
+            limit=100,
+        )
+        all_p = list_proposals(owner_id=user_id, status=None, limit=500)
         stats = {
-            "pending":  sum(1 for p in all_p if p.get("status") == "pending"),
-            "approved": sum(1 for p in all_p if p.get("status") == "approved"),
-            "rejected": sum(1 for p in all_p if p.get("status") == "rejected"),
-            "deferred": sum(1 for p in all_p if p.get("status") == "deferred"),
+            "open":      sum(1 for p in all_p if p.get("status") == "open"),
+            "accepted":  sum(1 for p in all_p if p.get("status") == "accepted"),
+            "rejected":  sum(1 for p in all_p if p.get("status") == "rejected"),
+            "withdrawn": sum(1 for p in all_p if p.get("status") == "withdrawn"),
+            # Legacy-Aliase für UI-Kompatibilität
+            "pending":   sum(1 for p in all_p if p.get("status") == "open"),
+            "approved":  sum(1 for p in all_p if p.get("status") == "accepted"),
+            "deferred":  sum(1 for p in all_p if p.get("status") == "withdrawn"),
         }
         return jsonify({"proposals": proposals, "stats": stats})
     except Exception as e:
@@ -2266,45 +2286,25 @@ def api_proposals_get():
 @app.route("/api/proposals/<int:proposal_id>/action", methods=["POST"])
 @require_auth
 def api_proposal_action(proposal_id):
+    """WP10: Proposal-Entscheidungen — kein auto-Todo, kein auto-Task."""
     data = request.get_json()
     action = data.get("action")
-    via_gate = data.get("via_gate", False)  # 5.5: optional ueber Write-Request-Gate
-    from config import OWNER_ID, USER_CONTEXTS
-    user_id = list(USER_CONTEXTS.keys())[0]
-
-    # 5.5: Wenn via_gate=True, Write-Request erzeugen statt direkt ausfuehren
-    if via_gate and action in ("approve", "reject", "defer"):
-        try:
-            from core.gate_service import execute_write, build_proposal_preview
-            action_key = f"proposal.{action}"
-            params = {"id": proposal_id, "action": action,
-                      "reason": data.get("reason", "")}
-            preview = build_proposal_preview(action, params)
-            result = execute_write(
-                action_key, params, user_id,
-                lambda p: {"success": False, "error": "Direktausfuehrung nicht erlaubt"},
-            )
-            if result.get("pending"):
-                return jsonify({"ok": True, "via_gate": True,
-                                "write_request_id": result.get("write_request_id"),
-                                "preview": preview})
-        except Exception as e:
-            pass  # Fallback auf direkten Pfad
-
-    # Direkter Pfad (Tommy-Aktion aus Dashboard)
+    reason = data.get("reason", "")
     try:
-        from core.proposal_service import approve_proposal, reject_proposal, defer_proposal
-        if action == "approve":
-            result = approve_proposal(proposal_id, OWNER_ID)
-            return jsonify({"ok": result is not None, "proposal": result})
-        elif action == "reject":
-            ok = reject_proposal(proposal_id)
-            return jsonify({"ok": ok})
-        elif action == "defer":
-            ok = defer_proposal(proposal_id)
-            return jsonify({"ok": ok})
-        else:
-            return jsonify({"error": "Unbekannte Aktion"}), 400
+        from core.proposal_service_wp10 import update_proposal_status
+        # Aktions-Mapping auf WP10-Status
+        status_map = {
+            "approve": "accepted",
+            "accept":  "accepted",
+            "reject":  "rejected",
+            "defer":   "withdrawn",
+            "withdraw": "withdrawn",
+        }
+        new_status = status_map.get(action)
+        if not new_status:
+            return jsonify({"error": f"Unbekannte Aktion: {action}"}), 400
+        ok = update_proposal_status(proposal_id, new_status, decision_note=reason or None)
+        return jsonify({"ok": ok})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -2316,10 +2316,7 @@ def api_proposal_action(proposal_id):
 @app.route("/planner")
 @require_auth
 def planner_page():
-    """WP8: Planner Legacy-Hinweis."""
-    from flask import Response
-    html = "<html><body style='font-family:sans-serif;padding:40px;background:#1a1a1a;color:#ccc'><div style='max-width:600px;margin:40px auto;background:#2a2a2a;padding:30px;border-radius:8px'><h2 style='color:#e8a838'>Planner nicht mehr aktiv</h2><p>Seit WP8 kein aktiver Hauptpfad mehr.<br>V2: Kimi Core + Active Working Context.</p><p><a href='/' style='color:#6ab0f5'>Dashboard</a></p><p style='color:#555;font-size:0.8em'>WP8: legacy_compat</p></div></body></html>"
-    return Response(html, mimetype="text/html")
+    return render_template("planner.html")
 
 
 @app.route("/orbit")

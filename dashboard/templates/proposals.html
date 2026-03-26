@@ -3,130 +3,131 @@
 
 {% block content %}
 <div class="page-header">
-    <div>
-        <h1 class="page-title">Proposals</h1>
-        <p class="page-subtitle">Kimis Projektvorschläge</p>
-    </div>
-    <div class="header-stats" id="stats"></div>
+  <div>
+    <h1 class="page-title">Proposals</h1>
+    <p class="page-subtitle">WP10 — Kimis formale Vorschläge</p>
+  </div>
+  <div id="stats" style="display:flex;gap:10px;flex-wrap:wrap"></div>
 </div>
 
-<div class="tab-bar">
-    <button class="tab active" data-status="pending">Offen</button>
-    <button class="tab" data-status="approved">Genehmigt</button>
-    <button class="tab" data-status="implemented">Umgesetzt</button>
-    <button class="tab" data-status="deferred">Zurückgestellt</button>
-    <button class="tab" data-status="rejected">Abgelehnt</button>
+<div style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap">
+  <button class="btn btn-primary tab-btn" data-status="open">Offen</button>
+  <button class="btn btn-secondary tab-btn" data-status="accepted">Angenommen</button>
+  <button class="btn btn-secondary tab-btn" data-status="withdrawn">Zurückgezogen</button>
+  <button class="btn btn-secondary tab-btn" data-status="rejected">Abgelehnt</button>
+  <button class="btn btn-secondary tab-btn" data-status="all" style="opacity:0.6">Alle</button>
 </div>
 
-<div id="proposals-list" class="proposals-grid"></div>
-
-<style>
-.tab-bar { display: flex; gap: 8px; margin-bottom: 24px; }
-.tab { padding: 6px 16px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text-2); cursor: pointer; font-size: 13px; }
-.tab.active { background: var(--text-1); color: white; border-color: var(--text-1); }
-.proposals-grid { display: flex; flex-direction: column; gap: 12px; }
-.proposal-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px; }
-.proposal-card.pending { border-left: 3px solid var(--amber); }
-.proposal-card.approved { border-left: 3px solid var(--accent); }
-.proposal-card.rejected { border-left: 3px solid var(--red); opacity: 0.6; }
-.proposal-card.deferred { border-left: 3px solid var(--blue); }
-.proposal-title { font-size: 15px; font-weight: 600; color: var(--text-1); margin-bottom: 8px; }
-.proposal-text { font-size: 13px; color: var(--text-2); line-height: 1.6; margin-bottom: 12px; white-space: pre-wrap; }
-.proposal-meta { display: flex; gap: 12px; align-items: center; margin-bottom: 14px; }
-.effort-badge { padding: 2px 10px; border-radius: 20px; font-size: 11px; font-weight: 500; background: var(--amber-light); color: var(--amber); }
-.date-text { font-size: 11px; color: var(--text-4); }
-.proposal-actions { display: flex; gap: 8px; }
-.btn-approve { padding: 6px 14px; border-radius: 6px; border: none; background: var(--accent); color: white; cursor: pointer; font-size: 12px; font-weight: 500; }
-.btn-defer { padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text-2); cursor: pointer; font-size: 12px; }
-.btn-reject { padding: 6px 14px; border-radius: 6px; border: 1px solid var(--red-light); background: var(--red-light); color: var(--red); cursor: pointer; font-size: 12px; }
-.empty-state { text-align: center; padding: 60px 20px; color: var(--text-4); font-size: 14px; }
-.header-stats { display: flex; gap: 16px; }
-.stat-pill { padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 500; background: var(--surface-2); border: 1px solid var(--border); color: var(--text-2); }
-.proposal-reason { font-size: 12px; color: var(--text-3); font-style: italic; margin-bottom: 10px; line-height: 1.5; }
-.proposal-links { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
-.link-badge { padding: 2px 8px; border-radius: 4px; font-size: 11px; background: var(--surface-2); border: 1px solid var(--border); color: var(--accent); font-weight: 500; }
-.source-badge { padding: 2px 8px; border-radius: 4px; font-size: 11px; background: var(--surface-2); color: var(--text-3); }
-.error-badge { margin-top: 8px; padding: 6px 10px; border-radius: 6px; font-size: 11px; color: var(--red); background: var(--red-light); }
-</style>
+<div id="proposals-list" style="display:flex;flex-direction:column;gap:10px"></div>
 
 <script>
-let currentStatus = 'pending';
+const TYPE_LABELS = {
+  self_constitution_change: "soul.md / Kernprinzipien",
+  behavior_adjustment:      "Verhalten / Stil",
+  workflow_improvement:     "Workflow / Ablauf",
+  architecture_improvement: "Architektur",
+  memory_improvement:       "Gedächtnis",
+  other:                    "Sonstiges",
+};
+const TYPE_COLORS = {
+  self_constitution_change: "#7c3aed",
+  behavior_adjustment:      "#2563eb",
+  workflow_improvement:     "#059669",
+  architecture_improvement: "#d97706",
+  memory_improvement:       "#0891b2",
+  other:                    "#6b7280",
+};
+const STATUS_LABELS = {
+  open: "offen", accepted: "angenommen",
+  rejected: "abgelehnt", withdrawn: "zurückgezogen",
+};
+const STATUS_BORDER = {
+  open: "#f59e0b", accepted: "#10b981",
+  rejected: "#ef4444", withdrawn: "#6b7280",
+};
+
+let currentStatus = "open";
 
 async function load(status) {
-    currentStatus = status;
-    const res = await fetch(`/api/proposals?status=${status}`);
-    const data = await res.json();
+  currentStatus = status;
+  const url = status === "all"
+    ? "/api/proposals?status=all"
+    : `/api/proposals?status=${status}`;
+  const res = await fetch(url);
+  const data = await res.json();
 
-    // Stats
-    const s = data.stats || {};
-    document.getElementById('stats').innerHTML = `
-        <span class="stat-pill">Offen: ${s.pending||0}</span>
-        <span class="stat-pill">✓ ${s.approved||0}</span>
-        <span class="stat-pill">↩ ${s.deferred||0}</span>
-    `;
+  // Stats
+  const s = data.stats || {};
+  document.getElementById("stats").innerHTML = [
+    ["Offen", s.open || 0, "#f59e0b"],
+    ["Angenommen", s.accepted || 0, "#10b981"],
+    ["Zurückgezogen", s.withdrawn || 0, "#6b7280"],
+    ["Abgelehnt", s.rejected || 0, "#ef4444"],
+  ].map(([l, v, c]) =>
+    `<div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:6px 12px;font-size:12px">
+      <span style="color:${c};font-weight:600">${v}</span>
+      <span style="color:var(--text-3);margin-left:4px">${l}</span></div>`
+  ).join("");
 
-    const list = document.getElementById('proposals-list');
-    if (!data.proposals || data.proposals.length === 0) {
-        list.innerHTML = '<div class="empty-state">Keine Proposals in dieser Kategorie.</div>';
-        return;
-    }
+  const el = document.getElementById("proposals-list");
+  if (!data.proposals || !data.proposals.length) {
+    el.innerHTML = '<div style="color:var(--text-3);font-size:13px;padding:30px;text-align:center">Keine Proposals.</div>';
+    return;
+  }
 
-    list.innerHTML = data.proposals.map(p => {
-        const date = p.created_at ? p.created_at.substring(0, 16).replace('T', ' ') : '';
-        const isPending = p.status === 'pending';
-        const isApproved = p.status === 'approved';
-        const statusClass = p.status || 'pending';
+  el.innerHTML = data.proposals.map(p => {
+    const type = p.proposal_type || "other";
+    const typeLabel = TYPE_LABELS[type] || type;
+    const typeColor = TYPE_COLORS[type] || "#6b7280";
+    const statusLabel = STATUS_LABELS[p.status] || p.status;
+    const border = STATUS_BORDER[p.status] || "#6b7280";
+    const ts = (p.created_at || "").substring(0, 16).replace("T", " ");
+    const isOpen = p.status === "open";
 
-        // Verknüpfungen
-        const todoLink = p.approved_todo_id
-            ? `<span class="link-badge">Todo #${p.approved_todo_id}</span>` : '';
-        const taskLink = p.approved_task_id
-            ? `<span class="link-badge">Task ${p.approved_task_id.substring(0,8)}</span>` : '';
-        const goalLink = p.goal_id
-            ? `<span class="link-badge">Goal #${p.goal_id}</span>` : '';
-        const errorBadge = p.last_error
-            ? `<div class="error-badge">⚠ ${p.last_error.substring(0,80)}</div>` : '';
-
-        const links = (todoLink || taskLink || goalLink)
-            ? `<div class="proposal-links">${goalLink}${todoLink}${taskLink}</div>` : '';
-
-        return `<div class="proposal-card ${statusClass}">
-            <div class="proposal-title">${p.title || 'Unbenannter Vorschlag'}</div>
-            ${p.description ? `<div class="proposal-text">${p.description.substring(0,300)}${p.description.length > 300 ? '…' : ''}</div>` : ''}
-            ${p.reason ? `<div class="proposal-reason">💡 ${p.reason.substring(0,150)}${p.reason.length > 150 ? '…' : ''}</div>` : ''}
-            <div class="proposal-meta">
-                <span class="effort-badge">Aufwand: ${p.effort || 'mittel'}</span>
-                <span class="source-badge">${p.source_type || 'chat'}</span>
-                <span class="date-text">${date}</span>
-            </div>
-            ${links}
-            ${errorBadge}
-            ${isPending ? `<div class="proposal-actions">
-                <button class="btn-approve" onclick="action('${p.id}', 'approve')">✓ Genehmigen</button>
-                <button class="btn-defer" onclick="action('${p.id}', 'defer')">↩ Zurückstellen</button>
-                <button class="btn-reject" onclick="action('${p.id}', 'reject')">✗ Ablehnen</button>
-            </div>` : ''}
-        </div>`;
-    }).join('');
+    return `<div style="background:var(--surface);border:1px solid var(--border);border-left:3px solid ${border};border-radius:var(--radius-lg);padding:16px 18px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+        <span style="font-size:10px;font-weight:600;padding:2px 8px;border-radius:99px;background:${typeColor}22;color:${typeColor}">${typeLabel}</span>
+        <span style="font-size:11px;color:var(--text-3)">${statusLabel}</span>
+        <span style="font-size:11px;color:var(--text-4)">#${p.id} · ${ts}</span>
+        <span style="font-size:11px;color:var(--text-4)">${p.source || "chat"}</span>
+      </div>
+      <div style="font-size:14px;font-weight:600;margin-bottom:6px">${p.title}</div>
+      ${p.summary ? `<div style="font-size:13px;color:var(--text-2);margin-bottom:6px;line-height:1.5">${p.summary.substring(0, 300)}${p.summary.length > 300 ? "…" : ""}</div>` : ""}
+      ${p.reason ? `<div style="font-size:12px;color:var(--text-3);font-style:italic;margin-bottom:6px">Begründung: ${p.reason.substring(0, 150)}${p.reason.length > 150 ? "…" : ""}</div>` : ""}
+      ${p.suggested_change ? `<div style="font-size:12px;color:var(--text-2);margin-bottom:6px;background:var(--bg);padding:8px;border-radius:var(--radius);border:1px solid var(--border)">Vorgeschlagene Änderung: ${p.suggested_change.substring(0, 250)}${p.suggested_change.length > 250 ? "…" : ""}</div>` : ""}
+      ${p.risk_note ? `<div style="font-size:11px;color:#d97706;margin-bottom:6px">⚠ ${p.risk_note.substring(0, 100)}</div>` : ""}
+      ${p.decision_note ? `<div style="font-size:11px;color:var(--text-3);margin-bottom:6px">Entscheidung: ${p.decision_note.substring(0, 150)}</div>` : ""}
+      <div style="font-size:11px;color:#6b7280;margin-top:4px;padding:4px 8px;background:#1c1917;border-radius:4px;display:inline-block">
+        WP10 — Kein automatischer Todo/Task/ORBIT aus diesem Proposal
+      </div>
+      ${isOpen ? `<div style="display:flex;gap:8px;margin-top:10px">
+        <button class="btn btn-primary" style="font-size:12px;padding:5px 12px" onclick="action(${p.id}, 'accept')">✓ Annehmen</button>
+        <button class="btn btn-secondary" style="font-size:12px;padding:5px 12px" onclick="action(${p.id}, 'withdraw')">↩ Zurückziehen</button>
+        <button class="btn btn-secondary" style="font-size:12px;padding:5px 12px;color:#ef4444;border-color:#ef4444" onclick="action(${p.id}, 'reject')">✗ Ablehnen</button>
+      </div>` : ""}
+    </div>`;
+  }).join("");
 }
 
 async function action(id, act) {
-    await fetch(`/api/proposals/${id}/action`, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({action: act})
-    });
-    load(currentStatus);
+  await fetch(`/api/proposals/${id}/action`, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({action: act}),
+  });
+  load(currentStatus);
 }
 
-document.querySelectorAll('.tab').forEach(tab => {
-    tab.addEventListener('click', () => {
-        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-        tab.classList.add('active');
-        load(tab.dataset.status);
+document.querySelectorAll(".tab-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".tab-btn").forEach(b => {
+      b.className = "btn btn-secondary tab-btn";
     });
+    btn.className = "btn btn-primary tab-btn";
+    load(btn.dataset.status);
+  });
 });
 
-load('pending');
+load("open");
 </script>
 {% endblock %}
