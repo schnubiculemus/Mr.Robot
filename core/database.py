@@ -473,31 +473,8 @@ def init_db():
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_soul_proposals_ts ON soul_proposals(timestamp DESC)")
 
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS kimi_proposals (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            owner_id TEXT NOT NULL,
-            goal_id INTEGER,
-            title TEXT NOT NULL,
-            description TEXT,
-            reason TEXT,
-            effort TEXT NOT NULL DEFAULT 'mittel',
-            status TEXT NOT NULL DEFAULT 'pending',
-            source_type TEXT NOT NULL DEFAULT 'chat',
-            source_ref TEXT,
-            confidence REAL NOT NULL DEFAULT 1.0,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            approved_at TEXT,
-            rejected_at TEXT,
-            implemented_at TEXT,
-            approved_todo_id INTEGER,
-            approved_task_id TEXT,
-            last_error TEXT
-        )
-    """)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_kimi_proposals_status ON kimi_proposals(status)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_kimi_proposals_owner ON kimi_proposals(owner_id)")
+    # kimi_proposals: WP10 legacy_compat — nicht mehr im normalen Startup angelegt
+    # Altbestand bleibt erhalten falls Tabelle bereits existiert, wird aber nicht neu erzeugt.
 
     # WP10: Formale Proposal-Schicht
     conn.execute("""
