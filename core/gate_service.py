@@ -447,48 +447,7 @@ def approve_write_request(req_id: int, approved_by: str = "user") -> dict:
     except Exception as e:
         logger.warning(f"approve_write_request: Status-Update fehlgeschlagen: {e}")
 
-    # 5.5: Proposal-Approve -> Todo ableiten
-    if result["ok"] and tool_ref == "proposal" and action == "approve":
-        try:
-            import json as _j
-            params_raw = _j.loads(req.get("preview_payload") or "{}")
-            proposal_id = params_raw.get("id") or params_raw.get("proposal_id")
-            if proposal_id:
-                from core.database import get_connection as _gc_p
-                _cp = _gc_p()
-                prop = _cp.execute(
-                    "SELECT * FROM kimi_proposals WHERE id=?", (int(proposal_id),)
-                ).fetchone()
-                _cp.close()
-                if prop:
-                    prop = dict(prop)
-                    # Todo anlegen falls noch keines verknuepft
-                    existing = None
-                    try:
-                        _cp2 = _gc_p()
-                        existing = _cp2.execute(
-                            "SELECT id FROM todos WHERE proposal_id=?",
-                            (proposal_id,)
-                        ).fetchone()
-                        _cp2.close()
-                    except Exception:
-                        pass
-                    if not existing:
-                        from core.todo_service import create_todo
-                        from config import OWNER_ID
-                        create_todo(
-                            owner_id=req.get("owner_id", OWNER_ID),
-                            title=f"[Approved] {prop.get('title','')[:80]}",
-                            category="kimi",
-                            execution_mode="orbit_internal",
-                            release_mode="summarize",
-                            task_template="implementation",
-                            proposal_id=int(proposal_id),
-                            goal_id=prop.get("goal_id"),
-                        )
-                        logger.info(f"approve proposal #{proposal_id}: Todo angelegt")
-        except Exception as e:
-            logger.debug(f"approve proposal -> Todo-Ableitung fehlgeschlagen: {e}")
+    # WP10: Proposal-Approve -> kein automatisches Todo (legacy entfernt)
 
     # 5.4: Differenzierte Approve-Folge
     after_approve = req.get("after_approve_action", "continue_line")
@@ -912,39 +871,29 @@ def verify_artifact_write(action: str, params: dict, write_result: dict) -> tupl
 
 
 def build_proposal_preview(action: str, params: dict) -> str:
-    """Erzeugt lesbaren Preview-Text fuer Proposal-Statusaenderungen."""
-    from core.database import get_connection
+    """WP10: Preview-Text fuer Proposal-Statusaenderungen — liest wp10_proposals."""
+    from core.proposal_service_wp10 import get_proposal
     proposal_id = params.get("id") or params.get("proposal_id")
     title = params.get("title", f"#{proposal_id}")
+    current = "open"
     if proposal_id:
         try:
-            conn = get_connection()
-            row = conn.execute(
-                "SELECT title, status FROM kimi_proposals WHERE id=?",
-                (int(proposal_id),)
-            ).fetchone()
-            conn.close()
-            if row:
-                title = row["title"][:60]
-                current = row["status"]
+            p = get_proposal(int(proposal_id))
+            if p:
+                title = p["title"][:60]
+                current = p.get("status", "open")
         except Exception:
-            current = "pending"
-    else:
-        current = "pending"
+            pass
 
     labels = {
-        "approve": f"Proposal '{title}' genehmigen ({current} → approved)",
-        "reject":  f"Proposal '{title}' ablehnen ({current} → rejected)",
-        "defer":   f"Proposal '{title}' zurueckstellen ({current} → deferred)",
+        "approve": f"WP10 Proposal '{title}' annehmen ({current} → accepted)",
+        "accept":  f"WP10 Proposal '{title}' annehmen ({current} → accepted)",
+        "reject":  f"WP10 Proposal '{title}' ablehnen ({current} → rejected)",
+        "defer":   f"WP10 Proposal '{title}' zurückziehen ({current} → withdrawn)",
+        "withdraw":f"WP10 Proposal '{title}' zurückziehen ({current} → withdrawn)",
     }
-    base = labels.get(action, f"Proposal-Aktion: {action}")
-    if action == "approve":
-        base += " -- daraus koennte ein Todo entstehen."
-    elif action == "reject":
-        base += " -- Linie wird umgeplant oder geschlossen."
-    elif action == "defer":
-        base += " -- Wiedervorlage spaeter."
-    return base
+    # WP10: kein automatischer Todo-Hinweis
+    return labels.get(action, f"WP10 Proposal-Aktion: {action}")
 
 
 # =============================================================================

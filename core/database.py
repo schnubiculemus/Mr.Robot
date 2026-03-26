@@ -459,9 +459,81 @@ def init_db():
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_orbit_audit_ts ON orbit_audit(timestamp DESC)")
 
+    # Proposal-Schicht — muss im init_db()-Block stehen damit frische DB vollständig ist
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS soul_proposals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            proposal TEXT NOT NULL,
+            reflections_used INTEGER NOT NULL DEFAULT 0,
+            diary_entries_used INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'open',
+            status_changed_at TEXT
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_soul_proposals_ts ON soul_proposals(timestamp DESC)")
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS kimi_proposals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_id TEXT NOT NULL,
+            goal_id INTEGER,
+            title TEXT NOT NULL,
+            description TEXT,
+            reason TEXT,
+            effort TEXT NOT NULL DEFAULT 'mittel',
+            status TEXT NOT NULL DEFAULT 'pending',
+            source_type TEXT NOT NULL DEFAULT 'chat',
+            source_ref TEXT,
+            confidence REAL NOT NULL DEFAULT 1.0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            approved_at TEXT,
+            rejected_at TEXT,
+            implemented_at TEXT,
+            approved_todo_id INTEGER,
+            approved_task_id TEXT,
+            last_error TEXT
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_kimi_proposals_status ON kimi_proposals(status)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_kimi_proposals_owner ON kimi_proposals(owner_id)")
+
+    # WP10: Formale Proposal-Schicht
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS wp10_proposals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_id TEXT NOT NULL,
+            proposal_type TEXT NOT NULL DEFAULT 'other',
+            title TEXT NOT NULL,
+            summary TEXT,
+            reason TEXT,
+            suggested_change TEXT,
+            risk_note TEXT,
+            priority_hint TEXT DEFAULT 'normal',
+            source TEXT NOT NULL DEFAULT 'chat',
+            source_ref TEXT,
+            related_line TEXT,
+            related_document TEXT,
+            status TEXT NOT NULL DEFAULT 'open',
+            decision_note TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            decided_at TEXT
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_wp10_proposals_status "
+        "ON wp10_proposals(status, owner_id, created_at DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_wp10_proposals_type "
+        "ON wp10_proposals(proposal_type, status)"
+    )
+
     conn.commit()
     conn.close()
-    logger.info("Datenbank initialisiert (WAL-Modus + ORBIT-Tabellen)")
+    logger.info("Datenbank initialisiert (WAL-Modus + ORBIT-Tabellen + WP10)")
 
 
 def get_or_create_user(phone_number, display_name=None):

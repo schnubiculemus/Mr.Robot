@@ -386,15 +386,12 @@ def _api_planner_state_legacy():
             (user_id,)
         ).fetchall()]
         for g in goals:
-            g_proposals = [dict(r) for r in _c2.execute(
-                "SELECT id, title, status FROM kimi_proposals WHERE goal_id=? AND status='pending' LIMIT 3",
-                (g["id"],)
-            ).fetchall()]
+            # WP10: kein kimi_proposals-Abruf mehr — Proposals sind in wp10_proposals
             g_todos = [dict(r) for r in _c2.execute(
                 "SELECT id, title, status, execution_mode FROM todos WHERE goal_id=? AND status IN ('open','in_progress') LIMIT 3",
                 (g["id"],)
             ).fetchall()]
-            hierarchy.append({"goal": g, "proposals": g_proposals, "todos": g_todos})
+            hierarchy.append({"goal": g, "proposals": [], "todos": g_todos})
         _c2.close()
     except Exception:
         hierarchy = []

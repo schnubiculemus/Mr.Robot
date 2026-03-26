@@ -660,20 +660,8 @@ def link_related_objects(results: list[ActionResult], context: dict | None = Non
     Aktuell: Basis-Verknüpfung proposal → todo aus context.
     """
     try:
-        proposal_id = next((r.object_id for r in results if r.ok and r.object_type == "proposal"), None)
-        todo_id = next((r.object_id for r in results if r.ok and r.object_type == "todo"), None)
-
-        if proposal_id and todo_id:
-            from core.database import get_connection
-            conn = get_connection()
-            try:
-                conn.execute(
-                    "UPDATE kimi_proposals SET approved_todo_id=? WHERE id=? AND approved_todo_id IS NULL",
-                    (todo_id, proposal_id)
-                )
-                conn.commit()
-            finally:
-                conn.close()
+        # WP10: keine proposal→todo Kopplung mehr (legacy entfernt)
+        pass
     except Exception as e:
         logger.debug(f"link_related_objects: fehlgeschlagen (unkritisch): {e}")
 
@@ -819,7 +807,7 @@ def enforce_state_truth(text: str, results: list, context: dict | None = None) -
     if not text:
         return text
 
-    proposal_ok = any(r.ok and r.object_type == "proposal" for r in results)
+    proposal_ok = any(r.ok and r.object_type in ("proposal", "wp10_proposal") for r in results)
     todo_ok = any(r.ok and r.object_type == "todo" for r in results)
     task_ok = any(r.ok and r.object_type in ("task", "orbit_task") for r in results)
     completion_ok = any(r.ok and r.type in ("todo.complete", "task.complete") for r in results)

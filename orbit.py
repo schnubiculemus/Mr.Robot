@@ -3271,49 +3271,10 @@ def _dispatch_tool(tool_ref: str, action: str, params: dict,
         }
 
 
-    # Proposals -- 5.5: proposal_write via Gate
+    # WP10: proposal_write deaktiviert — Proposals sind Vorschläge, keine ORBIT-Exekution
     if tool_ref == "proposal_write":
-        action_type = params.get("action", action)
-        if action_type not in ("approve", "reject", "defer"):
-            return {"success": False, "error": f"Unbekannte proposal_write action: {action_type}"}
-
-        from core.gate_service import execute_write, build_proposal_preview
-        action_key = f"proposal.{action_type}"
-        write_params = dict(params)
-        write_params["owner_id"] = _owner_id
-
-        def _do_proposal(p):
-            from core.gate_service import execute_proposal_action
-            return execute_proposal_action(action_type, p)
-
-        gresult = execute_write(action_key, write_params, _owner_id, _do_proposal,
-                                task_id=task_id, step_id=step_id)
-
-        if gresult.get("pending"):
-            if task_id:
-                update_task(task_id, status="waiting_user_decision")
-            # Observation anlegen damit F-Kognition weiss was wartet
-            try:
-                from core.todo_service import record_observation
-                record_observation(
-                    owner_id=_owner_id,
-                    content=(f"Proposal-Write-Request angelegt: "
-                             f"{gresult.get('preview','')[:120]} "
-                             f"[Request #{gresult.get('write_request_id')}]"),
-                    obs_type="state_change",
-                    task_id=task_id,
-                )
-            except Exception:
-                pass
-            return {"success": False, "pending": True,
-                    "result": gresult.get("message", "Proposal-Write-Request angelegt"),
-                    "write_request_id": gresult.get("write_request_id"),
-                    "preview": gresult.get("preview")}
-
-        return {"success": gresult["ok"],
-                "result": gresult.get("result") or gresult.get("error"),
-                "error": gresult.get("error"),
-                "audit_id": gresult.get("audit_id")}
+        return {"success": False,
+                "error": "WP10: proposal_write ist deaktiviert. Proposals laufen über [WP10_PROPOSAL:] im Chat."}
 
     # Web Search
     if tool_ref == "websearch":
