@@ -808,34 +808,8 @@ def init_kimi_b_schema(conn=None):
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_kimi_goals_owner ON kimi_goals(owner_id, status)")
 
-    # Proposals — konkrete Verbesserungsvorschläge
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS kimi_proposals (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            owner_id TEXT NOT NULL,
-            goal_id INTEGER,
-            title TEXT NOT NULL,
-            description TEXT,
-            reason TEXT,
-            effort TEXT NOT NULL DEFAULT 'mittel',
-            status TEXT NOT NULL DEFAULT 'pending',
-            source_type TEXT NOT NULL DEFAULT 'chat',
-            source_ref TEXT,
-            confidence REAL NOT NULL DEFAULT 1.0,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            approved_at TEXT,
-            rejected_at TEXT,
-            implemented_at TEXT,
-            approved_todo_id INTEGER,
-            approved_task_id TEXT,
-            last_error TEXT,
-            FOREIGN KEY (goal_id) REFERENCES kimi_goals(id)
-        )
-    """)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_kimi_proposals_status ON kimi_proposals(status)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_kimi_proposals_owner ON kimi_proposals(owner_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_kimi_proposals_goal ON kimi_proposals(goal_id)")
+    # WP10: kimi_proposals nicht mehr angelegt — legacy_compat / delete_candidate
+    # Proposals laufen über wp10_proposals (core/proposal_service_wp10.py)
 
     # Todos — neue Spalten für Verknüpfungen
     # SQLite: ALTER TABLE ADD COLUMN ist idempotent via try/except
