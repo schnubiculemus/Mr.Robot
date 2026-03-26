@@ -1225,6 +1225,25 @@ def init_soul_proposals_table(conn=None):
         )
     """)
 
+    # WP9: Kognitions-Request-Queue
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS cognition_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            request_type TEXT NOT NULL DEFAULT 'post_interaction',
+            priority TEXT NOT NULL DEFAULT 'light',
+            status TEXT NOT NULL DEFAULT 'pending',
+            source_turn_id TEXT,
+            source_context TEXT,
+            created_at TEXT NOT NULL,
+            claimed_at TEXT,
+            done_at TEXT
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_cognition_requests_status "
+        "ON cognition_requests(status, created_at DESC)"
+    )
+
     conn.commit()
     conn.close()
 

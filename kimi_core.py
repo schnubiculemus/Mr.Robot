@@ -111,22 +111,17 @@ def process(request: KimiCoreRequest) -> KimiCoreResult:
     _coding_mode = request.meta.get("coding_mode", False)
     if _coding_mode:
         _coding_hint_lines = [
-            "CODING-MODUS AKTIV. Tommy hat /code verwendet.",
-            "PFLICHT: Deine Antwort MUSS exakt einen [CODE_AGENT: {...}] Block enthalten.",
-            "Ohne diesen Block wird kein Code erzeugt. Kein Fliesstext ueber den Coding Agent.",
-            "Direkt den Block ausgeben, dann kurz erklaeren was du beauftragt hast.",
-            "",
-            "Format:",
-            '[CODE_AGENT: {"mode": "scaffold", "task": "AUFGABE", "scope": [], "target_doc_id": "DATEINAME", "return_format": "workspace"}]',
-            "",
-            "mode-Werte: scaffold (neue Datei) | patch | refactor | tests | review | read_only_analysis | explain_code",
-            "scope: [] fuer neue Datei | [doc_id] fuer bestehende",
-            "target_doc_id: kurzer snake_case Name ohne .py (z.B. hello_world, csv_parser)",
-            "",
-            "Beispiel fuer neue Datei:",
-            '[CODE_AGENT: {"mode": "scaffold", "task": "Python-Skript das Hello World ausgibt", "scope": [], "target_doc_id": "hello_world", "return_format": "workspace"}]',
-            "",
-            "NOCHMAL: Zuerst den Block, dann maximal einen Satz Erklaerung. Kein anderer Text davor.",
+            "CODING-MODUS: Tommy hat /code verwendet. Nutze den Coding Agent.",
+            "Schreibe einen [CODE_AGENT: {...}] Block:",
+            "  mode: scaffold | patch | refactor | tests | review | read_only_analysis | explain_code",
+            "  task: klarer Auftrag",
+            "  scope: [] fuer neue Datei, oder doc_id fuer bestehende Datei",
+            "  target_doc_id: Zieldateiname im Workspace (z.B. mein_skript)",
+            "  return_format: workspace (Standard) oder text",
+            "Beispiel neue Datei:",
+            '[CODE_AGENT: {"mode": "scaffold", "task": "...", "scope": [], "target_doc_id": "skript", "return_format": "workspace"}]',
+            "Beispiel bestehende Datei:",
+            '[CODE_AGENT: {"mode": "patch", "task": "...", "scope": ["doc_id"], "return_format": "workspace"}]',
         ]
         _coding_hint = "\n".join(_coding_hint_lines)
         awc_extra = (_coding_hint + "\n\n" + awc_extra).strip()
@@ -472,6 +467,43 @@ def process(request: KimiCoreRequest) -> KimiCoreResult:
             logger.debug("KimiCore: AWC initial angelegt")
     except Exception as _awc_w:
         logger.debug(f"KimiCore: AWC-Update fehlgeschlagen (unkritisch): {_awc_w}")
+
+    # --- WP9: Post-Interaction Cognition Request ---
+    # Kimi Core schreibt nach relevanten Turns einen Request in cognition_requests.
+    # Der Cognitive Heartbeat (schnubot-cognition.service) pollt diese Queue.
+    # Kein direkter Service-Aufruf — sauber entkoppelt (Option A).
+    _post_interaction_triggers = [
+        "coding_agent", "calendar_read", "todo_read", ROUTE_TOOL, ROUTE_WORKER,
+    ]
+    _is_significant_turn = (
+        any(d in delegations for d in _post_interaction_triggers)
+        or route in (ROUTE_TOOL, ROUTE_WORKER)
+        or bool(request.meta.get("coding_mode"))
+    )
+    if _is_significant_turn:
+        try:
+            from core.database import get_connection as _cog_gc
+            from core.datetime_utils import to_iso as _cog_iso
+            import json as _cog_json
+            _conn = _cog_gc()
+            try:
+                _source_ctx = _cog_json.dumps({
+                    "route": route,
+                    "delegations": delegations,
+                    "text_preview": request.text[:80],
+                }, ensure_ascii=False)
+                _conn.execute(
+                    """INSERT INTO cognition_requests
+                       (request_type, priority, status, source_context, created_at)
+                       VALUES (?, ?, 'pending', ?, ?)""",
+                    ("post_interaction", "light", _source_ctx, _cog_iso()),
+                )
+                _conn.commit()
+                logger.debug("KimiCore: Post-Interaction Cognition Request erstellt")
+            finally:
+                _conn.close()
+        except Exception as _cog_e:
+            logger.debug(f"KimiCore: Cognition Request fehlgeschlagen (unkritisch): {_cog_e}")
 
     return KimiCoreResult(
         reply=reply,
