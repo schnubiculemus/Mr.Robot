@@ -100,6 +100,10 @@ def extract_actions(text: str, source: str) -> tuple[str, list[Action]]:
     cleaned, cal_actions = _extract_calendar_actions(cleaned, source)
     actions.extend(cal_actions)
 
+    # 3b. WP10_PROPOSAL Blöcke
+    cleaned, wp10_actions = _extract_wp10_proposal_actions(cleaned, source)
+    actions.extend(wp10_actions)
+
     # 4. MOLTBOOK Blöcke
     cleaned, mb_actions = _extract_moltbook_actions(cleaned, source)
     actions.extend(mb_actions)
@@ -184,6 +188,41 @@ def _extract_calendar_actions(text: str, source: str) -> tuple[str, list[Action]
         return text, []
 
 
+def _extract_wp10_proposal_actions(text: str, source: str) -> tuple[str, list[Action]]:
+    """
+    WP10: Extrahiert [WP10_PROPOSAL: {...}] Blöcke.
+    Getrennt vom alten [PROPOSAL:] — WP10 hat Typen und kein Auto-Task.
+
+    Format:
+    [WP10_PROPOSAL: {"type": "self_constitution_change", "title": "...",
+                     "summary": "...", "reason": "...", "suggested_change": "..."}]
+    """
+    pattern = re.compile(r'\[WP10_PROPOSAL:\s*(\{.*?\})\s*\]', re.DOTALL)
+    matches = list(pattern.finditer(text))
+    if not matches:
+        return text, []
+
+    cleaned = pattern.sub("", text).strip()
+    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned).strip()
+
+    actions = []
+    for match in matches:
+        try:
+            raw = match.group(1).replace('\n', ' ').replace('\r', '')
+            payload = json.loads(raw)
+            actions.append(Action(
+                type="wp10_proposal.create",
+                payload=payload,
+                source=source,
+                raw_fragment=match.group(0),
+                confidence=1.0,
+            ))
+        except json.JSONDecodeError as e:
+            logger.warning(f"WP10_PROPOSAL JSON-Fehler: {e}")
+
+    return cleaned, actions
+
+
 def _extract_moltbook_actions(text: str, source: str) -> tuple[str, list[Action]]:
     try:
         from core.moltbook import extract_moltbook_action
@@ -232,7 +271,7 @@ _READ_ACTION_TYPES = {
 }
 
 # PROPOSE / immer erlaubt — kein Systemzustand am Nutzer-Datenkern verändert
-_ALWAYS_ACTION_TYPES_PREFIX = ("proposal.", "moltbook.")
+_ALWAYS_ACTION_TYPES_PREFIX = ("proposal.", "moltbook.", "wp10_proposal.")
 
 
 # =============================================================================
@@ -327,6 +366,8 @@ def _execute_single(action: Action, user_id: str, context: dict | None,
             return _run_calendar(action, user_id, context)
         elif action.type.startswith("moltbook."):
             return _run_moltbook(action, user_id, context)
+        elif action.type == "wp10_proposal.create":
+            return _run_wp10_proposal(action, user_id, context)
         else:
             return ActionResult(ok=False, type=action.type, error=f"Unbekannter Action-Typ: {action.type}")
     except Exception as e:
@@ -515,6 +556,52 @@ def _run_proposal(action: Action, user_id: str, context: dict | None) -> ActionR
             type=action.type,
             error="Proposal konnte nicht gespeichert werden",
         )
+
+
+def _run_wp10_proposal(action: Action, user_id: str, context: dict | None) -> ActionResult:
+    """
+    WP10-Proposal-Executor.
+    Speichert das Proposal in wp10_proposals (SQLite).
+
+    WP10-Garantie:
+    - kein Todo wird angelegt
+    - kein Task wird angelegt
+    - kein ORBIT wird aktiviert
+    - Proposal bleibt Vorschlag
+    """
+    from core.proposal_service_wp10 import create_proposal, PROPOSAL_TYPES
+    payload = action.payload
+
+    proposal_type = payload.get("type", "other")
+    if proposal_type not in PROPOSAL_TYPES:
+        proposal_type = "other"
+
+    proposal = create_proposal(
+        owner_id=user_id,
+        proposal_type=proposal_type,
+        title=payload.get("title", "Unbenannter Vorschlag"),
+        summary=payload.get("summary"),
+        reason=payload.get("reason"),
+        suggested_change=payload.get("suggested_change"),
+        risk_note=payload.get("risk_note"),
+        priority_hint=payload.get("priority_hint", "normal"),
+        source=action.source,
+        source_ref=payload.get("source_ref"),
+        related_line=payload.get("related_line"),
+        related_document=payload.get("related_document"),
+    )
+
+    if proposal:
+        type_label = PROPOSAL_TYPES.get(proposal_type, proposal_type)
+        return ActionResult(
+            ok=True,
+            type=action.type,
+            object_type="wp10_proposal",
+            object_id=proposal["id"],
+            message=f"Proposal eingereicht: {proposal['title'][:50]} (#{proposal['id']}, {type_label})",
+            dashboard_visible=True,
+        )
+    return ActionResult(ok=False, type=action.type, error="WP10 Proposal-Anlage fehlgeschlagen")
 
 
 def _run_calendar(action: Action, user_id: str, context: dict | None) -> ActionResult:

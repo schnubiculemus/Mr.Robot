@@ -1206,6 +1206,10 @@ def init_soul_proposals_table(conn=None):
     init_kimi_proposals_table(conn)
     init_kimi_output_log_table(conn)
 
+    # WP10: Formale Proposal-Schicht
+    from core.proposal_service_wp10 import init_wp10_proposals_table
+    init_wp10_proposals_table(conn)
+
     # WP2: Active Working Context Tabelle
     conn.execute("""
         CREATE TABLE IF NOT EXISTS active_working_context (
