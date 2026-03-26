@@ -1229,6 +1229,7 @@ def init_soul_proposals_table(conn=None):
     conn.execute("""
         CREATE TABLE IF NOT EXISTS cognition_requests (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL DEFAULT '',
             request_type TEXT NOT NULL DEFAULT 'post_interaction',
             priority TEXT NOT NULL DEFAULT 'light',
             status TEXT NOT NULL DEFAULT 'pending',
@@ -1241,7 +1242,7 @@ def init_soul_proposals_table(conn=None):
     """)
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_cognition_requests_status "
-        "ON cognition_requests(status, created_at DESC)"
+        "ON cognition_requests(status, user_id, created_at DESC)"
     )
 
     conn.commit()

@@ -492,11 +492,26 @@ def process(request: KimiCoreRequest) -> KimiCoreResult:
                     "delegations": delegations,
                     "text_preview": request.text[:80],
                 }, ensure_ascii=False)
+                # source_turn_id: letzte Chat-Message-ID als Referenz
+                _turn_id = ""
+                try:
+                    _last_msg = _conn.execute(
+                        "SELECT id FROM messages WHERE phone_number=? "
+                        "ORDER BY id DESC LIMIT 1",
+                        (request.user_id,)
+                    ).fetchone()
+                    if _last_msg:
+                        _turn_id = str(_last_msg["id"])
+                except Exception:
+                    pass
+
                 _conn.execute(
                     """INSERT INTO cognition_requests
-                       (request_type, priority, status, source_context, created_at)
-                       VALUES (?, ?, 'pending', ?, ?)""",
-                    ("post_interaction", "light", _source_ctx, _cog_iso()),
+                       (user_id, request_type, priority, status,
+                        source_turn_id, source_context, created_at)
+                       VALUES (?, ?, 'light', 'pending', ?, ?, ?)""",
+                    (request.user_id, "post_interaction",
+                     _turn_id, _source_ctx, _cog_iso()),
                 )
                 _conn.commit()
                 logger.debug("KimiCore: Post-Interaction Cognition Request erstellt")
