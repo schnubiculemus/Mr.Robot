@@ -6,10 +6,22 @@ Entfernt cognition_note und proposal_seed aus memory_active (Chroma).
 Überführt sie optional in cognition_entries (SQLite).
 self_reflection bleibt in Chroma — das ist eine andere Ebene.
 
+Hinweis zur Semantik bei Migration:
+  - Alte Rohchunks haben keine semantische kind-Information (observation/insight/etc.)
+  - cognition_note → kind="observation" (generisch, da ursprüngliche Form verloren)
+  - proposal_seed  → kind="proposal_seed" (erhalten, da Typ eindeutig)
+  - status="discarded" — diese alten Chunks sind nicht mehr aktiv relevant
+
+Hinweis zu user_id:
+  - Alte Chroma-Chunks haben keine echte user_id im Metadata
+  - user_id wird aus USER_CONTEXTS (erster Eintrag) geholt
+  - Dieses System läuft faktisch single-user — das ist robust genug
+  - Bei Multi-User-Bedarf muss user_id manuell gesetzt werden
+
 Verwendung:
     python3 scripts/migrate_cognition_chunks.py --dry-run    # nur anzeigen
     python3 scripts/migrate_cognition_chunks.py --migrate    # SQLite übernehmen + Chroma bereinigen
-    python3 scripts/migrate_cognition_chunks.py --purge-only # nur aus Chroma löschen
+    python3 scripts/migrate_cognition_chunks.py --purge-only # nur aus Chroma löschen (ohne SQLite-Übernahme)
 """
 
 import sys
