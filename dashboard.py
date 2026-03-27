@@ -2234,10 +2234,8 @@ def api_proposals_get():
     proposal_type = request.args.get("type")
     try:
         from core.proposal_service_wp10 import list_proposals
-        # Status-Mapping: alte UI-Begriffe auf WP10-Status
-        status_map = {"pending": "open", "approved": "accepted",
-                      "rejected": "rejected", "deferred": "withdrawn", "all": None}
-        wp10_status = status_map.get(status, status)
+        # WP10: direkt WP10-Status, kein Legacy-Mapping
+        wp10_status = None if status == "all" else status
         proposals = list_proposals(
             owner_id=user_id,
             status=wp10_status,
@@ -2245,15 +2243,12 @@ def api_proposals_get():
             limit=100,
         )
         all_p = list_proposals(owner_id=user_id, status=None, limit=500)
+        # WP10: nur noch WP10-Status, keine Legacy-Aliase
         stats = {
             "open":      sum(1 for p in all_p if p.get("status") == "open"),
             "accepted":  sum(1 for p in all_p if p.get("status") == "accepted"),
             "rejected":  sum(1 for p in all_p if p.get("status") == "rejected"),
             "withdrawn": sum(1 for p in all_p if p.get("status") == "withdrawn"),
-            # Legacy-Aliase für UI-Kompatibilität
-            "pending":   sum(1 for p in all_p if p.get("status") == "open"),
-            "approved":  sum(1 for p in all_p if p.get("status") == "accepted"),
-            "deferred":  sum(1 for p in all_p if p.get("status") == "withdrawn"),
         }
         return jsonify({"proposals": proposals, "stats": stats})
     except Exception as e:

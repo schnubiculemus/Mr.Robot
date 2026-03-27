@@ -1113,66 +1113,7 @@ def init_soul_proposals_table(conn=None):
     if _own_conn:
         conn.commit()
         conn.close()
-
-    # Heartbeat-Timeline
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS heartbeat_runs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            run_id TEXT NOT NULL UNIQUE,
-            user_id TEXT NOT NULL,
-            started_at TEXT NOT NULL,
-            finished_at TEXT,
-            steps_json TEXT,
-            summary TEXT,
-            had_error INTEGER NOT NULL DEFAULT 0
-        )
-    """)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_hb_runs_ts ON heartbeat_runs(started_at DESC)")
-
-    # Search Log
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS search_log (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp TEXT NOT NULL,
-            user_id TEXT NOT NULL,
-            query TEXT NOT NULL,
-            success INTEGER NOT NULL DEFAULT 1,
-            result_length INTEGER,
-            user_message_preview TEXT
-        )
-    """)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_search_log_ts ON search_log(timestamp DESC)")
-
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS moltbook_log (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp TEXT NOT NULL,
-            user_id TEXT NOT NULL,
-            query TEXT NOT NULL,
-            result_count INTEGER NOT NULL DEFAULT 0,
-            post_titles TEXT,
-            reflection_preview TEXT
-        )
-    """)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_moltbook_log_ts ON moltbook_log(timestamp DESC)")
-
-    # Proposed Patterns: Kimi-eigene Verhaltenshypothesen
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS proposed_patterns (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            chunk_id TEXT UNIQUE NOT NULL,
-            created_at TEXT NOT NULL,
-            name TEXT NOT NULL,
-            description TEXT NOT NULL,
-            evidence TEXT NOT NULL,
-            occurrences INTEGER NOT NULL DEFAULT 1,
-            last_seen TEXT NOT NULL,
-            confidence REAL NOT NULL DEFAULT 0.5,
-            status TEXT NOT NULL DEFAULT 'open',
-            status_changed_at TEXT,
-            promoted_to TEXT
-        )
-    """)
+    # WP10: Altcode-Block hier entfernt (cursor war undefiniert, dead code)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_proposed_patterns_status ON proposed_patterns(status)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_proposed_patterns_ts ON proposed_patterns(created_at DESC)")
 

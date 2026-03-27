@@ -27,6 +27,9 @@ V3 vs V2x:
 - Arbeitslinien statt Einzelobjekte
 - Entscheidungen werden erklaert und historisch gespeichert
 - Dashboard-sichtbar
+
+WP10: Alle kimi_proposals-Queries in dieser Datei sind legacy_compat.
+Nutze wp10_proposals für aktive Proposals.
 """
 import logging
 import json

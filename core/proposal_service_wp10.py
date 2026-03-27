@@ -228,26 +228,52 @@ def update_proposal_status(
 ) -> bool:
     """
     Aktualisiert den Status eines Proposals.
-    Nur erlaubte Übergänge: open → accepted/rejected/withdrawn
+    Nur erlaubte Übergänge: open → accepted | rejected | withdrawn
 
-    WP10-Garantie: kein automatischer Folge-Task/Todo/ORBIT.
+    Harte Zustandslogik (WP10):
+    - Proposal muss existieren
+    - Ausgangsstatus muss 'open' sein
+    - Zielstatus muss gültig sein
+    - Kein automatischer Folge-Task/Todo/ORBIT
     """
     if new_status not in PROPOSAL_STATUSES:
         logger.warning(f"update_proposal_status: ungültiger Status '{new_status}'")
         return False
 
-    now = to_iso()
+    if new_status == "open":
+        logger.warning("update_proposal_status: 'open' ist kein Zielstatus")
+        return False
+
     try:
         conn = get_connection()
         try:
-            conn.execute(
+            # Proposal muss existieren und im Status 'open' sein
+            row = conn.execute(
+                "SELECT status FROM wp10_proposals WHERE id=?", (proposal_id,)
+            ).fetchone()
+            if not row:
+                logger.warning(f"update_proposal_status: Proposal #{proposal_id} nicht gefunden")
+                return False
+            current = row["status"]
+            if current != "open":
+                logger.warning(
+                    f"update_proposal_status: Proposal #{proposal_id} ist bereits '{current}' "
+                    f"— Übergang nach '{new_status}' nicht erlaubt"
+                )
+                return False
+
+            now = to_iso()
+            result = conn.execute(
                 """UPDATE wp10_proposals
                    SET status=?, decision_note=?, updated_at=?, decided_at=?
-                   WHERE id=?""",
+                   WHERE id=? AND status='open'""",
                 (new_status, decision_note, now, now, proposal_id)
             )
             conn.commit()
-            logger.info(f"WP10 Proposal #{proposal_id} → {new_status}")
+            if result.rowcount == 0:
+                logger.warning(f"update_proposal_status: kein Update für #{proposal_id}")
+                return False
+            logger.info(f"WP10 Proposal #{proposal_id}: open → {new_status}")
             return True
         finally:
             conn.close()

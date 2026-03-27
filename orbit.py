@@ -1168,7 +1168,7 @@ def _handle_tool_result(trigger: dict) -> None:
             reason = detail or "interner Blocker"
             task_transition(task_id, "failed", reason=f"Blockiert: {reason}")
             try:
-                from core.proposal_service import set_last_error
+                # WP10: set_last_error entfernt (legacy)
                 if task.get("proposal_id"):
                     set_last_error(int(task["proposal_id"]), reason)
             except Exception:
@@ -3035,7 +3035,7 @@ TOOL_REGISTRY = {
     # Kalender
     "calendar_read":      {"criticality": "kontextkritisch", "usage": ["read"],           "type": "extern",        "write_indirect": False},
     "calendar_write":     {"criticality": "kritisch",        "usage": ["write"],          "type": "extern",        "write_indirect": False},
-    "proposal_write":     {"criticality": "kritisch",        "usage": ["write"],          "type": "intern",        "write_indirect": False},
+    "proposal_write":     {"criticality": "kritisch",        "usage": ["write"],          "type": "intern",        "write_indirect": False},  # WP10: deaktiviert
     "calendar_change":    {"criticality": "kritisch",        "usage": ["change"],         "type": "extern",        "write_indirect": False},
     "calendar_delete":    {"criticality": "kritisch",        "usage": ["delete"],         "type": "extern",        "write_indirect": False},
     # Todos/Listen
