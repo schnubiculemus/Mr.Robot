@@ -14,8 +14,8 @@ Hinweis zur Semantik bei Migration:
 
 Hinweis zu user_id:
   - Alte Chroma-Chunks haben keine echte user_id im Metadata
-  - user_id wird aus USER_CONTEXTS (erster Eintrag) geholt
-  - Dieses System läuft faktisch single-user — das ist robust genug
+  - user_id wird aus OWNER_ID (config.py) geholt — kanonisch für Single-User-Betrieb
+  - Fallback: erster Eintrag aus USER_CONTEXTS
   - Bei Multi-User-Bedarf muss user_id manuell gesetzt werden
 
 Verwendung:
@@ -89,13 +89,21 @@ def main():
     if args.migrate or args.purge_only:
         conn = get_connection() if args.migrate else None
 
+        # user_id einmalig vor der Schleife bestimmen — Chunks haben keine echte user_id im Meta.
+        # Single-User-Betrieb: OWNER_ID ist kanonisch. USER_CONTEXTS als Fallback.
+        from config import OWNER_ID, USER_CONTEXTS
+        if OWNER_ID:
+            real_user_id = OWNER_ID
+        elif USER_CONTEXTS:
+            real_user_id = list(USER_CONTEXTS.keys())[0]
+        else:
+            print("FEHLER: weder OWNER_ID noch USER_CONTEXTS gesetzt — Abbruch.")
+            sys.exit(1)
+
         for cid, doc, meta in zip(ids, docs, metas):
             if args.migrate and conn:
                 # In SQLite übernehmen (als discarded — war Rohdenkoutput)
                 try:
-                    # user_id: aus config holen — alte Chunks haben keine echte user_id im meta
-                    from config import USER_CONTEXTS
-                    real_user_id = list(USER_CONTEXTS.keys())[0]
 
                     # kind: chunk_type ist "cognition_note" oder "proposal_seed"
                     # Semantische Denkform (observation/insight/etc.) geht beim Migration verloren

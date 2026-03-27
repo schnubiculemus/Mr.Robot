@@ -3,7 +3,7 @@ core/cognition_store.py — Raw Cognition Store (WP9 Hygiene)
 
 Drei Ebenen:
   A. Raw Cognition → SQLite (cognition_entries) — vorläufig, flüchtig, intern
-  B. Promoted Cognition → Chroma/memory_active (self_reflection, proposed_pattern) — verdichtet
+  B. Promoted Cognition → Chroma/memory_active (self_reflection) — verdichtet, nur insight/self_correction
   C. Operative Folge → wp10_proposals — formaler Vorschlag
 
 Prinzip: memory_active ist verdichtetes Gedächtnis, nicht Kimis ungebremstes inneres Tagebuch.
