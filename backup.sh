@@ -1,5 +1,5 @@
 #!/bin/bash
-# SchnuBot.ai — Backup
+# SchnuBot.ai — Backup (W11: konsistent, Dienste gestoppt)
 # Täglicher Cronjob: vollständiger Tarball + Rotation
 # Restore: bash restore.sh <backup-datei>
 
@@ -11,6 +11,11 @@ BACKUP_FILE="$BACKUP_DIR/schnubot_backup_${DATE}.tar.gz"
 LOG="$PROJECT_DIR/logs/backup.log"
 
 mkdir -p "$BACKUP_DIR"
+
+# W11: Dienste stoppen vor Backup — kein paralleler Chroma-Zugriff
+echo "$(date): Stoppe Services für konsistentes Backup..." | tee -a "$LOG"
+systemctl stop schnubot schnubot-cognition schnubot-dashboard 2>/dev/null
+sleep 3
 
 # Dateien die gesichert werden
 TARGETS=(
@@ -43,8 +48,29 @@ if [ $? -eq 0 ]; then
     echo "$(date): Backup OK: $BACKUP_FILE ($SIZE)" | tee -a "$LOG"
 else
     echo "$(date): FEHLER beim Tarball!" | tee -a "$LOG" >&2
+    # Dienste wieder starten auch bei Fehler
+    systemctl start schnubot schnubot-dashboard schnubot-cognition 2>/dev/null
     exit 1
 fi
+
+# W11: Chroma-Healthcheck nach Backup (Backup auf Lesbarkeit prüfen)
+echo "$(date): Prüfe Backup-Integrität..." | tee -a "$LOG"
+HEALTH_OK=true
+
+# Temporäres Entpacken für Healthcheck
+TMPDIR=$(mktemp -d)
+tar -xzf "$BACKUP_FILE" -C "$TMPDIR" "data/chromadb" 2>/dev/null
+if [ $? -eq 0 ]; then
+    HEALTH_RESULT=$(cd "$PROJECT_DIR" && source venv/bin/activate 2>/dev/null && \
+        CHROMA_TEST_PATH="$TMPDIR/data/chromadb" python3 scripts/chroma_healthcheck.py 2>&1)
+    if echo "$HEALTH_RESULT" | grep -q "BACKUP_OK"; then
+        echo "$(date): Healthcheck OK" | tee -a "$LOG"
+    else
+        echo "$(date): Healthcheck WARN: $HEALTH_RESULT" | tee -a "$LOG"
+        HEALTH_OK=false
+    fi
+fi
+rm -rf "$TMPDIR"
 
 # Rotation: nur die letzten MAX_BACKUPS behalten
 BACKUP_COUNT=$(ls -1 "$BACKUP_DIR"/schnubot_backup_*.tar.gz 2>/dev/null | wc -l)
@@ -55,3 +81,17 @@ if [ "$BACKUP_COUNT" -gt "$MAX_BACKUPS" ]; then
 fi
 
 echo "$(date): Verfügbare Backups: $(ls -1 $BACKUP_DIR/schnubot_backup_*.tar.gz 2>/dev/null | wc -l)" | tee -a "$LOG"
+
+# W11: Dienste wieder starten
+echo "$(date): Starte Services..." | tee -a "$LOG"
+systemctl start schnubot 2>/dev/null
+sleep 5
+systemctl start schnubot-dashboard 2>/dev/null
+sleep 5
+systemctl start schnubot-cognition 2>/dev/null
+
+if $HEALTH_OK; then
+    echo "$(date): Backup abgeschlossen — Healthcheck grün" | tee -a "$LOG"
+else
+    echo "$(date): Backup abgeschlossen — Healthcheck WARN (Backup erstellt, aber Chroma-Prüfung nicht vollständig)" | tee -a "$LOG"
+fi
