@@ -91,23 +91,24 @@ def init_cognition_entries_table(conn=None) -> None:
 # =============================================================================
 
 def daily_cognition_count(user_id: str, kind: str = None) -> int:
-    """Zählt gespeicherte Einträge für heute."""
+    """Zählt gespeicherte Einträge der letzten 24h (UTC-Cutoff statt Datums-LIKE)."""
     try:
-        from core.datetime_utils import now_berlin
-        today = now_berlin().strftime("%Y-%m-%d")
+        from datetime import datetime, timezone, timedelta
+        # UTC-basiertes 24h-Fenster statt Datumsgrenze — keine Berlin/UTC-Schieflagen
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
         conn = get_connection()
         try:
             if kind:
                 row = conn.execute(
                     "SELECT COUNT(*) FROM cognition_entries "
-                    "WHERE user_id=? AND kind=? AND created_at LIKE ?",
-                    (user_id, kind, f"{today}%")
+                    "WHERE user_id=? AND kind=? AND created_at > ?",
+                    (user_id, kind, cutoff)
                 ).fetchone()
             else:
                 row = conn.execute(
                     "SELECT COUNT(*) FROM cognition_entries "
-                    "WHERE user_id=? AND created_at LIKE ?",
-                    (user_id, f"{today}%")
+                    "WHERE user_id=? AND created_at > ?",
+                    (user_id, cutoff)
                 ).fetchone()
             return row[0] if row else 0
         finally:

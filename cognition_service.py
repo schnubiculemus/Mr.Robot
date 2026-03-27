@@ -590,6 +590,43 @@ def _run_inner_dialogue(forms: list[dict], tensions: list[dict]) -> list[dict]:
 # Reflection-Run
 # =============================================================================
 
+def _run_promotion(user_id: str, reflection_level: str) -> None:
+    """
+    Phase 3: Promotion Layer.
+    Prüft SQLite-Einträge der letzten 2 Stunden auf Promotionswürdigkeit.
+    Nur bei medium/deep — nicht bei jedem light-Lauf.
+    """
+    try:
+        from core.cognition_store import (
+            list_recent_cognition_entries, promote_to_chroma, promote_to_wp10
+        )
+        # Nur frische Einträge aus diesem Lauf prüfen (letzte 2h, raw)
+        candidates = list_recent_cognition_entries(user_id, limit=20, hours=2, status="raw")
+        promoted_count = 0
+        wp10_count = 0
+
+        for entry in candidates:
+            kind = entry.get("kind", "")
+            # → Chroma: nur insights und self_corrections mit conf >= 0.75
+            if kind in ("insight", "self_correction"):
+                chunk_id = promote_to_chroma(entry, user_id)
+                if chunk_id:
+                    promoted_count += 1
+
+            # → WP10: nur konkrete proposal_seeds
+            elif kind == "proposal_seed" and entry.get("proposal_candidate"):
+                if promote_to_wp10(entry, user_id):
+                    wp10_count += 1
+
+        if promoted_count or wp10_count:
+            logger.info(
+                f"Promotion [{reflection_level}]: "
+                f"{promoted_count} → Chroma, {wp10_count} → WP10"
+            )
+    except Exception as e:
+        logger.debug(f"_run_promotion fehlgeschlagen (unkritisch): {e}")
+
+
 def run_reflection(
     user_id: str,
     reflection_level: str,
@@ -634,6 +671,10 @@ def run_reflection(
 
     stored = _store_cognition_outputs(forms, user_id, reflection_level, source_context)
     _write_diary_entry(forms, reflection_level)
+
+    # Phase 3: Promotion — bei medium/deep belastbare Einsichten nach Chroma befördern
+    if reflection_level in ("medium", "deep") and stored > 0:
+        _run_promotion(user_id, reflection_level)
 
     logger.info(f"Reflexion [{reflection_level}]: {len(forms)} Denkformen, {stored} gespeichert")
     return stored

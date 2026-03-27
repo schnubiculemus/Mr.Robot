@@ -69,13 +69,16 @@ _write_diary_entry() → diary/YYYY-MM-DD.md
 
 ---
 
-## Outputs
+## Outputs (Cognition-Hygiene)
 
-| Ziel | Inhalt | Chunk-Typ |
+| Ziel | Inhalt | Status |
 |---|---|---|
-| ChromaDB | observation, tension, question, insight, self_correction | `cognition_note` |
-| ChromaDB | proposal_seed | `proposal_seed` |
+| SQLite (`cognition_entries`) | observation, tension, question, insight, self_correction, proposal_seed | Raw Cognition |
+| Chroma (`memory_active`) | insight, self_correction → `self_reflection` (nur nach Promotion) | Promoted Cognition |
+| WP10 (`wp10_proposals`) | proposal_seed → formaler Vorschlag (nur nach Promotion) | Operative Folge |
 | diary/ | Diary-Eintrag bei medium/deep oder insights/tensions | Markdown |
+
+**Prinzip:** Raw Cognition geht nie direkt nach Chroma. Nur promovierte Einsichten steigen auf.
 
 ---
 
@@ -126,9 +129,9 @@ Springt an bei: KIND_TENSION in medium/deep Läufen
 
 ## Beziehung zu WP10
 
-WP9 erzeugt `proposal_seed` Chunks in ChromaDB.
-WP10 kann daraus formale Proposals machen — nicht automatisch, sondern nach Prüfung.
-Ein proposal_seed ist kein Task, kein Todo, keine automatische Weiterverarbeitung.
+WP9 erzeugt `proposal_seed` Einträge in SQLite (`cognition_entries`).
+Promotion nach WP10 erfolgt über `cognition_store.promote_to_wp10()` — nicht automatisch.
+Nur konkrete, handlungsnahe proposal_seeds mit `proposal_candidate=True` steigen auf.
 
 ---
 

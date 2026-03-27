@@ -81,6 +81,16 @@ def main():
             if args.migrate and conn:
                 # In SQLite übernehmen (als discarded — war Rohdenkoutput)
                 try:
+                    # user_id: aus config holen — alte Chunks haben keine echte user_id im meta
+                    from config import USER_CONTEXTS
+                    real_user_id = list(USER_CONTEXTS.keys())[0]
+
+                    # kind: chunk_type ist "cognition_note" oder "proposal_seed"
+                    # Semantische Denkform (observation/insight/etc.) geht beim Migration verloren
+                    # — als "observation" (generisch) speichern, nicht als chunk_type
+                    chunk_t = meta.get("chunk_type", "cognition_note")
+                    migrated_kind = "proposal_seed" if chunk_t == "proposal_seed" else "observation"
+
                     conn.execute(
                         """INSERT OR IGNORE INTO cognition_entries
                            (id, user_id, kind, text, confidence, reflection_level,
@@ -88,8 +98,8 @@ def main():
                            VALUES (?,?,?,?,?,?,'migrated_from_chroma','discarded',?)""",
                         (
                             cid,
-                            meta.get("source", "").replace("cognition:", ""),
-                            meta.get("chunk_type", "cognition_note"),
+                            real_user_id,
+                            migrated_kind,
                             doc,
                             float(meta.get("confidence", 0.7)),
                             meta.get("reflection_level", "unknown"),
