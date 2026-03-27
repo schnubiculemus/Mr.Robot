@@ -508,6 +508,45 @@ def init_db():
         "ON wp10_proposals(proposal_type, status)"
     )
 
+    # WP2: Active Working Context
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS active_working_context (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            owner_id TEXT NOT NULL,
+            active_line TEXT,
+            active_goal TEXT,
+            active_document TEXT,
+            last_clean_state TEXT,
+            last_decision TEXT,
+            next_open_question TEXT,
+            proposed_switch_to TEXT,
+            proposed_switch_reason TEXT,
+            proposed_switch_confirmed INTEGER DEFAULT 0,
+            updated_at TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+    """)
+
+    # WP9: Kognitions-Request-Queue
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS cognition_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL DEFAULT '',
+            request_type TEXT NOT NULL DEFAULT 'post_interaction',
+            priority TEXT NOT NULL DEFAULT 'light',
+            status TEXT NOT NULL DEFAULT 'pending',
+            source_turn_id TEXT,
+            source_context TEXT,
+            created_at TEXT NOT NULL,
+            claimed_at TEXT,
+            done_at TEXT
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_cognition_requests_status "
+        "ON cognition_requests(status, user_id, created_at DESC)"
+    )
+
     conn.commit()
     conn.close()
     logger.info("Datenbank initialisiert (WAL-Modus + ORBIT-Tabellen + WP10)")
@@ -1113,105 +1152,7 @@ def init_soul_proposals_table(conn=None):
     if _own_conn:
         conn.commit()
         conn.close()
-    # WP10: Altcode-Block hier entfernt (cursor war undefiniert, dead code)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_proposed_patterns_status ON proposed_patterns(status)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_proposed_patterns_ts ON proposed_patterns(created_at DESC)")
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS moltbook_posts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            post_id TEXT UNIQUE NOT NULL,
-            created_at TEXT NOT NULL,
-            title TEXT NOT NULL,
-            content TEXT,
-            submolt TEXT DEFAULT 'general',
-            triggered_by TEXT,
-            upvotes INTEGER DEFAULT 0,
-            comment_count INTEGER DEFAULT 0,
-            last_checked TEXT
-        )
-    """)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_moltbook_posts_ts ON moltbook_posts(created_at DESC)")
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS moltbook_inbox (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            received_at TEXT NOT NULL,
-            post_id TEXT NOT NULL,
-            post_title TEXT,
-            author TEXT NOT NULL,
-            content TEXT NOT NULL,
-            comment_id TEXT,
-            processed INTEGER DEFAULT 0,
-            direction TEXT DEFAULT 'in'
-        )
-    """)
-    # Migration: add direction column if missing
-    try:
-        conn.execute("ALTER TABLE moltbook_inbox ADD COLUMN direction TEXT DEFAULT 'in'")
-        conn.commit()
-    except Exception:
-        pass
-    # Migration: unique index on comment_id to prevent duplicate entries from backfill
-    try:
-        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_moltbook_inbox_comment_id ON moltbook_inbox(comment_id) WHERE comment_id IS NOT NULL AND comment_id != ''")
-        conn.commit()
-    except Exception:
-        pass
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_moltbook_inbox_ts ON moltbook_inbox(received_at DESC)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_moltbook_inbox_post ON moltbook_inbox(post_id)")
-
-    # Todos
-    from core.todos import init_todos_table
-    init_todos_table(conn)
-
-    # Soul Proposals
-    init_soul_proposals_table(conn)
-    init_kimi_proposals_table(conn)
-    init_kimi_output_log_table(conn)
-
-    # WP10: Formale Proposal-Schicht
-    from core.proposal_service_wp10 import init_wp10_proposals_table
-    init_wp10_proposals_table(conn)
-
-    # WP2: Active Working Context Tabelle
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS active_working_context (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
-            owner_id TEXT NOT NULL,
-            active_line TEXT,
-            active_goal TEXT,
-            active_document TEXT,
-            last_clean_state TEXT,
-            last_decision TEXT,
-            next_open_question TEXT,
-            proposed_switch_to TEXT,
-            proposed_switch_reason TEXT,
-            proposed_switch_confirmed INTEGER DEFAULT 0,
-            updated_at TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        )
-    """)
-
-    # WP9: Kognitions-Request-Queue
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS cognition_requests (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id TEXT NOT NULL DEFAULT '',
-            request_type TEXT NOT NULL DEFAULT 'post_interaction',
-            priority TEXT NOT NULL DEFAULT 'light',
-            status TEXT NOT NULL DEFAULT 'pending',
-            source_turn_id TEXT,
-            source_context TEXT,
-            created_at TEXT NOT NULL,
-            claimed_at TEXT,
-            done_at TEXT
-        )
-    """)
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_cognition_requests_status "
-        "ON cognition_requests(status, user_id, created_at DESC)"
-    )
+    # WP10: Altcode vollständig entfernt (war dead code nach conn.close())
 
     conn.commit()
     conn.close()
