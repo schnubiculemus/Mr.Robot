@@ -85,16 +85,25 @@ fi
 
 echo "$(date): Verfügbare Backups: $(ls -1 $BACKUP_DIR/schnubot_backup_*.tar.gz 2>/dev/null | wc -l)" | tee -a "$LOG"
 
-# W11: Dienste wieder starten
-echo "$(date): Starte Services..." | tee -a "$LOG"
+# W11: Dienste gestuft wieder starten (wie restore.sh)
+echo "$(date): Starte Services gestuft..." | tee -a "$LOG"
 systemctl start schnubot 2>/dev/null
 sleep 5
+systemctl is-active schnubot --quiet && echo "$(date): schnubot: aktiv" | tee -a "$LOG" || echo "$(date): schnubot: WARN nicht aktiv" | tee -a "$LOG"
+
 systemctl start schnubot-dashboard 2>/dev/null
 sleep 5
+systemctl is-active schnubot-dashboard --quiet && echo "$(date): schnubot-dashboard: aktiv" | tee -a "$LOG" || echo "$(date): schnubot-dashboard: WARN nicht aktiv" | tee -a "$LOG"
+
 systemctl start schnubot-cognition 2>/dev/null
+sleep 5
+systemctl is-active schnubot-cognition --quiet && echo "$(date): schnubot-cognition: aktiv" | tee -a "$LOG" || echo "$(date): schnubot-cognition: WARN nicht aktiv" | tee -a "$LOG"
 
 if $HEALTH_OK; then
     echo "$(date): Backup abgeschlossen — Healthcheck grün" | tee -a "$LOG"
+    exit 0
 else
-    echo "$(date): Backup abgeschlossen — Healthcheck WARN (Backup erstellt, aber Chroma-Prüfung nicht vollständig)" | tee -a "$LOG"
+    echo "$(date): Backup WARN — Backup erstellt, aber Chroma-Healthcheck nicht bestanden" | tee -a "$LOG"
+    echo "$(date): Backup-Datei: $BACKUP_FILE (vorhanden, aber nicht als Gold-Backup freigegeben)" | tee -a "$LOG"
+    exit 2
 fi

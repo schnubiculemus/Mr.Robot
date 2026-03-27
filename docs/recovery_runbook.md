@@ -40,7 +40,9 @@ sleep 3
 tar -czf /opt/whatsapp-bot/backups/schnubot_backup_$(date +%Y-%m-%d_%H%M).tar.gz \
     -C /opt/whatsapp-bot \
     data/bot.db data/chromadb soul.md rules.md tools.md heartbeat_state.json diary
-systemctl start schnubot schnubot-dashboard schnubot-cognition
+systemctl start schnubot && sleep 5 && systemctl is-active schnubot
+systemctl start schnubot-dashboard && sleep 5 && systemctl is-active schnubot-dashboard
+systemctl start schnubot-cognition && sleep 5 && systemctl is-active schnubot-cognition
 ```
 
 ---
