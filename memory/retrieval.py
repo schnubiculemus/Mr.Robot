@@ -245,8 +245,22 @@ def score_and_select(query, n_candidates=60):
     Returns:
         Liste von Chunks mit _retrieval_score, sortiert nach Score
     """
+    # Chunk-Typen die Raw Cognition sind — dürfen nicht ins normale Retrieval
+    _RAW_COGNITION_TYPES = {"cognition_note", "proposal_seed"}
+
     # 1. Kandidaten aus ChromaDB
     candidates = query_active(query, n_results=n_candidates)
+
+    if not candidates:
+        _log_retrieval(query, [], [], [], fallback=False, empty=True)
+        return []
+
+    # Harte Retrieval-Regel: Raw Cognition aus normalem Retrieval ausschließen
+    before = len(candidates)
+    candidates = [c for c in candidates if c.get("chunk_type") not in _RAW_COGNITION_TYPES]
+    filtered = before - len(candidates)
+    if filtered > 0:
+        logger.debug(f"score_and_select: {filtered} Raw-Cognition-Chunks herausgefiltert")
 
     if not candidates:
         _log_retrieval(query, [], [], [], fallback=False, empty=True)
