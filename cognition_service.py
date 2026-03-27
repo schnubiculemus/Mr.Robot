@@ -303,15 +303,12 @@ def _gather_inputs(user_id: str, reflection_level: str) -> dict:
     except Exception as e:
         logger.debug(f"Diary nicht verfügbar: {e}")
 
-    # 5. Bisherige Cognition Notes (Echo)
+    # 5. Cognition Echo aus SQLite (nicht mehr aus Chroma)
     try:
-        from memory.memory_store import query_active
-        notes = query_active(
-            "Selbstreflexion Spannung Beobachtung Korrektur",
-            n_results=5,
-            where_filter={"chunk_type": "cognition_note"}
-        )
-        inputs["cognition_echo"] = notes or []
+        from core.cognition_store import list_recent_cognition_entries
+        recent = list_recent_cognition_entries(user_id, limit=8, hours=72)
+        # Format kompatibel mit bisherigem echo-Format
+        inputs["cognition_echo"] = [{"text": e["text"], "kind": e["kind"]} for e in recent]
     except Exception as e:
         logger.debug(f"Cognition Echo nicht verfügbar: {e}")
 
@@ -487,55 +484,25 @@ def _store_cognition_outputs(
     source_context: str = "",
 ) -> int:
     """
-    Speichert Denkformen in ChromaDB.
-    cognition_note oder proposal_seed — kein anderer Chunk-Typ.
+    Speichert rohe Denkformen in SQLite (cognition_entries) — NICHT in Chroma.
+
+    Architektur (WP9 Hygiene):
+      Raw Cognition (cognition_note, proposal_seed) → SQLite
+      Promoted Cognition (self_reflection) → Chroma (nur über Promotionspfad)
+      Operative Folge (WP10 proposal) → wp10_proposals
+
+    Limits werden in cognition_store.py enforced.
     """
-    if not forms:
-        return 0
-
     import uuid
-    from memory.memory_store import store_chunk
-    from core.datetime_utils import to_iso
-
-    stored = 0
-    now = to_iso()
-
-    for form in forms:
-        kind = form.get("kind", KIND_OBSERVATION)
-        text = form.get("text", "").strip()
-        if not text:
-            continue
-
-        chunk_type = "proposal_seed" if kind == KIND_PROPOSAL_SEED else "cognition_note"
-        chunk_id = f"cog_{uuid.uuid4().hex[:12]}"
-
-        chunk = {
-            "id": chunk_id,
-            "text": text,
-            "chunk_type": chunk_type,
-            "source": f"cognition:{reflection_level}",
-            "status": "active",
-            "weight": 0.8,
-            "confidence": float(form.get("confidence", 0.7)),
-            "epistemic_status": "stated",
-            "created_at": now,
-            "tags": [],
-            # WP9-Metadaten
-            "kind": kind,
-            "reflection_level": reflection_level,
-            "related_line": form.get("related_line", ""),
-            "proposal_candidate": bool(form.get("proposal_candidate", False)),
-            "source_context": source_context[:200] if source_context else "",
-        }
-
-        try:
-            store_chunk(chunk)
-            stored += 1
-            logger.info(f"[{kind}] [{reflection_level}] {text[:70]}...")
-        except Exception as e:
-            logger.warning(f"store_chunk fehlgeschlagen: {e}")
-
-    return stored
+    from core.cognition_store import save_cognition_entries
+    run_id = uuid.uuid4().hex[:8]
+    return save_cognition_entries(
+        forms=forms,
+        user_id=user_id,
+        reflection_level=reflection_level,
+        source_context=source_context,
+        run_id=run_id,
+    )
 
 
 def _write_diary_entry(forms: list[dict], reflection_level: str) -> None:

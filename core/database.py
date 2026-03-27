@@ -527,6 +527,40 @@ def init_db():
         )
     """)
 
+    # WP9: Raw Cognition Store (Rohkognition → SQLite, nicht Chroma)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS cognition_entries (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            text TEXT NOT NULL,
+            confidence REAL DEFAULT 0.7,
+            reflection_level TEXT NOT NULL,
+            related_line TEXT DEFAULT '',
+            proposal_candidate INTEGER DEFAULT 0,
+            source_context TEXT DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'raw',
+            novelty_score REAL,
+            promoted_chunk_id TEXT DEFAULT '',
+            promoted_target TEXT DEFAULT '',
+            run_id TEXT DEFAULT '',
+            created_at TEXT NOT NULL,
+            promoted_at TEXT DEFAULT ''
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_cognition_entries_user_ts "
+        "ON cognition_entries(user_id, created_at DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_cognition_entries_status "
+        "ON cognition_entries(status, user_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_cognition_entries_kind "
+        "ON cognition_entries(kind, user_id, created_at DESC)"
+    )
+
     # WP9: Kognitions-Request-Queue
     conn.execute("""
         CREATE TABLE IF NOT EXISTS cognition_requests (
