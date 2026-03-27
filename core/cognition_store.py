@@ -314,7 +314,7 @@ def find_similar_recent_entries(
 def mark_promoted(
     entry_id: str,
     promoted_chunk_id: str = "",
-    promoted_target: str = "chroma",
+    promoted_target: str = "self_reflection",
 ) -> bool:
     """Markiert einen Eintrag als promoviert (→ Chroma oder WP10)."""
     try:
@@ -398,7 +398,7 @@ def promote_to_chroma(entry: dict, user_id: str) -> str | None:
             tags=["cognition:promoted", f"level:{entry.get('reflection_level', '')}"],
         )
         store_chunk(chunk)
-        mark_promoted(entry["id"], promoted_chunk_id=chunk["id"], promoted_target="chroma")
+        mark_promoted(entry["id"], promoted_chunk_id=chunk["id"], promoted_target="self_reflection")
         logger.info(f"Promoted → Chroma self_reflection: {entry['text'][:60]}")
         return chunk["id"]
     except Exception as e:

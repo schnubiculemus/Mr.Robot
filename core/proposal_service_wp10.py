@@ -26,7 +26,7 @@ Sperrrregeln (absolut):
   - Kein Proposal → automatische Umsetzung
 
 Übergang von WP9:
-  proposal_seed (ChromaDB, intern, roh) → Proposal (SQLite, formal, sichtbar)
+  proposal_seed (SQLite/cognition_entries, intern, roh) → Proposal (SQLite/wp10_proposals, formal, sichtbar)
   Nur über expliziten Einreichungsakt — keine automatische Konvertierung.
 """
 
@@ -300,10 +300,9 @@ def create_from_seed(
     """
     Erstellt ein formales WP10-Proposal aus einem WP9-proposal_seed-Chunk.
 
-    Übergang: proposal_seed (ChromaDB, intern, roh) → Proposal (SQLite, formal, sichtbar)
+    Übergang: proposal_seed (SQLite/cognition_entries, roh) → Proposal (SQLite/wp10_proposals, formal)
 
     WP10-Garantie: Dieser Akt ist explizit — keine automatische Konvertierung.
-    Der Seed bleibt in ChromaDB bestehen (kein Löschen).
     """
     text = seed_chunk.get("text", "").strip()
     if not text:

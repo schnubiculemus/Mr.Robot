@@ -15,8 +15,9 @@ Sperrrregeln (absolut):
   - Keine automatische Proposal-Einreichung
 
 Outputs:
-  - ChromaDB chunk_type="cognition_note"  (observation/tension/question/insight/self_correction)
-  - ChromaDB chunk_type="proposal_seed"   (proposal_seed → WP10)
+  - SQLite cognition_entries (Raw: observation/tension/question/insight/self_correction/proposal_seed)
+  - Chroma self_reflection    (Promoted via cognition_store.promote_to_chroma — nur insight/self_correction)
+  - wp10_proposals            (Operative Folge via cognition_store.promote_to_wp10 — nur proposal_seed)
   - diary/YYYY-MM-DD.md                   (subjektive Verlaufsform, medium/deep)
 
 Queue:
