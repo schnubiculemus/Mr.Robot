@@ -1453,42 +1453,9 @@ def _maybe_start_task_legacy(chosen: list, owner_id: str) -> list:
         if line["type"] == "proposal" and line["decision"] == START_LINE:
             proposal_class = line.get("proposal_class", "")
 
-            # 5.5: proposal_ready_for_work -> direkten proposal_write-Task starten
+            # WP10: proposal_ready_for_work + proposal_write deaktiviert (legacy_compat)
             if proposal_class == "proposal_ready_for_work":
-                try:
-                    import json as _jp55
-                    task_id_new = _orbit.create_task(
-                        task_type="action",
-                        goal=f"Proposal bewerten: {line['title'][:80]}",
-                        primary_origin=f"planner:proposal:{line['id']}",
-                        mode="internal",
-                        release_mode="summarize",
-                        priority="medium",
-                        linked_todo_id=None,
-                        goal_id=line.get("goal_id"),
-                        proposal_id=line["id"],
-                    )
-                    # Step 1: Proposal-Kontext lesen
-                    _orbit.create_step(
-                        task_id=task_id_new,
-                        step_type="todos_read",
-                        description=_jp55.dumps({"action": "list", "project": "kimi"}),
-                        tool_ref="todos_read",
-                        interruptible=True,
-                    )
-                    # Step 2: proposal_write -- ID explizit rein
-                    _orbit.create_step(
-                        task_id=task_id_new,
-                        step_type="proposal_write",
-                        description=_jp55.dumps({"action": "approve", "id": line["id"],
-                                                 "reason": "Planner: proposal_ready_for_work"}),
-                        tool_ref="proposal_write",
-                        interruptible=False,
-                    )
-                    started.append(line["id"])
-                    logger.info(f"Planner 5.5: Proposal-Task fuer Proposal #{line['id']} angelegt")
-                except Exception as _ep55:
-                    logger.warning(f"Planner 5.5: Proposal-Task fehlgeschlagen: {_ep55}")
+                logger.debug(f"Planner: proposal_ready_for_work ignoriert (WP10 legacy)")
                 continue
 
             # Vorarbeits-Todo suchen (alte Logik)

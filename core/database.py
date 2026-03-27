@@ -1039,8 +1039,8 @@ def init_kimi_b_schema(conn=None):
             content TEXT NOT NULL,
             payload_json TEXT,
             created_at TEXT NOT NULL,
-            FOREIGN KEY (goal_id) REFERENCES kimi_goals(id),
-            FOREIGN KEY (proposal_id) REFERENCES kimi_proposals(id)
+            FOREIGN KEY (goal_id) REFERENCES kimi_goals(id)
+            -- WP10: proposal_id FK zu kimi_proposals entfernt (legacy_compat)
         )
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_kimi_obs_task ON kimi_observations(task_id)")
@@ -1068,8 +1068,8 @@ def init_kimi_b_schema(conn=None):
 
 
 def init_kimi_proposals_table(conn=None):
-    """Rückwärtskompatibel — ruft init_kimi_b_schema auf."""
-    init_kimi_b_schema(conn)
+    """WP10: legacy_compat / delete_candidate — kimi_proposals wird nicht mehr aktiv genutzt."""
+    logger.debug("init_kimi_proposals_table: no-op (WP10 legacy_compat)")
 
 
 def init_kimi_output_log_table(conn=None):

@@ -343,7 +343,8 @@ def count_hot_tasks() -> int:
 # =============================================================================
 
 # Schreibende Tools -- erfordern automatisch commit_point=True
-_WRITE_TOOLS = {"workspace", "todos_write", "calendar_write", "proposal_write"}
+# WP10: proposal_write aus _WRITE_TOOLS entfernt (deaktiviert)
+_WRITE_TOOLS = {"workspace", "todos_write", "calendar_write"}
 
 
 def create_step(task_id: str, step_type: str, description: str = None,
@@ -1335,7 +1336,7 @@ def _e_append_next_step(task_id: str, next_step_hint: str, user_id: str, loop_co
         elif any(w in hint_lower for w in ["proposal", "vorschlag", "genehmigen", "ablehnen"]):
             # 5.5: Proposal-Statusaenderung via Gate -- Proposal-ID aus Task-Kontext
             import json as _j55, re as _re55
-            tool_ref = "proposal_write"
+            tool_ref = "proposal_write"  # WP10: deaktiviert, wird in execute_tool geblockt
             action = "approve"
             if any(w in hint_lower for w in ["ablehnen", "reject"]):
                 action = "reject"

@@ -74,6 +74,7 @@ RISK_MATRIX = {
     "proposal.approve": {"class": "B", "gate": "needs_approval", "verify": True,  "reversible": True,  "approval": True,  "compensation": "Proposal manuell genehmigen"},
     "proposal.reject":  {"class": "B", "gate": "needs_approval", "verify": True,  "reversible": True,  "approval": True,  "compensation": "Proposal manuell ablehnen oder Status zuruecksetzen"},
     "proposal.defer":   {"class": "B", "gate": "needs_approval", "verify": True,  "reversible": True,  "approval": True,  "compensation": "Proposal manuell zurueckstellen"},
+    "proposal.withdraw": {"class": "B", "gate": "needs_approval", "verify": True,  "reversible": True,  "approval": True,  "compensation": "Proposal manuell zurueckziehen"},
 
     # 7.x -- Workspace Artifact Actions (Klasse A)
     "workspace.artifact_create":      {"class": "A", "gate": "soft", "verify": True,  "reversible": True,  "approval": False, "compensation": "Artefakt manuell anlegen"},
@@ -721,7 +722,7 @@ def execute_proposal_action(action: str, params: dict) -> dict:
         return {"success": False, "error": "Keine Proposal-ID", "id": None}
 
     status_map = {"approve": "accepted", "accept": "accepted",
-                  "reject": "rejected", "defer": "withdrawn"}
+                  "reject": "rejected", "defer": "withdrawn", "withdraw": "withdrawn"}
     new_status = status_map.get(action)
     if not new_status:
         return {"success": False, "error": f"Unbekannte Aktion: {action}", "id": proposal_id}
@@ -743,7 +744,8 @@ def verify_proposal(action: str, params: dict, write_result: dict) -> tuple[bool
     if not proposal_id:
         return True, "ok (kein Verify ohne ID)"
     expected = {"approve": "accepted", "accept": "accepted",
-                "reject": "rejected", "defer": "withdrawn"}.get(action)
+                "reject": "rejected", "defer": "withdrawn",
+                "withdraw": "withdrawn"}.get(action)
     if not expected:
         return True, "ok"
     proposal = get_proposal(int(proposal_id))
