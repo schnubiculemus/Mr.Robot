@@ -114,12 +114,18 @@ journalctl -u schnubot-dashboard -n 20 --no-pager | grep -i error
 
 ## Parallele Zugriffe vermeiden
 
-**Kritische Regel:** Nie Chroma-Operationen starten während zwei Services gleichzeitig laufen.
+**Kritische Regel:** Backup-, Restore- und Rebuild-Operationen auf ChromaDB dürfen nie bei laufenden Services ausgeführt werden.
 
-Besonders problematisch:
-- Heartbeat + Cognition gleichzeitig auf Chroma
-- Restore während Dashboard läuft
-- Backup während Bot aktiv schreibt
+Verboten sind unkoordinierte Zugriffe bei:
+- Backup/Restore/Rebuild bei laufendem Bot, Dashboard oder Cognition-Service
+- Heartbeat während Cognition-Service aktiv auf Chroma schreibt
+- Recovery auf einem live belasteten Zustand
+
+Normal erlaubt ist:
+- Bot + Dashboard + Cognition gleichzeitig im normalen Betrieb
+- Heartbeat (per Cron) wenn keine andere Bulk-Operation läuft
+
+**Merkrege:** Recovery-Operationen brauchen Stille. Normalbetrieb braucht sie nicht.
 
 ---
 

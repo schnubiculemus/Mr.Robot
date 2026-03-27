@@ -1154,9 +1154,6 @@ def init_soul_proposals_table(conn=None):
         conn.close()
     # WP10: Altcode vollständig entfernt (war dead code nach conn.close())
 
-    conn.commit()
-    conn.close()
-
 
 def save_soul_proposal(proposal, reflections_used=0, diary_entries_used=0):
     """Speichert einen neuen Soul-Vorschlag."""

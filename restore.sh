@@ -40,15 +40,24 @@ echo "$(date): Stoppe ALLE Services..." | tee -a "$LOG"
 systemctl stop schnubot schnubot-cognition schnubot-dashboard 2>/dev/null
 sleep 3
 
-# Sicherheitskopie des aktuellen Zustands
+# Sicherheitskopie des aktuellen Zustands (W11: nur vorhandene Pfade)
 SAFETY_BACKUP="$PROJECT_DIR/backups/pre_restore_$(date +%Y-%m-%d_%H%M).tar.gz"
 echo "Erstelle Sicherheitskopie: $SAFETY_BACKUP"
-tar -czf "$SAFETY_BACKUP" -C "$PROJECT_DIR" \
-    data/bot.db data/chromadb data/token_usage.json data/tools_config.json \
-    soul.md rules.md tools.md architecture.md \
-    heartbeat_state.json arch_update_state.json soul_pr_pending.json \
-    diary 2>/dev/null
-echo "Sicherheitskopie erstellt."
+SAFETY_TARGETS=(
+    "data/bot.db" "data/chromadb" "data/token_usage.json" "data/tools_config.json"
+    "soul.md" "rules.md" "tools.md" "architecture.md"
+    "heartbeat_state.json" "arch_update_state.json" "soul_pr_pending.json" "diary"
+)
+SAFETY_EXISTING=()
+for t in "${SAFETY_TARGETS[@]}"; do
+    [ -e "$PROJECT_DIR/$t" ] && SAFETY_EXISTING+=("$t")
+done
+tar -czf "$SAFETY_BACKUP" -C "$PROJECT_DIR" "${SAFETY_EXISTING[@]}" 2>/dev/null
+if [ $? -eq 0 ]; then
+    echo "Sicherheitskopie erstellt: $SAFETY_BACKUP"
+else
+    echo "WARN: Sicherheitskopie fehlgeschlagen — Restore wird trotzdem fortgesetzt"
+fi
 
 # Chroma komplett entfernen vor Restore
 echo "Entferne altes chromadb..."
@@ -91,14 +100,27 @@ if [ "$HEALTH_EXIT" -eq 0 ]; then
     echo ""
     read -p "Bot jetzt starten? [j/N] " start_confirm
     if [ "$start_confirm" = "j" ] || [ "$start_confirm" = "J" ]; then
+        echo "Starte schnubot..."
         systemctl start schnubot
         sleep 5
+        systemctl is-active schnubot --quiet && echo "schnubot: aktiv" || echo "schnubot: WARN nicht aktiv"
+
+        echo "Starte schnubot-dashboard..."
         systemctl start schnubot-dashboard
         sleep 5
+        systemctl is-active schnubot-dashboard --quiet && echo "schnubot-dashboard: aktiv" || echo "schnubot-dashboard: WARN nicht aktiv"
+
+        echo "Starte schnubot-cognition..."
         systemctl start schnubot-cognition
+        sleep 5
+        systemctl is-active schnubot-cognition --quiet && echo "schnubot-cognition: aktiv" || echo "schnubot-cognition: WARN nicht aktiv"
+
         echo "$(date): Gestufter Start abgeschlossen" | tee -a "$LOG"
     else
-        echo "Services nicht gestartet — manuell starten wenn bereit."
+        echo "Services nicht gestartet — W11 Startsequenz manuell:"
+        echo "  systemctl start schnubot && sleep 5 && systemctl is-active schnubot"
+        echo "  systemctl start schnubot-dashboard && sleep 5 && systemctl is-active schnubot-dashboard"
+        echo "  systemctl start schnubot-cognition"
     fi
 else
     echo "Healthcheck: ROT — Backup nicht freigabefähig!"

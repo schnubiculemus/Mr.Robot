@@ -61,14 +61,17 @@ HEALTH_OK=true
 TMPDIR=$(mktemp -d)
 tar -xzf "$BACKUP_FILE" -C "$TMPDIR" "data/chromadb" 2>/dev/null
 if [ $? -eq 0 ]; then
-    HEALTH_RESULT=$(cd "$PROJECT_DIR" && source venv/bin/activate 2>/dev/null && \
-        CHROMA_TEST_PATH="$TMPDIR/data/chromadb" python3 scripts/chroma_healthcheck.py 2>&1)
-    if echo "$HEALTH_RESULT" | grep -q "BACKUP_OK"; then
-        echo "$(date): Healthcheck OK" | tee -a "$LOG"
+    cd "$PROJECT_DIR" && source venv/bin/activate 2>/dev/null
+    CHROMA_TEST_PATH="$TMPDIR/data/chromadb" python3 scripts/chroma_healthcheck.py >> "$LOG" 2>&1
+    HEALTH_EXIT_CODE=$?
+    if [ "$HEALTH_EXIT_CODE" -eq 0 ]; then
+        echo "$(date): Healthcheck OK (exit=0)" | tee -a "$LOG"
     else
-        echo "$(date): Healthcheck WARN: $HEALTH_RESULT" | tee -a "$LOG"
+        echo "$(date): Healthcheck WARN (exit=$HEALTH_EXIT_CODE)" | tee -a "$LOG"
         HEALTH_OK=false
     fi
+else
+    echo "$(date): Healthcheck SKIP — chromadb nicht im Backup gefunden" | tee -a "$LOG"
 fi
 rm -rf "$TMPDIR"
 
